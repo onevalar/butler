@@ -1,4 +1,8 @@
-1. 产品概述 (Executive Summary)
+# Butler MVP 产品说明（历史版本）
+
+> 本文描述最初的 MVP 构想。Butler 2.0 的产品方向、领域模型、AI 执行协议、迁移约束与验收标准以 [`docs/BUTLER_2_SPEC.md`](docs/BUTLER_2_SPEC.md) 为唯一事实来源。
+
+## 1. 产品概述 (Executive Summary)
 1.1 产品愿景
 Butler 是一款深度整合 Apple 生态的家庭库存管理助手。它旨在通过本地 AI (Local Intelligence) 解决传统库存管理 App“录入繁琐、隐私泄露、提醒机械”的三大痛点。它不是一个仓库管理员，而是一个注重隐私、极简高效的私人管家。
 

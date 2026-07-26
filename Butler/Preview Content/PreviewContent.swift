@@ -16,11 +16,8 @@ enum PreviewContainer {
     
     /// In-memory model container for previews
     static let shared: ModelContainer = {
-        let schema = Schema([Item.self])
-        let config = ModelConfiguration(isStoredInMemoryOnly: true)
-        
         do {
-            let container = try ModelContainer(for: schema, configurations: [config])
+            let container = try ButlerStore.makePreviewContainer()
             
             // Insert preview data
             PreviewData.insertSampleItems(into: container.mainContext)

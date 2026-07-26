@@ -1,0 +1,176 @@
+#if DEBUG
+import Foundation
+import Observation
+
+enum InventoryInputState: Equatable, Sendable {
+    case idle, planning, clarifying, reviewing, executing, completed, failed
+}
+
+@MainActor @Observable
+final class InventoryInputCoordinator {
+    private let provider: any InventoryPlanProvider
+    private let lookup: CatalogProductLookup
+    private let repository: InventoryRepository
+    private var session: InventoryPlanSession?
+
+    private(set) var state: InventoryInputState = .idle
+    private(set) var questions: [InventoryPlanningQuestion] = []
+    private(set) var reviewPlan: InventoryOperationPlan?
+    private(set) var confirmationRequirements: [InventoryConfirmationRequirement] = []
+    private(set) var errorMessage: String?
+    private(set) var executionResult: InventoryExecutionResult?
+    private(set) var productDisplays: [UUID: CatalogProductCandidate] = [:]
+    private(set) var existingProductIDs: Set<UUID> = []
+
+    init(provider: any InventoryPlanProvider, lookup: CatalogProductLookup, repository: InventoryRepository) {
+        self.provider = provider; self.lookup = lookup; self.repository = repository
+    }
+
+    func submit(text: String, locale: Locale = .current, referenceDate: Date = Date(), timeZone: TimeZone = .current) async {
+        guard state != .planning && state != .executing else { return }
+        state = .planning; errorMessage = nil; questions = []; reviewPlan = nil
+        confirmationRequirements = []; executionResult = nil; productDisplays = [:]; existingProductIDs = []
+        session = nil
+        do {
+            let input = InventoryPlanningInput(text: text, locale: locale, referenceDate: referenceDate,
+                                               timeZone: timeZone, inputID: UUID(), planID: UUID())
+            let base = try await provider.plan(for: input) // exactly once per submit
+            try validateM2Plan(base, input: input)
+            session = InventoryPlanSession(basePlan: base)
+            questions = base.unresolvedFields.filter(\.isRequired).map { .field($0) }
+            for operation in base.operations {
+                guard case .createProduct(let product) = operation.operation else { continue }
+                productDisplays[product.productID] = .init(
+                    id: product.productID, canonicalName: product.canonicalName,
+                    brand: product.brand, defaultUnit: product.defaultUnit
+                )
+                let candidates = try lookup.exactMatches(for: product.canonicalName)
+                if !candidates.isEmpty {
+                    questions.append(.productChoice(operationID: operation.operationID,
+                                                    proposedProductID: product.productID, candidates: candidates))
+                }
+            }
+            refresh()
+        } catch { fail(error) }
+    }
+
+    func answerStorage(_ field: UnresolvedInventoryField, choice: InventoryStorageChoice) {
+        guard state == .clarifying,
+              questions.contains(where: { if case .field(let value) = $0 { return value == field }; return false }) else { return }
+        session?.answer(field, with: .storageLocation(choice))
+        questions.removeAll { if case .field(let value) = $0 { return value == field }; return false }
+        refresh()
+    }
+
+    func chooseProduct(createOperationID: UUID, choice: InventoryProductChoice) {
+        guard state == .clarifying,
+              let pending = questions.first(where: {
+                  if case .productChoice(let id, _, _) = $0 { return id == createOperationID }; return false
+              }),
+              case .productChoice(_, let proposedProductID, let candidates) = pending else { return }
+        if case .existing(let productID) = choice {
+            guard let selected = candidates.first(where: { $0.id == productID }) else { return }
+            productDisplays[productID] = selected
+            existingProductIDs.insert(productID)
+        } else {
+            guard productDisplays[proposedProductID] != nil else { return }
+        }
+        session?.choose(forCreateOperation: createOperationID, choice)
+        questions.removeAll {
+            if case .productChoice(let id, _, _) = $0 { return id == createOperationID }; return false
+        }
+        refresh()
+    }
+
+    /// Explicit review boundary: no state automatically executes.
+    func confirmAndExecute() {
+        guard state == .reviewing, let plan = reviewPlan else { return }
+        let currentDecision = InventoryPolicy.evaluate(plan)
+        let requirements: [InventoryConfirmationRequirement]
+        switch currentDecision {
+        case .execute: requirements = []
+        case .requiresConfirmation(let visible):
+            guard sameRequirements(visible, confirmationRequirements) else { refresh(); return }
+            requirements = visible
+        case .requiresClarification, .reject: refresh(); return
+        }
+        state = .executing
+        do {
+            let receipts = requirements.map { InventoryConfirmationAuthority.issue(for: $0) }
+            executionResult = try repository.execute(plan, trustedConfirmations: receipts, actor: .user)
+            state = .completed
+        } catch { fail(error) }
+    }
+
+    private func refresh() {
+        guard let revision = session?.materialize() else { return }
+        reviewPlan = revision.plan
+        guard questions.isEmpty else { state = .clarifying; return }
+        let unresolvedProduct = revision.plan.operations.contains { planned in
+            guard case .addLot(let lot) = planned.operation else { return false }
+            return productDisplays[lot.productID] == nil
+        }
+        guard !unresolvedProduct else {
+            failMessage("有批次无法关联到可审核的产品身份。")
+            return
+        }
+        switch InventoryPolicy.evaluate(revision.plan) {
+        case .execute: confirmationRequirements = []; state = .reviewing
+        case .requiresConfirmation(let requirements): confirmationRequirements = requirements; state = .reviewing
+        case .requiresClarification(let fields): questions = fields.map { .field($0) }; state = .clarifying
+        case .reject(let violations): failMessage(violations.map(\.message).joined(separator: "\n"))
+        }
+    }
+
+    private func sameRequirements(_ lhs: [InventoryConfirmationRequirement], _ rhs: [InventoryConfirmationRequirement]) -> Bool {
+        func keys(_ values: [InventoryConfirmationRequirement]) -> Set<String> {
+            Set(values.map { "\($0.planID)|\($0.operationID)|\($0.entityID)|\($0.fieldKey.rawValue)|\($0.proposedValueIdentity)|\($0.expectedRevision.map(String.init) ?? "nil")" })
+        }
+        return keys(lhs) == keys(rhs)
+    }
+
+    private func validateM2Plan(_ plan: InventoryOperationPlan, input: InventoryPlanningInput) throws {
+        guard plan.planID == input.planID, plan.inputID == input.inputID else {
+            throw InventoryPlanningError.invalidProviderPlan("请求标识不匹配")
+        }
+        var products: [UUID: UUID] = [:]
+        var lots: [UUID: (operationID: UUID, productID: UUID)] = [:]
+        for planned in plan.operations {
+            switch planned.operation {
+            case .createProduct(let product):
+                guard products.updateValue(planned.operationID, forKey: product.productID) == nil else {
+                    throw InventoryPlanningError.invalidProviderPlan("产品标识重复")
+                }
+            case .addLot(let lot):
+                guard lots.updateValue((planned.operationID, lot.productID), forKey: lot.lotID) == nil else {
+                    throw InventoryPlanningError.invalidProviderPlan("批次标识重复")
+                }
+            default:
+                throw InventoryPlanningError.invalidProviderPlan("M2 输入仅允许创建产品和批次")
+            }
+        }
+        let operationIDs = plan.operations.map(\.operationID)
+        guard Set(operationIDs).count == operationIDs.count else {
+            throw InventoryPlanningError.invalidProviderPlan("操作标识重复")
+        }
+        guard !products.isEmpty, !lots.isEmpty,
+              Set(lots.values.map { $0.productID }) == Set(products.keys) else {
+            throw InventoryPlanningError.invalidProviderPlan("产品与批次必须完整一一关联")
+        }
+        let unresolvedIdentities = plan.unresolvedFields.map {
+            "\($0.operationID)|\($0.entityID)|\($0.fieldKey.rawValue)"
+        }
+        guard Set(unresolvedIdentities).count == unresolvedIdentities.count else {
+            throw InventoryPlanningError.invalidProviderPlan("追问字段重复")
+        }
+        for field in plan.unresolvedFields {
+            guard field.fieldKey == .storageLocation,
+                  let lot = lots[field.entityID], lot.operationID == field.operationID else {
+                throw InventoryPlanningError.invalidProviderPlan("追问字段未指向对应批次")
+            }
+        }
+    }
+    private func fail(_ error: Error) { failMessage((error as? LocalizedError)?.errorDescription ?? String(describing: error)) }
+    private func failMessage(_ message: String) { errorMessage = message; state = .failed }
+}
+#endif

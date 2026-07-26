@@ -67,7 +67,7 @@ final class VoiceManager: NSObject, SFSpeechRecognizerDelegate {
     }
     
     /// Start listening
-    func startRecording() throws {
+    func startRecording(requiresOnDeviceRecognition: Bool = false) throws {
         // Cancel existing tasks
         if recognitionTask != nil {
             recognitionTask?.cancel()
@@ -79,18 +79,21 @@ final class VoiceManager: NSObject, SFSpeechRecognizerDelegate {
         try audioSession.setCategory(.record, mode: .measurement, options: .duckOthers)
         try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
         
+        guard !requiresOnDeviceRecognition || speechRecognizer?.supportsOnDeviceRecognition == true else {
+            state = .error("此设备未提供中文离线语音识别，请使用文字输入。")
+            try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
+            throw VoiceError.onDeviceRecognitionUnavailable
+        }
+
         // Create Request
         recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
         guard let recognitionRequest = recognitionRequest else {
             throw VoiceError.setupFailed
         }
         
-        // CRITICAL: Force On-Device Recognition for Privacy & Speed
-        if let recognizer = speechRecognizer, recognizer.supportsOnDeviceRecognition {
-            recognitionRequest.requiresOnDeviceRecognition = true
-        } else {
-            print("WARNING: On-device recognition not available, falling back to server.")
-        }
+        // M2 requires local recognition; legacy remains local-first with server fallback if unavailable.
+        recognitionRequest.requiresOnDeviceRecognition =
+            requiresOnDeviceRecognition || speechRecognizer?.supportsOnDeviceRecognition == true
         
         // Setup Input Node
         let inputNode = audioEngine.inputNode
@@ -137,6 +140,15 @@ final class VoiceManager: NSObject, SFSpeechRecognizerDelegate {
     
     /// Stop recording and process the text
     func stopRecordingAndProcess() async -> ParsedVoiceResult? {
+        guard let finalText = await stopRecordingAndTranscribe() else { return nil }
+        state = .processing
+        let result = await nlpParser.parse(finalText)
+        state = .idle
+        return result
+    }
+
+    /// Stops local speech recognition and returns text without invoking the legacy NLP parser.
+    func stopRecordingAndTranscribe() async -> String? {
         // Stop Audio
         audioEngine.stop()
         audioEngine.inputNode.removeTap(onBus: 0)
@@ -155,11 +167,8 @@ final class VoiceManager: NSObject, SFSpeechRecognizerDelegate {
             return nil
         }
         
-        // Process with NLP Brain
-        let result = await nlpParser.parse(finalText)
-        
         state = .idle
-        return result
+        return finalText
     }
     
     /// Cancel current session
@@ -174,6 +183,14 @@ final class VoiceManager: NSObject, SFSpeechRecognizerDelegate {
 
 // MARK: - Errors
 
-enum VoiceError: Error {
+enum VoiceError: Error, LocalizedError {
     case setupFailed
+    case onDeviceRecognitionUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .setupFailed: return "语音识别启动失败。"
+        case .onDeviceRecognitionUnavailable: return "此设备未提供中文离线语音识别，请使用文字输入。"
+        }
+    }
 }

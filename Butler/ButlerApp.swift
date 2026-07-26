@@ -21,20 +21,14 @@ struct ButlerApp: App {
 
     /// Shared SwiftData container for the entire app
     var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            Item.self,
-        ])
-        
-        let modelConfiguration: ModelConfiguration
-        if let sharedURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.butler") {
-            let databaseURL = sharedURL.appendingPathComponent("Butler.sqlite")
-            modelConfiguration = ModelConfiguration(schema: schema, url: databaseURL)
-        } else {
-            modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false, allowsSave: true)
-        }
-
         do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--m2-input-harness") {
+                // The M2 harness must never leave V2 rows invisible in the normal legacy UI.
+                return try ButlerStore.makePreviewContainer()
+            }
+            #endif
+            return try ButlerStore.makeContainer()
         } catch {
             fatalError("Could not create ModelContainer: \(error)")
         }
@@ -42,11 +36,20 @@ struct ButlerApp: App {
 
     var body: some Scene {
         WindowGroup {
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--m2-input-harness") {
+                M2InputHarnessView(modelContainer: sharedModelContainer)
+            } else {
+                ContentView()
+                    .task { await NotificationManager.shared.requestAuthorization() }
+            }
+            #else
             ContentView()
                 .task {
                     // Request notification permission on first launch
                     await NotificationManager.shared.requestAuthorization()
                 }
+            #endif
         }
         .modelContainer(sharedModelContainer)
     }
