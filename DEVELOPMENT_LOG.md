@@ -1,24 +1,42 @@
 # Butler Project Development Log & Handover Notes
 
-## Butler 2.0 M2 source complete (debug-only)
+## Butler 2.0 M0–M2 source handoff
 **Date:** 2026-07-26
 
+- Repository state at handoff: M0 domain/schema and policy source is complete; M1 repository and explicit migrator source is complete; M2 input loop source is complete as a debug-only harness. None of these milestones is release-validated until the macOS/Xcode checklist below passes.
 - Added the vendor-neutral planning boundary, deterministic bounded Chinese local planner, frozen-plan clarification revisions, exact catalog lookup, policy/review coordinator, and transactional V2 input flow.
 - Debug builds can launch the isolated harness by adding `--m2-input-harness` to the scheme's launch arguments. The fixture “我今天买了一瓶牛奶、三包方便面和一个冰激凌。冰激凌先放冰箱了还没吃。” exercises conjunction splitting, later-clause detail association, and cold-storage clarification.
 - The harness uses a temporary in-memory container and writes only `CatalogProduct` / `InventoryLot` through `InventoryRepository`; it cannot modify or leave invisible data in the normal app store. It does not write `Item`, merge products, or invoke legacy migration.
 - The M2 coordinator, local planner, and V2 input UI are excluded from Release builds. M2 speech is on-device-only, while the unchanged legacy input retains its existing recognition fallback behavior.
 - Production remains disabled: normal launches still show `ContentView` / the legacy Dashboard and input path. Enablement is blocked on M1 migration/build validation in macOS/Xcode and a Dashboard V2 read path.
 
-## Butler 2.0 Foundation (M0 in progress)
-**Date:** 2026-07-26
-
 - The normative product/domain/AI contract is now [`docs/BUTLER_2_SPEC.md`](docs/BUTLER_2_SPEC.md).
 - Added an additive V2 schema for products, inventory lots, field evidence, inventory events, recurring-product templates, and future legacy migration links.
-- Added a versioned AI operation-plan contract and deterministic validation policy. It is intentionally not connected to persistence yet.
+- Added a versioned AI operation-plan contract and deterministic validation policy. Only the debug M2 coordinator connects validated plans to persistence; the Release app does not.
 - Added an M1 transactional repository with exact replay conflict detection, revision checks, field evidence, trusted confirmations, and one event per operation.
 - Added an explicit, idempotent legacy importer. It uses a fresh context, preserves the original Item snapshot, and conservatively treats all legacy dates as unverified estimates.
 - Existing screens and `DataManager` still use the legacy `Item` model; there is no backfill or dual write.
 - Before M0 can ship, compile and test old-store migration on macOS/Xcode. Do not delete or replace `Item` until V2 parity is proven.
+
+### Mandatory macOS/Xcode handoff checklist
+
+The current project has an application target only; it does not yet have a test target. Perform these tasks on macOS with Xcode 26.2 and the iOS 26.2 SDK, and record results here before enabling any V2 production path:
+
+- [ ] Create a `ButlerTests` target and make M0–M2 domain/persistence code testable without changing Release behavior.
+- [ ] Build the Butler scheme in both Debug and Release. Treat SwiftData macro, predicate, uniqueness, Observation, actor-isolation, and warning failures as blockers.
+- [ ] Verify a clean installation can create and reopen the complete `ButlerStore.schema`.
+- [ ] Generate a temporary database with the legacy `Item`-only schema, populate every compatibility fixture listed in `docs/BUTLER_2_SPEC.md`, then open that same file with the complete schema. Compare every legacy row and field before and after.
+- [ ] Force a store-opening/migration failure and verify Butler neither deletes nor silently recreates the user's database.
+- [ ] Test `InventoryRepository`: atomic rollback, exact idempotent replay, conflicting operation-ID rejection, stale revision rejection, missing entity handling, confirmation binding, evidence values, event creation, and integer overflow boundaries.
+- [ ] Test `LegacyItemMigrator`: explicit invocation only, second-run idempotency, one link per old Item, conservative one-Product/one-Lot mapping, original snapshot preservation, and all legacy dates remaining unverified estimates.
+- [ ] Launch Debug with `--m2-input-harness`. Confirm the default sentence creates exactly three review rows; only ice-cream storage is clarified; noodles receive a three-calendar-month `plannedUseByDate` and no `packageExpiryDate`; clarification preserves IDs; and no write occurs before final review confirmation.
+- [ ] Verify exact-name product candidates never merge automatically, arbitrary candidate IDs are rejected, and confirmed existing-product selection rewires only the intended lot.
+- [ ] Relaunch normally after using the harness and confirm the production store is unchanged. Confirm Release contains no M2 harness entry path.
+- [ ] On simulator and a physical device, verify microphone/speech permissions, M2 on-device-only failure messaging, and the legacy local-first/server-fallback behavior. Do not approve cloud model upload as part of this test.
+- [ ] Run legacy regression coverage for Dashboard, details, consume, discard, date completion, notifications, Spotlight, cold launch, and background/foreground transitions.
+- [ ] Before production enablement, implement and verify a V2 Dashboard/read path. Only afterward may an explicit migration entry point or production M2 writer be considered; do not introduce dual-write.
+
+Detailed fixtures, expected outcomes, and release gates are normative in [`docs/BUTLER_2_SPEC.md`](docs/BUTLER_2_SPEC.md#8-macosxcode-验证与发布门禁).
 
 ## 📌 Project Status: Phase 1 & 2 Complete (MVP Ready)
 **Date:** 2026-01-06
