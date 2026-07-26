@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+echo "Validating Butler's Xcode project metadata..."
+python3 - <<'PY'
+import json
+import pathlib
+import plistlib
+
+root = pathlib.Path.cwd()
+
+required_paths = (
+    root / "Butler.xcodeproj" / "project.pbxproj",
+    root / "Butler" / "ButlerApp.swift",
+)
+for path in required_paths:
+    if not path.is_file():
+        raise SystemExit(f"Required project file is missing: {path.relative_to(root)}")
+
+for path in sorted(root.rglob("*.plist")):
+    with path.open("rb") as file:
+        plistlib.load(file)
+
+for path in sorted(root.rglob("Contents.json")):
+    with path.open(encoding="utf-8") as file:
+        json.load(file)
+PY
+
+echo "Setup complete. Butler has no third-party dependencies."
+echo "Note: full builds require macOS, Xcode 26.2, and the iOS 26.2 SDK; Apple SDKs are unavailable in Debian orbs."

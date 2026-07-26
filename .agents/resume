@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+test -f Butler.xcodeproj/project.pbxproj
+test -f Butler/ButlerApp.swift
+
+echo "Butler orb is ready (full iOS builds require macOS and Xcode 26.2)."
