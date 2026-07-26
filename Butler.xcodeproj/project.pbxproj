@@ -8,11 +8,25 @@
 
 /* Begin PBXFileReference section */
 		01CCDCF62F0CFA8A00A689B2 /* Butler.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Butler.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		01FD43212F16AA73001F6B04 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		01FD43202F16A9A2001F6B04 /* Exceptions for "Butler" folder in "Butler" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 01CCDCF52F0CFA8A00A689B2 /* Butler */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		01CCDCF82F0CFA8A00A689B2 /* Butler */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				01FD43202F16A9A2001F6B04 /* Exceptions for "Butler" folder in "Butler" target */,
+			);
 			path = Butler;
 			sourceTree = "<group>";
 		};
@@ -34,6 +48,7 @@
 			children = (
 				01CCDCF82F0CFA8A00A689B2 /* Butler */,
 				01CCDCF72F0CFA8A00A689B2 /* Products */,
+				01FD43212F16AA73001F6B04 /* Info.plist */,
 			);
 			sourceTree = "<group>";
 		};
@@ -178,6 +193,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
+				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
@@ -236,6 +252,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
+				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = NO;

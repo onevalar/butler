@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Butler 需要使用相机来扫描物品上的保质期</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Butler 需要访问麦克风来识别你说的物品信息。所有语音数据都在设备本地处理。</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Butler 使用语音识别来理解你添加的物品。识别过程完全在本地进行，保护你的隐私。</string>
+</dict>
+</plist>
