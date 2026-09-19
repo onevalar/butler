@@ -19,8 +19,8 @@ struct ButlerApp: App {
         ])
     }
 
-    /// Shared SwiftData container for the entire app
-    var sharedModelContainer: ModelContainer = {
+    /// Lazily initialized so the debug UI prototype never opens the production store.
+    private static let productionModelContainer: ModelContainer = {
         do {
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("--m2-input-harness") {
@@ -34,7 +34,34 @@ struct ButlerApp: App {
         }
     }()
 
+    private var sharedModelContainer: ModelContainer { Self.productionModelContainer }
+
+    private static var isRunningTests: Bool {
+        let environment = ProcessInfo.processInfo.environment
+        return environment["XCTestConfigurationFilePath"] != nil ||
+            environment["XCTestBundlePath"] != nil
+    }
+
     var body: some Scene {
+        if Self.isRunningTests {
+            // Hosted tests use their own temporary containers and must never open user data.
+            WindowGroup { EmptyView() }
+        } else {
+        #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--v2-ui-prototype") {
+                WindowGroup {
+                    V2UIPrototypeView()
+                }
+            } else {
+                productionScene
+            }
+        #else
+            productionScene
+        #endif
+        }
+    }
+
+    private var productionScene: some Scene {
         WindowGroup {
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("--m2-input-harness") {

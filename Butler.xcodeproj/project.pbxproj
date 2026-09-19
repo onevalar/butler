@@ -9,7 +9,18 @@
 /* Begin PBXFileReference section */
 		01CCDCF62F0CFA8A00A689B2 /* Butler.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Butler.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		01FD43212F16AA73001F6B04 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		02A000012F20000100A00001 /* ButlerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ButlerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXContainerItemProxy section */
+		02A000082F20000100A00001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 01CCDCEE2F0CFA8A00A689B2 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 01CCDCF52F0CFA8A00A689B2;
+			remoteInfo = Butler;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
 		01FD43202F16A9A2001F6B04 /* Exceptions for "Butler" folder in "Butler" target */ = {
@@ -30,10 +41,22 @@
 			path = Butler;
 			sourceTree = "<group>";
 		};
+		02A000022F20000100A00001 /* ButlerTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ButlerTests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		01CCDCF32F0CFA8A00A689B2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		02A000052F20000100A00001 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -47,6 +70,7 @@
 			isa = PBXGroup;
 			children = (
 				01CCDCF82F0CFA8A00A689B2 /* Butler */,
+				02A000022F20000100A00001 /* ButlerTests */,
 				01CCDCF72F0CFA8A00A689B2 /* Products */,
 				01FD43212F16AA73001F6B04 /* Info.plist */,
 			);
@@ -56,6 +80,7 @@
 			isa = PBXGroup;
 			children = (
 				01CCDCF62F0CFA8A00A689B2 /* Butler.app */,
+				02A000012F20000100A00001 /* ButlerTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -85,6 +110,29 @@
 			productReference = 01CCDCF62F0CFA8A00A689B2 /* Butler.app */;
 			productType = "com.apple.product-type.application";
 		};
+		02A000032F20000100A00001 /* ButlerTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 02A0000B2F20000100A00001 /* Build configuration list for PBXNativeTarget "ButlerTests" */;
+			buildPhases = (
+				02A000042F20000100A00001 /* Sources */,
+				02A000052F20000100A00001 /* Frameworks */,
+				02A000062F20000100A00001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				02A000072F20000100A00001 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				02A000022F20000100A00001 /* ButlerTests */,
+			);
+			name = ButlerTests;
+			packageProductDependencies = (
+			);
+			productName = ButlerTests;
+			productReference = 02A000012F20000100A00001 /* ButlerTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -97,6 +145,10 @@
 				TargetAttributes = {
 					01CCDCF52F0CFA8A00A689B2 = {
 						CreatedOnToolsVersion = 26.2;
+					};
+					02A000032F20000100A00001 = {
+						CreatedOnToolsVersion = 26.2;
+						TestTargetID = 01CCDCF52F0CFA8A00A689B2;
 					};
 				};
 			};
@@ -115,12 +167,20 @@
 			projectRoot = "";
 			targets = (
 				01CCDCF52F0CFA8A00A689B2 /* Butler */,
+				02A000032F20000100A00001 /* ButlerTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		01CCDCF42F0CFA8A00A689B2 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		02A000062F20000100A00001 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -137,7 +197,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		02A000042F20000100A00001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		02A000072F20000100A00001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 01CCDCF52F0CFA8A00A689B2 /* Butler */;
+			targetProxy = 02A000082F20000100A00001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		01CCDD012F0CFA8B00A689B2 /* Debug */ = {
@@ -327,6 +402,52 @@
 			};
 			name = Release;
 		};
+		02A000092F20000100A00001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = H4982D35ZR;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.anvalar.ButlerTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Butler.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Butler";
+			};
+			name = Debug;
+		};
+		02A0000A2F20000100A00001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = H4982D35ZR;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.anvalar.ButlerTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Butler.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Butler";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -344,6 +465,15 @@
 			buildConfigurations = (
 				01CCDD042F0CFA8B00A689B2 /* Debug */,
 				01CCDD052F0CFA8B00A689B2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		02A0000B2F20000100A00001 /* Build configuration list for PBXNativeTarget "ButlerTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				02A000092F20000100A00001 /* Debug */,
+				02A0000A2F20000100A00001 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
