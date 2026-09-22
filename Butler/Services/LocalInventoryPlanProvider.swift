@@ -1,4 +1,3 @@
-#if DEBUG
 import Foundation
 
 /// Small, deterministic Chinese fixture parser. It intentionally declines broad NLP guesses.
@@ -135,4 +134,3 @@ struct LocalInventoryPlanProvider: InventoryPlanProvider {
         return value.count == 1 ? value.first.flatMap { digits[$0] } : nil
     }
 }
-#endif

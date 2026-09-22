@@ -18,6 +18,10 @@ final class LegacyItemMigrator {
         self.modelContainer = modelContainer
     }
 
+    /// Nothing to clean up; keep deinit off the MainActor executor to avoid a Swift 6.2 runtime crash
+    /// (swift_task_deinitOnExecutor frees an unallocated TaskLocal scope when released on the main thread).
+    nonisolated deinit {}
+
     func migrateAll() throws -> LegacyItemMigrationResult {
         let modelContext = ModelContext(modelContainer)
         modelContext.autosaveEnabled = false

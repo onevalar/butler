@@ -36,8 +36,6 @@ final class VoiceManager: NSObject, SFSpeechRecognizerDelegate {
     private var recognitionTask: SFSpeechRecognitionTask?
     private let audioEngine = AVAudioEngine()
     
-    private let nlpParser = NLPParser()
-    
     // MARK: - Initialization
     
     override init() {
@@ -46,6 +44,10 @@ final class VoiceManager: NSObject, SFSpeechRecognizerDelegate {
         super.init()
         self.speechRecognizer?.delegate = self
     }
+
+    /// Nothing to clean up; keep deinit off the MainActor executor to avoid a Swift 6.2 runtime crash
+    /// (swift_task_deinitOnExecutor frees an unallocated TaskLocal scope when released on the main thread).
+    nonisolated deinit {}
     
     // MARK: - Public API
     
@@ -138,15 +140,6 @@ final class VoiceManager: NSObject, SFSpeechRecognizerDelegate {
         transcribedText = ""
     }
     
-    /// Stop recording and process the text
-    func stopRecordingAndProcess() async -> ParsedVoiceResult? {
-        guard let finalText = await stopRecordingAndTranscribe() else { return nil }
-        state = .processing
-        let result = await nlpParser.parse(finalText)
-        state = .idle
-        return result
-    }
-
     /// Stops local speech recognition and returns text without invoking the legacy NLP parser.
     func stopRecordingAndTranscribe() async -> String? {
         // Stop Audio

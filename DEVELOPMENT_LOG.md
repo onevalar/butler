@@ -1,5 +1,18 @@
 # Butler Project Development Log & Handover Notes
 
+## V2 直接接入与“青花”界面
+**Date:** 2026-09-22 · Xcode 26.3 · iOS 26.2 Simulator (iPhone 17)
+
+- Owner decision: legacy `Item` UI/`DataManager` removed; the app reads and writes V2 only (see spec §7 items 7–8). `Item` stays in the schema so existing stores open.
+- New UI (Home / Capture / Clarify / Review / Detail / Inventory / Date capture) built from the Paper "butler" designs, light + dark. Design tokens live in `Butler/Design/Theme.swift`.
+- Input pipeline (`InventoryInputCoordinator`, `LocalInventoryPlanProvider`) is now production code. Added "先跳过" (keeps the literal 冰箱, Home asks later) and a compartment answer that records a `systemEstimate` plan date, never a package date.
+- Button commands go through `InventoryActions` (single-op plans, policy-issued receipts on explicit tap). Reminders and Spotlight are rebuilt from active lots on every change.
+- Fixed: app target never used `Butler/Info.plist`, so mic/camera/speech usage strings were missing (crash on first mic use). Fixed a Swift 6.2 runtime crash when `@MainActor` classes deinit on the main thread (`nonisolated deinit`).
+- Tests: 13 passed, 1 pre-existing skip. Simulator walkthrough of the spec §8.5 sentence verified end to end.
+- Debug aids: `--seed-sample-inventory` launch argument; `BUTLER_CAPTURE_TEXT` env var opens Capture pre-filled.
+- Fonts: Noto Serif SC Regular/SemiBold/Bold bundled (OFL, subset to GB2312 + app strings, ~8.5 MB total; rarer characters fall back to the system font). Re-run the subset if new UI copy uses characters outside GB2312. License notices in `Butler/Resources/Fonts`.
+- Open: real-device voice not yet tested.
+
 ## Butler 2.0 M0–M2 source handoff
 **Date:** 2026-07-26
 

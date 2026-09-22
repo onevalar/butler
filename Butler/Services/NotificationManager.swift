@@ -1,92 +1,50 @@
-//
-//  NotificationManager.swift
-//  Butler
-//
-//  Created by 安宇佳 on 2026/1/6.
-//
-
 import Foundation
 import UserNotifications
 
-/// Schedules and cancels local expiry notifications for inventory items
+/// Local expiry reminders. Rebuilt from the current inventory whenever it changes,
+/// so there is no per-item bookkeeping to drift out of sync.
 final class NotificationManager {
-
     static let shared = NotificationManager()
     private init() {}
 
-    // MARK: - Authorization
+    private let identifierPrefix = "butler.lot."
 
-    /// Request notification permission from the user
     @discardableResult
     func requestAuthorization() async -> Bool {
-        do {
-            return try await UNUserNotificationCenter.current()
-                .requestAuthorization(options: [.alert, .badge, .sound])
-        } catch {
-            print("Notification authorization error: \(error.localizedDescription)")
-            return false
-        }
+        (try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound])) ?? false
     }
 
-    // MARK: - Scheduling
-
-    /// Schedule (or reschedule) an expiry warning notification for an item.
-    /// Automatically cancels any existing notification for the same item first.
-    /// Does nothing if notifications are disabled, item has no expiry, or item is archived.
-    func scheduleExpiryNotification(for item: Item) {
-        let notificationsEnabled = UserDefaults.standard.bool(forKey: "notificationsEnabled")
-        guard notificationsEnabled, let expiryDate = item.expiryDate, !item.isArchived else {
-            cancelNotification(for: item)
-            return
-        }
-
-        let warningDays = UserDefaults.standard.integer(forKey: "expiryWarningDays")
-        guard let notificationDate = Calendar.current.date(
-            byAdding: .day,
-            value: -warningDays,
-            to: expiryDate
-        ), notificationDate > Date() else {
-            cancelNotification(for: item)
-            return
-        }
-
-        // Cancel existing before rescheduling
-        cancelNotification(for: item)
-
-        let content = UNMutableNotificationContent()
-        content.title = "物品即将过期"
-        content.body = "\(item.name) 将在 \(warningDays) 天后过期，请尽快处理。"
-        content.sound = .default
-        content.userInfo = ["itemID": item.id.uuidString]
-
-        let components = Calendar.current.dateComponents(
-            [.year, .month, .day, .hour],
-            from: notificationDate
-        )
-        let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
-        let request = UNNotificationRequest(
-            identifier: item.id.uuidString,
-            content: content,
-            trigger: trigger
+    func resync(_ lots: [LotFacts], now: Date = Date(), calendar: Calendar = .current) async {
+        let center = UNUserNotificationCenter.current()
+        let pending = await center.pendingNotificationRequests()
+        center.removePendingNotificationRequests(
+            withIdentifiers: pending.map(\.identifier).filter { $0.hasPrefix(identifierPrefix) }
         )
 
-        UNUserNotificationCenter.current().add(request) { error in
-            if let error {
-                print("Notification scheduling error: \(error.localizedDescription)")
-            }
+        let defaults = UserDefaults.standard
+        guard defaults.bool(forKey: "notificationsEnabled") else { return }
+        let leadDays = max(defaults.integer(forKey: "expiryWarningDays"), 1)
+
+        for lot in lots {
+            guard let date = lot.governingDate,
+                  let remindDay = calendar.date(byAdding: .day, value: -(lot.isMedicine ? leadDays + 4 : leadDays), to: date),
+                  let fireDate = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: remindDay),
+                  fireDate > now else { continue }
+
+            let content = UNMutableNotificationContent()
+            content.title = lot.governingDateKind == .plannedUseBy ? "该吃掉了" : "快到期了"
+            let days = LotFacts.days(from: fireDate, to: date, calendar: calendar)
+            content.body = "\(lot.name)还有 \(days) 天\(lot.governingDateKind == .plannedUseBy ? "到你定的日子" : "到期")。"
+            content.sound = .default
+            content.userInfo = ["lotID": lot.id.uuidString]
+
+            let trigger = UNCalendarNotificationTrigger(
+                dateMatching: calendar.dateComponents([.year, .month, .day, .hour, .minute], from: fireDate),
+                repeats: false
+            )
+            try? await center.add(UNNotificationRequest(
+                identifier: identifierPrefix + lot.id.uuidString, content: content, trigger: trigger
+            ))
         }
-    }
-
-    // MARK: - Cancellation
-
-    /// Cancel any pending notification for a specific item
-    func cancelNotification(for item: Item) {
-        UNUserNotificationCenter.current()
-            .removePendingNotificationRequests(withIdentifiers: [item.id.uuidString])
-    }
-
-    /// Cancel all pending Butler notifications
-    func cancelAllNotifications() {
-        UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
     }
 }
