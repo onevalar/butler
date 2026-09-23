@@ -20,6 +20,9 @@ final class InventoryInputCoordinator {
     private(set) var executionResult: InventoryExecutionResult?
     private(set) var productDisplays: [UUID: CatalogProductCandidate] = [:]
     private(set) var existingProductIDs: Set<UUID> = []
+    /// Re-purchases linked to their only same-name product without asking; the review can undo it.
+    /// Keyed by the existing product ID, valued by the createProduct operations it replaced.
+    private(set) var autoLinked: [UUID: [UUID]] = [:]
 
     init(provider: any InventoryPlanProvider, lookup: CatalogProductLookup, repository: InventoryRepository) {
         self.provider = provider; self.lookup = lookup; self.repository = repository
@@ -33,7 +36,7 @@ final class InventoryInputCoordinator {
         guard state != .planning && state != .executing else { return }
         state = .planning; errorMessage = nil; questions = []; reviewPlan = nil
         confirmationRequirements = []; executionResult = nil; productDisplays = [:]; existingProductIDs = []
-        session = nil
+        autoLinked = [:]; session = nil
         do {
             let input = InventoryPlanningInput(text: text, locale: locale, referenceDate: referenceDate,
                                                timeZone: timeZone, inputID: UUID(), planID: UUID())
@@ -48,7 +51,13 @@ final class InventoryInputCoordinator {
                     brand: product.brand, defaultUnit: product.defaultUnit
                 )
                 let candidates = try lookup.exactMatches(for: product.canonicalName)
-                if !candidates.isEmpty {
+                if candidates.count == 1, let existing = candidates.first {
+                    // Buying the same thing again is the common case: don't ask, show it in the review.
+                    session?.choose(forCreateOperation: operation.operationID, .existing(productID: existing.id))
+                    productDisplays[existing.id] = existing
+                    existingProductIDs.insert(existing.id)
+                    autoLinked[existing.id, default: []].append(operation.operationID)
+                } else if candidates.count > 1 {
                     questions.append(.productChoice(operationID: operation.operationID,
                                                     proposedProductID: product.productID, candidates: candidates))
                 }
@@ -74,11 +83,19 @@ final class InventoryInputCoordinator {
         refresh()
     }
 
+    /// Review-time undo of an automatic "same product" link: record it as a new, separate product.
+    func keepSeparate(fromExisting productID: UUID) {
+        guard state == .reviewing, let operationIDs = autoLinked.removeValue(forKey: productID) else { return }
+        for operationID in operationIDs { session?.choose(forCreateOperation: operationID, .createSeparate) }
+        existingProductIDs.remove(productID)
+        refresh()
+    }
+
     func reset() {
         guard state != .planning && state != .executing else { return }
         state = .idle; errorMessage = nil; questions = []; reviewPlan = nil
         confirmationRequirements = []; executionResult = nil; productDisplays = [:]; existingProductIDs = []
-        session = nil
+        autoLinked = [:]; session = nil
     }
 
     func chooseProduct(createOperationID: UUID, choice: InventoryProductChoice) {

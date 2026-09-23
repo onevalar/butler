@@ -1,136 +1,98 @@
 import Foundation
 
-/// Small, deterministic Chinese fixture parser. It intentionally declines broad NLP guesses.
+/// On-device planner: reads everyday Chinese with `ChineseInventoryParser`, then turns what was heard
+/// into an operation plan. Everything the user didn't say is recorded as Butler's own estimate
+/// (shown with a dashed underline), and package dates are only ever what the user stated.
 struct LocalInventoryPlanProvider: InventoryPlanProvider {
-    private let maximumClauses = 20
-    private let units = "瓶|包|盒|袋|罐|支|条|片|只|块|桶|个"
-
-    private struct Draft {
-        let productID: UUID
-        let lotID: UUID
-        let createOperationID: UUID
-        let addOperationID: UUID
-        let quantity: Int
-        let countText: String
-        let unit: String
-        let name: String
-        var plannedUseByDate: Date?
-        var packageExpiryDate: Date?
-        var lotEvidence: [ProposedFieldEvidence]
-        var needsColdStorageClarification: Bool
-    }
+    private let maximumItems = 20
 
     func plan(for input: InventoryPlanningInput) async throws -> InventoryOperationPlan {
+        try makePlan(for: input)
+    }
+
+    /// Synchronous core: parsing does no waiting, so tests and live previews can call it directly.
+    func makePlan(for input: InventoryPlanningInput) throws -> InventoryOperationPlan {
         let text = input.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { throw InventoryPlanningError.emptyInput }
-        let clauses = splitClauses(text)
-            .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        guard clauses.count <= maximumClauses else { throw InventoryPlanningError.tooManyClauses(maximum: maximumClauses) }
 
-        var drafts: [Draft] = []
-        for clause in clauses {
-            guard let parsed = parseHead(clause) else { continue }
-            var plannedUse: Date?
-            var packageExpiry: Date?
-            var lotEvidence: [ProposedFieldEvidence] = [
-                .init(fieldKey: .quantity, source: .heuristicParser, confidence: 1, rawText: parsed.countText),
-                .init(fieldKey: .unit, source: .heuristicParser, confidence: 1, rawText: parsed.unit)
-            ]
-            if clause.contains("一个月内") && (clause.contains("吃掉") || clause.contains("用掉") || clause.contains("喝掉")) {
-                var calendar = Calendar(identifier: .gregorian); calendar.timeZone = input.timeZone
-                plannedUse = calendar.date(byAdding: .month, value: 1, to: input.referenceDate)
-                lotEvidence.append(.init(fieldKey: .plannedUseByDate, source: .systemEstimate, confidence: 1, rawText: "一个月内"))
-            }
-            if plannedUse == nil && parsed.name.contains("方便面") {
-                var calendar = Calendar(identifier: .gregorian); calendar.timeZone = input.timeZone
-                plannedUse = calendar.date(byAdding: .month, value: 3, to: input.referenceDate)
-                lotEvidence.append(.init(
-                    fieldKey: .plannedUseByDate, source: .systemEstimate, confidence: 0.7,
-                    rawText: "本地默认：三个月内用完"
-                ))
-            }
-            if clause.contains("过期") {
-                var calendar = Calendar(identifier: .gregorian); calendar.timeZone = input.timeZone
-                let days = clause.contains("后天过期") ? 2 : (clause.contains("明天过期") ? 1 : 0)
-                if days > 0 {
-                    packageExpiry = calendar.date(byAdding: .day, value: days, to: input.referenceDate)
-                    lotEvidence.append(.init(fieldKey: .packageExpiryDate, source: .heuristicParser,
-                                             confidence: 1, rawText: days == 1 ? "明天过期" : "后天过期"))
-                }
-                // Other expiry expressions remain absent rather than becoming a fabricated package date.
-            }
-            drafts.append(.init(
-                productID: UUID(), lotID: UUID(), createOperationID: UUID(), addOperationID: UUID(),
-                quantity: parsed.quantity, countText: parsed.countText, unit: parsed.unit, name: parsed.name,
-                plannedUseByDate: plannedUse, packageExpiryDate: packageExpiry, lotEvidence: lotEvidence,
-                needsColdStorageClarification: clause.contains("冰箱")
-            ))
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = input.timeZone
+        let heard = ChineseInventoryParser.parse(text, referenceDate: input.referenceDate, calendar: calendar)
+        guard !heard.items.isEmpty else {
+            throw heard.mentionsUsingUp ? InventoryPlanningError.usingUpNotSupported : .noInventoryItems
+        }
+        guard heard.items.count <= maximumItems else {
+            throw InventoryPlanningError.tooManyClauses(maximum: maximumItems)
         }
 
-        // A later clause may add detail without repeating a quantity, e.g. “冰激凌先放冰箱了”。
-        for clause in clauses where parseHead(clause) == nil && clause.contains("冰箱") {
-            for index in drafts.indices where clause.contains(drafts[index].name) {
-                drafts[index].needsColdStorageClarification = true
-            }
-        }
-
-        guard !drafts.isEmpty else { throw InventoryPlanningError.noInventoryItems }
         var operations: [PlannedInventoryOperation] = []
         var unresolved: [UnresolvedInventoryField] = []
-        for draft in drafts {
-            let productEvidence = [ProposedFieldEvidence(
-                fieldKey: .canonicalName, source: .heuristicParser, confidence: 1, rawText: draft.name
-            )]
-            operations.append(.init(operationID: draft.createOperationID, operation: .createProduct(.init(
-                productID: draft.productID, canonicalName: draft.name, brand: nil, categoryRawValue: nil,
-                defaultUnit: nil, evidence: productEvidence))))
-            operations.append(.init(operationID: draft.addOperationID, operation: .addLot(.init(
-                lotID: draft.lotID, productID: draft.productID, quantity: draft.quantity, unit: draft.unit,
-                purchasedAt: nil, packageExpiryDate: draft.packageExpiryDate, estimatedExpiryDate: nil,
-                plannedUseByDate: draft.plannedUseByDate, storageLocation: nil, evidence: draft.lotEvidence))))
-            if draft.needsColdStorageClarification {
-                unresolved.append(.init(operationID: draft.addOperationID, entityID: draft.lotID,
-                                        fieldKey: .storageLocation, reason: "storage.coldAmbiguous", isRequired: true))
+        for item in heard.items {
+            let productID = UUID(), lotID = UUID(), addOperationID = UUID()
+
+            var productEvidence = [ProposedFieldEvidence(
+                fieldKey: .canonicalName, source: .heuristicParser, confidence: 1, rawText: item.name)]
+            let category = item.kind.categoryRawValue
+            if category != nil {
+                productEvidence.append(.init(fieldKey: .category, source: .heuristicParser, confidence: 0.8, rawText: item.name))
             }
-        }
-        return .init(schemaVersion: 1, planID: input.planID, inputID: input.inputID,
-                     operations: operations, unresolvedFields: unresolved)
-    }
+            operations.append(.init(operationID: UUID(), operation: .createProduct(.init(
+                productID: productID, canonicalName: item.name, brand: nil, categoryRawValue: category,
+                defaultUnit: nil, evidence: productEvidence))))
 
-    private func splitClauses(_ text: String) -> [String] {
-        let conjunctionPattern = "和(?=[0-9一二两三四五六七八九十]+(?:\(units)))"
-        let range = NSRange(text.startIndex..., in: text)
-        let separated = (try? NSRegularExpression(pattern: conjunctionPattern))?
-            .stringByReplacingMatches(in: text, range: range, withTemplate: "、") ?? text
-        return separated.components(separatedBy: CharacterSet(charactersIn: "、，,。；;"))
-    }
+            var evidence: [ProposedFieldEvidence] = [
+                item.quantityRaw.map { .init(fieldKey: .quantity, source: .heuristicParser, confidence: 1, rawText: $0) }
+                    ?? .init(fieldKey: .quantity, source: .systemEstimate, confidence: 0.5,
+                             rawText: item.amountNote.map { "说的是\($0)，先记 1 份" } ?? "没说数量，先记 1"),
+                .init(fieldKey: .unit, source: item.unitStated ? .heuristicParser : .systemEstimate,
+                      confidence: item.unitStated ? 1 : 0.6, rawText: item.unit),
+            ]
 
-    private func parseHead(_ clause: String) -> (quantity: Int, countText: String, unit: String, name: String)? {
-        let pattern = "([0-9一二两三四五六七八九十]+)(\(units))(.+)$"
-        guard let regex = try? NSRegularExpression(pattern: pattern),
-              let match = regex.firstMatch(in: clause, range: NSRange(clause.startIndex..., in: clause)),
-              let countRange = Range(match.range(at: 1), in: clause),
-              let unitRange = Range(match.range(at: 2), in: clause),
-              let tailRange = Range(match.range(at: 3), in: clause) else { return nil }
-        let countText = String(clause[countRange]), unit = String(clause[unitRange])
-        guard let quantity = chineseInteger(countText), quantity > 0 else { return nil }
-        var name = String(clause[tailRange])
-        let detailMarkers = ["一个月内", "明天过期", "后天过期", "先放冰箱", "放冰箱"]
-        if let markerIndex = detailMarkers.compactMap({ name.range(of: $0)?.lowerBound }).min() {
-            name = String(name[..<markerIndex])
-        }
-        name = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        return name.isEmpty ? nil : (quantity, countText, unit, name)
-    }
+            var storage: String?
+            if let hint = item.storage {
+                if hint.location != StorageLocation.ambiguousFridge {
+                    storage = hint.location
+                    evidence.append(.init(fieldKey: .storageLocation, source: .heuristicParser, confidence: 1, rawText: hint.raw))
+                } else if item.kind == .freezable {
+                    // "放冰箱" for ice cream or meat: 冷冻 vs 冷藏 changes days into months, so ask.
+                    unresolved.append(.init(operationID: addOperationID, entityID: lotID,
+                                            fieldKey: .storageLocation, reason: "storage.coldAmbiguous", isRequired: true))
+                } else {
+                    storage = "冷藏"
+                    evidence.append(.init(fieldKey: .storageLocation, source: .systemEstimate, confidence: 0.8,
+                                          rawText: "说放\(hint.raw)，按冷藏记"))
+                }
+            }
 
-    private func chineseInteger(_ value: String) -> Int? {
-        if let number = Int(value) { return number }
-        let digits: [Character: Int] = ["一":1,"二":2,"两":2,"三":3,"四":4,"五":5,"六":6,"七":7,"八":8,"九":9]
-        if value == "十" { return 10 }
-        if value.hasPrefix("十"), let last = value.last, let d = digits[last] { return 10 + d }
-        if value.contains("十"), let first = value.first, let d = digits[first] {
-            return d * 10 + (value.last.flatMap { digits[$0] } ?? 0)
+            if let heardDate = item.packageExpiry {
+                evidence.append(.init(fieldKey: .packageExpiryDate, source: .heuristicParser, confidence: 1, rawText: heardDate.raw))
+            }
+            if let heardDate = item.estimatedExpiry {
+                evidence.append(.init(fieldKey: .estimatedExpiryDate, source: .heuristicParser, confidence: 0.9, rawText: heardDate.raw))
+            }
+
+            var plannedUseBy = item.plannedUseBy?.date
+            if let heardDate = item.plannedUseBy {
+                evidence.append(.init(fieldKey: .plannedUseByDate,
+                                      source: heardDate.isGuess ? .systemEstimate : .heuristicParser,
+                                      confidence: heardDate.isGuess ? 0.6 : 1, rawText: heardDate.raw))
+            } else if item.packageExpiry == nil, item.estimatedExpiry == nil,
+                      let horizon = item.kind.suggestedPlan,
+                      let date = horizon.date(from: input.referenceDate, calendar: calendar) {
+                plannedUseBy = date
+                evidence.append(.init(fieldKey: .plannedUseByDate, source: .systemEstimate, confidence: 0.7,
+                                      rawText: "本地默认：\(horizon.phrase)内用完"))
+            }
+
+            operations.append(.init(operationID: addOperationID, operation: .addLot(.init(
+                lotID: lotID, productID: productID, quantity: item.quantity, unit: item.unit,
+                purchasedAt: nil,
+                packageExpiryDate: item.packageExpiry?.date,
+                estimatedExpiryDate: item.estimatedExpiry?.date,
+                plannedUseByDate: plannedUseBy,
+                storageLocation: storage, evidence: evidence))))
         }
-        return value.count == 1 ? value.first.flatMap { digits[$0] } : nil
+        return .init(schemaVersion: InventoryOperationPlan.currentSchemaVersion, planID: input.planID,
+                     inputID: input.inputID, operations: operations, unresolvedFields: unresolved)
     }
 }

@@ -1,5 +1,16 @@
 # Butler Project Development Log & Handover Notes
 
+## 听懂日常说法：本地中文解析器重写
+**Date:** 2026-09-23 · Xcode 26.3 · iOS 26.2 Simulator (iPhone 17)
+
+- Owner's phone has no Apple Intelligence, so the on-device Foundation Models route was dropped for now. `LocalInventoryPlanProvider` now uses `ChineseInventoryParser` + `ProductLexicon` (still fully on-device, no upload).
+- Understands: missing amounts (defaults to 1, marked as estimate), vague amounts (点/些/几), 一打/半打, name-first amounts (牛奶两瓶), run-together lists without punctuation, 喝完了又买了两瓶, filler/hesitation words, 给宝宝…, weights (recorded as 1 份 with a note), storage before or after the item, 都放…, spoken package dates (明天过期 / 还有三天过期 / 10月5号过期), shelf life (保质期七天 → estimated), spoken plans (三天内喝掉 / 这周吃掉 / 尽快).
+- Question policy: 冰箱 → 冷藏 inferred for fresh/produce; asked only for freezables (ice cream, meat, dumplings). Loose produce gets a typical-life plan suggestion instead of a photo request; packaged fresh food and medicine never get guessed dates.
+- Re-purchases link to the single same-name product without asking; the review shows "家里已有同款 · 改" to undo. Multiple same-name products still ask. (Adjusts spec §8.5's "explicit choice" rule: the review screen is the confirmation.)
+- Talking about finishing something ("牛奶喝完了") explains that this is done on the item page instead of misrecording.
+- Speech recognition now requests punctuation. Review shows defaulted quantities with the dashed "我推断的" underline.
+- Tests: 42 passed (sentence-level parser suite added). Extend `ProductLexicon` to teach new products.
+
 ## V2 直接接入与“青花”界面
 **Date:** 2026-09-22 · Xcode 26.3 · iOS 26.2 Simulator (iPhone 17)
 

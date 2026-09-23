@@ -96,6 +96,8 @@ final class VoiceManager: NSObject, SFSpeechRecognizerDelegate {
         // M2 requires local recognition; legacy remains local-first with server fallback if unavailable.
         recognitionRequest.requiresOnDeviceRecognition =
             requiresOnDeviceRecognition || speechRecognizer?.supportsOnDeviceRecognition == true
+        // Punctuation lets the planner tell items apart ("牛奶，冰激凌放冰箱了").
+        recognitionRequest.addsPunctuation = true
         
         // Setup Input Node
         let inputNode = audioEngine.inputNode

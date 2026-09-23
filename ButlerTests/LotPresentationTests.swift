@@ -95,6 +95,46 @@ final class LotPresentationTests: XCTestCase {
         XCTAssertEqual(evidence?.sourceKindRawValue, EvidenceSourceKind.systemEstimate.rawValue)
     }
 
+    func testRebuyingLinksToTheOnlySameNameProductWithoutAskingAndCanBeUndone() async throws {
+        let container = try ButlerStore.makePreviewContainer()
+        let context = ModelContext(container)
+        let milk = CatalogProduct(canonicalName: "牛奶")
+        context.insert(milk)
+        try context.save()
+        let coordinator = InventoryInputCoordinator(
+            provider: LocalInventoryPlanProvider(),
+            lookup: CatalogProductLookup(modelContainer: container),
+            repository: InventoryRepository(modelContainer: container)
+        )
+
+        await coordinator.submit(text: "买了两瓶牛奶", referenceDate: now, timeZone: calendar.timeZone)
+        XCTAssertEqual(coordinator.state, .reviewing, "re-buying must not ask")
+        XCTAssertTrue(coordinator.existingProductIDs.contains(milk.id))
+
+        coordinator.keepSeparate(fromExisting: milk.id)
+        XCTAssertEqual(coordinator.state, .reviewing)
+        XCTAssertFalse(coordinator.existingProductIDs.contains(milk.id))
+        coordinator.confirmAndExecute()
+        XCTAssertEqual(coordinator.state, .completed)
+        XCTAssertEqual(try ModelContext(container).fetch(FetchDescriptor<CatalogProduct>()).count, 2)
+    }
+
+    func testTwoSameNameProductsStillAsk() async throws {
+        let container = try ButlerStore.makePreviewContainer()
+        let context = ModelContext(container)
+        context.insert(CatalogProduct(canonicalName: "牛奶", brand: "光明"))
+        context.insert(CatalogProduct(canonicalName: "牛奶", brand: "蒙牛"))
+        try context.save()
+        let coordinator = InventoryInputCoordinator(
+            provider: LocalInventoryPlanProvider(),
+            lookup: CatalogProductLookup(modelContainer: container),
+            repository: InventoryRepository(modelContainer: container)
+        )
+        await coordinator.submit(text: "买了牛奶", referenceDate: now, timeZone: calendar.timeZone)
+        XCTAssertEqual(coordinator.state, .clarifying)
+        guard case .productChoice? = coordinator.questions.first else { return XCTFail("expected product question") }
+    }
+
     func testButtonActionsWriteThroughPolicyWithUserConfirmation() throws {
         let container = try ButlerStore.makePreviewContainer()
         let context = ModelContext(container)

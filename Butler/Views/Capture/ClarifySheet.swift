@@ -69,6 +69,11 @@ struct ClarifySheet: View {
         }
     }
 
+    /// Only frozen desserts melt; meat and dumplings just need eating sooner.
+    private var melts: Bool {
+        ["冰激凌", "冰淇淋", "雪糕", "冰棍"].contains { subjectName.contains($0) }
+    }
+
     private var glyph: Character {
         LotGlyph.glyph(for: subjectName, isMedicine: LotGlyph.isMedicine(name: subjectName, category: nil))
     }
@@ -95,10 +100,13 @@ struct ClarifySheet: View {
         switch question {
         case .field:
             HStack(spacing: 10) {
-                ChoiceTile(title: "冷冻层", number: "60", caption: "天内吃完", selected: storageChoice == .frozen, warn: false) {
+                ChoiceTile(title: "冷冻层", number: "\(InventoryStorageChoice.frozen.planHorizonDays)", caption: "天内吃完",
+                           selected: storageChoice == .frozen, warn: false) {
                     storageChoice = .frozen
                 }
-                ChoiceTile(title: "冷藏层", number: "1", caption: "天，会化", selected: storageChoice == .refrigerated, warn: true) {
+                ChoiceTile(title: "冷藏层", number: "\(InventoryStorageChoice.refrigerated.planHorizonDays)",
+                           caption: melts ? "天，会化" : "天内吃完",
+                           selected: storageChoice == .refrigerated, warn: true) {
                     storageChoice = .refrigerated
                 }
             }

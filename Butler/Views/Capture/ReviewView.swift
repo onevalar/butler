@@ -8,11 +8,13 @@ struct ReviewView: View {
 
     private struct Entry: Identifiable {
         let id: UUID
+        let productID: UUID
         let name: String
         let glyph: Character
         let isExisting: Bool
         let isMedicine: Bool
         let quantity: Int
+        let quantityInferred: Bool
         let unit: String
         let storage: String?
         let storageInferred: Bool
@@ -29,11 +31,13 @@ struct ReviewView: View {
             let medicine = LotGlyph.isMedicine(name: name, category: nil)
             let source = { (key: InventoryFieldKey) in lot.evidence.first { $0.fieldKey == key }?.source }
             return Entry(
-                id: lot.lotID, name: name,
+                id: lot.lotID, productID: lot.productID, name: name,
                 glyph: LotGlyph.glyph(for: name, isMedicine: medicine),
                 isExisting: coordinator.existingProductIDs.contains(lot.productID),
                 isMedicine: medicine,
-                quantity: lot.quantity, unit: lot.unit,
+                quantity: lot.quantity,
+                quantityInferred: source(.quantity)?.isInference ?? false,
+                unit: lot.unit,
                 storage: lot.storageLocation,
                 storageInferred: source(.storageLocation)?.isInference ?? false,
                 packageExpiry: lot.packageExpiryDate,
@@ -147,9 +151,8 @@ struct ReviewView: View {
                             .foregroundStyle(Theme.cobalt)
                     }
                     Spacer()
-                    Text("×\(line.quantity)")
-                        .font(Theme.numeral(24, italic: false))
-                        .foregroundStyle(Theme.ink)
+                    InferredText(text: "×\(line.quantity)", inferred: line.quantityInferred,
+                                 font: Theme.numeral(24, italic: false))
                 }
                 HStack(spacing: 6) {
                     if let storage = line.storage {
@@ -159,6 +162,14 @@ struct ReviewView: View {
                     }
                     if line.isExisting {
                         Text("· 家里已有同款").font(Theme.body(13)).foregroundStyle(Theme.muted)
+                        if coordinator.autoLinked[line.productID] != nil {
+                            // Linked without asking; one tap makes it a separate product instead.
+                            Button("改") { coordinator.keepSeparate(fromExisting: line.productID) }
+                                .font(Theme.body(13, weight: .medium))
+                                .foregroundStyle(Theme.cobalt)
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("不是同一种，改成新的")
+                        }
                     }
                     if let planned = line.plannedUseBy {
                         Text("·").font(Theme.body(13)).foregroundStyle(Theme.muted)
