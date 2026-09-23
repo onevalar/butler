@@ -1,4 +1,3 @@
-#if DEBUG
 import Foundation
 import Observation
 
@@ -26,6 +25,10 @@ final class InventoryInputCoordinator {
         self.provider = provider; self.lookup = lookup; self.repository = repository
     }
 
+    /// Nothing to clean up; keep deinit off the MainActor executor to avoid a Swift 6.2 runtime crash
+    /// (swift_task_deinitOnExecutor frees an unallocated TaskLocal scope when released on the main thread).
+    nonisolated deinit {}
+
     func submit(text: String, locale: Locale = .current, referenceDate: Date = Date(), timeZone: TimeZone = .current) async {
         guard state != .planning && state != .executing else { return }
         state = .planning; errorMessage = nil; questions = []; reviewPlan = nil
@@ -36,7 +39,7 @@ final class InventoryInputCoordinator {
                                                timeZone: timeZone, inputID: UUID(), planID: UUID())
             let base = try await provider.plan(for: input) // exactly once per submit
             try validateM2Plan(base, input: input)
-            session = InventoryPlanSession(basePlan: base)
+            session = InventoryPlanSession(basePlan: base, referenceDate: referenceDate)
             questions = base.unresolvedFields.filter(\.isRequired).map { .field($0) }
             for operation in base.operations {
                 guard case .createProduct(let product) = operation.operation else { continue }
@@ -60,6 +63,22 @@ final class InventoryInputCoordinator {
         session?.answer(field, with: .storageLocation(choice))
         questions.removeAll { if case .field(let value) = $0 { return value == field }; return false }
         refresh()
+    }
+
+    /// "先跳过": record the literal "冰箱" the user said; Home asks for the compartment later.
+    func postponeStorage(_ field: UnresolvedInventoryField) {
+        guard state == .clarifying,
+              questions.contains(where: { if case .field(let value) = $0 { return value == field }; return false }) else { return }
+        session?.answer(field, with: .postponedStorage(statedLocation: StorageLocation.ambiguousFridge))
+        questions.removeAll { if case .field(let value) = $0 { return value == field }; return false }
+        refresh()
+    }
+
+    func reset() {
+        guard state != .planning && state != .executing else { return }
+        state = .idle; errorMessage = nil; questions = []; reviewPlan = nil
+        confirmationRequirements = []; executionResult = nil; productDisplays = [:]; existingProductIDs = []
+        session = nil
     }
 
     func chooseProduct(createOperationID: UUID, choice: InventoryProductChoice) {
@@ -173,4 +192,3 @@ final class InventoryInputCoordinator {
     private func fail(_ error: Error) { failMessage((error as? LocalizedError)?.errorDescription ?? String(describing: error)) }
     private func failMessage(_ message: String) { errorMessage = message; state = .failed }
 }
-#endif

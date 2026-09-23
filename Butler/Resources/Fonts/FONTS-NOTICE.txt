@@ -1,0 +1,7 @@
+Bundled fonts (all SIL Open Font License 1.1):
+
+- Noto Serif SC (Regular, SemiBold, Bold) — © 2017-2024 Adobe (http://www.adobe.com/).
+  Source: https://github.com/notofonts/noto-cjk (Serif/SubsetOTF/SC). Subset to GB2312 + app strings.
+  Full license: OFL-NotoSerifSC.txt
+- Instrument Serif (Regular, Italic) — Copyright 2022 The Instrument Serif Project Authors (https://github.com/Instrument/instrument-serif)
+  Licensed under the same SIL Open Font License 1.1 text as OFL-NotoSerifSC.txt.

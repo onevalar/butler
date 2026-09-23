@@ -28,6 +28,10 @@ final class InventoryRepository {
         self.modelContainer = modelContainer
     }
 
+    /// Nothing to clean up; keep deinit off the MainActor executor to avoid a Swift 6.2 runtime crash
+    /// (swift_task_deinitOnExecutor frees an unallocated TaskLocal scope when released on the main thread).
+    nonisolated deinit {}
+
     func execute(
         _ plan: InventoryOperationPlan,
         trustedConfirmations: [TrustedInventoryConfirmation] = [],
@@ -141,7 +145,12 @@ final class InventoryRepository {
             return (.product, product.id)
 
         case .addLot(let payload):
-            let targetProduct = pendingProducts[payload.productID] ?? (try product(id: payload.productID, in: modelContext))
+            let targetProduct: CatalogProduct?
+            if let pendingProduct = pendingProducts[payload.productID] {
+                targetProduct = pendingProduct
+            } else {
+                targetProduct = try product(id: payload.productID, in: modelContext)
+            }
             guard let targetProduct else {
                 throw InventoryRepositoryError.entityNotFound(kind: "product", id: payload.productID)
             }
@@ -223,7 +232,13 @@ final class InventoryRepository {
             return (.lot, lot.id)
 
         case .createTemplate(let payload):
-            guard pendingProducts[payload.productID] != nil || try product(id: payload.productID, in: modelContext) != nil else {
+            let productExists: Bool
+            if pendingProducts[payload.productID] != nil {
+                productExists = true
+            } else {
+                productExists = try product(id: payload.productID, in: modelContext) != nil
+            }
+            guard productExists else {
                 throw InventoryRepositoryError.entityNotFound(kind: "product", id: payload.productID)
             }
             guard pendingTemplates[payload.templateID] == nil,
