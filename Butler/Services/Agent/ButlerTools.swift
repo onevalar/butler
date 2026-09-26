@@ -18,6 +18,14 @@ struct PendingChange: Identifiable {
     /// One line the owner reads on the card, e.g. "新增 牛奶 ×2 瓶".
     let title: String
     let detail: String?
+    /// What the judgment layer said. nil = not checked (no Jev key, or Jev unavailable).
+    var check: JevCheck? = nil
+}
+
+enum JevCheck: Equatable {
+    case passed
+    /// Jev disagreed, the model kept its proposal; the owner decides on the card.
+    case concern(String)
 }
 
 /// The assistant's hands: reads and proposes changes to the owner's real inventory and notes.
@@ -25,10 +33,16 @@ struct PendingChange: Identifiable {
 final class ButlerTools {
     let container: ModelContainer
     let notes: LocalMemoryStore
-    let jev: JevClient
+    let jev: any ConditionJudge
     private(set) var pending: [PendingChange] = []
+    /// What the owner said this turn (and just before), given to Jev as the request.
+    private var request = ""
+    private var previous: String?
+    /// Proposals Jev already pushed back on this turn. Proposing the same thing again means the
+    /// model kept it; it then goes to the card with Jev's concern shown.
+    private var raisedConcerns: Set<String> = []
 
-    init(container: ModelContainer, notes: LocalMemoryStore, jev: JevClient) {
+    init(container: ModelContainer, notes: LocalMemoryStore, jev: any ConditionJudge) {
         self.container = container
         self.notes = notes
         self.jev = jev
@@ -37,6 +51,13 @@ final class ButlerTools {
     nonisolated deinit {}
 
     func clearPending() { pending = [] }
+
+    func beginTurn(request: String, previous: String?) {
+        self.request = request
+        self.previous = previous
+        raisedConcerns = []
+        pending = []
+    }
 
     func removePending(_ id: UUID) { pending.removeAll { $0.id == id } }
 
@@ -66,13 +87,15 @@ final class ButlerTools {
     // MARK: - Execution
 
     func execute(_ call: LocalToolCall) async -> String {
+        insistedConcern = nil
+        defer { insistedConcern = nil }
         do {
             let data = Data(call.arguments.utf8)
             switch call.name {
             case "search_inventory":
                 struct Args: Decodable { var query: String; var include_finished: Bool }
                 let args = try JSONDecoder().decode(Args.self, from: data)
-                return try encode(searchInventory(args.query, includeFinished: args.include_finished))
+                return try encode(await searchInventory(args.query, includeFinished: args.include_finished))
             case "propose_add_items":
                 struct Item: Decodable {
                     var name: String; var quantity: Int; var unit: String
@@ -80,21 +103,37 @@ final class ButlerTools {
                 }
                 struct Args: Decodable { var items: [Item] }
                 let args = try JSONDecoder().decode(Args.self, from: data)
-                for item in args.items {
-                    try proposeAdd(name: item.name, quantity: item.quantity, unit: item.unit, storage: item.storage,
-                                   packageExpiry: try Self.date(item.package_expiry),
-                                   plannedUseBy: try Self.date(item.planned_use_by))
+                let items = try args.items.map { item in
+                    try newItem(name: item.name, quantity: item.quantity, unit: item.unit, storage: item.storage,
+                                packageExpiry: try Self.date(item.package_expiry),
+                                plannedUseBy: try Self.date(item.planned_use_by))
                 }
+                let review = await reviewAdd(items)
+                if let rejected = gate("add|" + call.arguments, review) { return rejected }
+                for item in items { proposeAdd(item, check: review.check) }
             case "propose_set_quantity":
                 struct Args: Decodable { var lot_id: String; var quantity: Int }
                 let args = try JSONDecoder().decode(Args.self, from: data)
                 let lot = try activeLot(args.lot_id)
                 guard (0...999).contains(args.quantity) else { throw ToolError("数量需要在 0 到 999 之间") }
+                var extra: [JevClient.Question] = []
+                let used = lot.quantity - args.quantity
+                if args.quantity != lot.quantity, used >= 0, used != args.quantity {
+                    extra = [.init(id: "m.remain", question: Self.meaningQuestion,
+                                   candidate: "\(lot.name) 现在还剩 \(args.quantity) \(lot.unit)"),
+                             .init(id: "m.used", question: Self.meaningQuestion,
+                                   candidate: "\(lot.name) 用掉了 \(args.quantity) \(lot.unit)，还剩 \(used) \(lot.unit)")]
+                }
+                let review = await reviewTarget(lot, extra: extra) { answers in
+                    guard let remain = answers["m.remain"], let usedP = answers["m.used"], usedP > remain + 0.2 else { return nil }
+                    return "“\(args.quantity)”更可能是用掉的数量：\(lot.name) 原有 \(lot.quantity)，用掉 \(args.quantity) 后应剩 \(used)"
+                }
+                if let rejected = gate("qty|\(lot.id)|\(args.quantity)", review) { return rejected }
                 if args.quantity == 0 {
-                    add(.close(lot, .depleted), title: "\(lot.name) 用完了", detail: "原有 \(lot.quantity) \(lot.unit)")
+                    add(.close(lot, .depleted), title: "\(lot.name) 用完了", detail: "原有 \(lot.quantity) \(lot.unit)", check: review.check)
                 } else {
                     add(.setQuantity(lot, args.quantity), title: "\(lot.name) 剩 \(args.quantity) \(lot.unit)",
-                        detail: "原来 \(lot.quantity) \(lot.unit)")
+                        detail: "原来 \(lot.quantity) \(lot.unit)", check: review.check)
                 }
             case "propose_close":
                 struct Args: Decodable { var lot_id: String; var reason: String }
@@ -105,7 +144,9 @@ final class ButlerTools {
                 case "gifted": (.gifted, "送人")
                 default: (.depleted, "用完了")
                 }
-                add(.close(lot, state), title: "\(lot.name) \(verb)", detail: "\(lot.quantity) \(lot.unit)")
+                let review = await reviewTarget(lot)
+                if let rejected = gate("close|\(lot.id)|\(args.reason)", review) { return rejected }
+                add(.close(lot, state), title: "\(lot.name) \(verb)", detail: "\(lot.quantity) \(lot.unit)", check: review.check)
             case "propose_set_date":
                 struct Args: Decodable { var lot_id: String; var kind: String; var date: String? }
                 let args = try JSONDecoder().decode(Args.self, from: data)
@@ -113,16 +154,28 @@ final class ButlerTools {
                 let kind: LotDateKind = args.kind == "package_expiry" ? .packageExpiry : .plannedUseBy
                 let date = try Self.date(args.date)
                 let label = kind == .packageExpiry ? "包装有效期" : "计划吃完"
+                var extra: [JevClient.Question] = []
+                if kind == .packageExpiry, let date {
+                    extra = [.init(id: "d.stated", question: Self.statedDateQuestion,
+                                   candidate: "\(lot.name) 包装有效期 \(date.isoDay)")]
+                }
+                let review = await reviewTarget(lot, extra: extra) { answers in
+                    guard let stated = answers["d.stated"], stated < 0.3 else { return nil }
+                    return "这个包装有效期看起来不是用户明确说出的，不要推测包装日期"
+                }
+                if let rejected = gate("date|\(lot.id)|\(args.kind)|\(args.date ?? "")", review) { return rejected }
                 add(.setDate(lot, kind, date), title: "\(lot.name) \(label)",
-                    detail: date.map { "改为 \($0.monthDay)" } ?? "清除这个日期")
+                    detail: date.map { "改为 \($0.monthDay)" } ?? "清除这个日期", check: review.check)
             case "propose_move":
                 struct Args: Decodable { var lot_id: String; var location: String }
                 let args = try JSONDecoder().decode(Args.self, from: data)
                 let lot = try activeLot(args.lot_id)
                 let location = args.location.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !location.isEmpty, location.count <= 40 else { throw ToolError("位置不能为空") }
+                let review = await reviewTarget(lot)
+                if let rejected = gate("move|\(lot.id)|\(location)", review) { return rejected }
                 add(.move(lot, location), title: "\(lot.name) 放到 \(location)",
-                    detail: lot.storageLocation.map { "原来在 \($0)" })
+                    detail: lot.storageLocation.map { "原来在 \($0)" }, check: review.check)
             case "search_notes":
                 struct Args: Decodable { var query: String }
                 let query = try JSONDecoder().decode(Args.self, from: data).query
@@ -146,9 +199,12 @@ final class ButlerTools {
             case "judge_with_jev":
                 struct Args: Decodable { var request: String; var question: String; var candidates: [JevClient.Candidate] }
                 let args = try JSONDecoder().decode(Args.self, from: data)
-                let judgments = try await jev.judge(request: args.request, question: args.question, candidates: args.candidates)
-                return try encode(["source": "jev", "judgments": judgments.map { ["id": $0.id, "probability": $0.probability] as [String: Any] }]
-                                  as [String: Any])
+                let answers = try await jev.judge(request: args.request, questions: args.candidates.map {
+                    JevClient.Question(id: $0.id, question: args.question, candidate: $0.text)
+                })
+                return try encode(["source": "jev", "judgments": args.candidates.compactMap { candidate in
+                    answers[candidate.id].map { ["id": candidate.id, "probability": $0] as [String: Any] }
+                }] as [String: Any])
             default:
                 return #"{"error":"unknown_tool"}"#
             }
@@ -205,27 +261,135 @@ final class ButlerTools {
         init(_ message: String) { self.message = message }
     }
 
-    private func add(_ kind: PendingChange.Kind, title: String, detail: String?) {
-        pending.append(PendingChange(kind: kind, title: title, detail: detail))
+    /// Set by `gate` when the model re-proposed despite Jev; consumed by the next `add`s of this call.
+    private var insistedConcern: String?
+
+    private func add(_ kind: PendingChange.Kind, title: String, detail: String?, check: JevCheck? = nil) {
+        pending.append(PendingChange(kind: kind, title: title, detail: detail,
+                                     check: insistedConcern.map { .concern($0) } ?? check))
     }
 
-    private func proposeAdd(name: String, quantity: Int, unit: String, storage: String?,
-                            packageExpiry: Date?, plannedUseBy: Date?) throws {
+    private func newItem(name: String, quantity: Int, unit: String, storage: String?,
+                         packageExpiry: Date?, plannedUseBy: Date?) throws -> InventoryActions.NewItem {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let unit = unit.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, name.count <= 40, (1...999).contains(quantity) else { throw ToolError("名称或数量不合理") }
         let candidates = try CatalogProductLookup(modelContainer: container).exactMatches(for: name)
         let linked = candidates.count == 1 ? candidates.first?.id : nil
-        let item = InventoryActions.NewItem(name: name, quantity: quantity, unit: unit.isEmpty ? "份" : unit,
-                                            storage: storage?.isEmpty == true ? nil : storage,
-                                            packageExpiry: packageExpiry, plannedUseBy: plannedUseBy,
-                                            existingProductID: linked)
+        return InventoryActions.NewItem(name: name, quantity: quantity, unit: unit.isEmpty ? "份" : unit,
+                                        storage: storage?.isEmpty == true ? nil : storage,
+                                        packageExpiry: packageExpiry, plannedUseBy: plannedUseBy,
+                                        existingProductID: linked)
+    }
+
+    private func proposeAdd(_ item: InventoryActions.NewItem, check: JevCheck?) {
         var parts: [String] = []
         if let storage = item.storage { parts.append(storage) }
-        if let date = packageExpiry { parts.append("包装有效期 \(date.monthDay)") }
-        if let date = plannedUseBy { parts.append("\(date.monthDay)前吃完") }
-        if linked != nil { parts.append("家里已有同款") }
-        add(.add(item), title: "新增 \(name) ×\(quantity) \(item.unit)", detail: parts.isEmpty ? nil : parts.joined(separator: " · "))
+        if let date = item.packageExpiry { parts.append("包装有效期 \(date.monthDay)") }
+        if let date = item.plannedUseBy { parts.append("\(date.monthDay)前吃完") }
+        if item.existingProductID != nil { parts.append("家里已有同款") }
+        add(.add(item), title: "新增 \(item.name) ×\(item.quantity) \(item.unit)",
+            detail: parts.isEmpty ? nil : parts.joined(separator: " · "), check: check)
+    }
+
+    // MARK: - Judgment layer (Jev between the model and the data)
+
+    static let targetQuestion = "用户这句话说的是这一件物品吗？"
+    static let relevanceQuestion = "这件物品与用户这句话提到或询问的东西有关吗？"
+    static let meaningQuestion = "用户这句话的意思是这个结果吗？"
+    static let statedDateQuestion = "这个日期是用户在对话里明确说出的吗？"
+    static let newPurchaseQuestion = "对于家里已有的这件物品，用户这句话是在说又新买了一份（而不是在说这件本身，或纠正它的信息）吗？"
+
+    private struct Review {
+        var checked = false
+        var concern: String?
+        var check: JevCheck? { checked ? .passed : nil }
+    }
+
+    /// Why Jev was skipped this turn, if it failed. Reported to the model, never blocks.
+    private var jevFailure: String?
+
+    private var jevRequest: String {
+        guard let previous, !previous.isEmpty else { return request }
+        return "上一句：\(previous)\n这一句：\(request)"
+    }
+
+    /// nil when there is no Jev key or Jev failed; callers then proceed exactly as without Jev.
+    private func ask(_ questions: [JevClient.Question]) async -> [String: Double]? {
+        guard jev.isConfigured, !request.isEmpty, !questions.isEmpty else { return nil }
+        do {
+            let answers = try await jev.judge(request: jevRequest, questions: questions)
+            jevFailure = nil
+            return answers
+        } catch {
+            jevFailure = error.localizedDescription
+            return nil
+        }
+    }
+
+    /// Checks that `lot` is what the owner means (against same-name siblings) plus any extra questions.
+    private func reviewTarget(_ lot: LotFacts, extra: [JevClient.Question] = [],
+                              interpret: ([String: Double]) -> String? = { _ in nil }) async -> Review {
+        let siblings = (try? siblings(of: lot)) ?? []
+        let questions = ([lot] + siblings).map {
+            JevClient.Question(id: "t." + $0.id.uuidString, question: Self.targetQuestion, candidate: Self.jevText($0))
+        } + extra
+        guard let answers = await ask(questions) else { return Review() }
+        var review = Review(checked: true)
+        let target = answers["t." + lot.id.uuidString] ?? 1
+        let best = siblings.map { ($0, answers["t." + $0.id.uuidString] ?? 0) }.max { $0.1 < $1.1 }
+        if let (other, p) = best, target < 0.5, p > target + 0.2 {
+            review.concern = "用户更可能指的是另一件：\(Self.jevText(other))（lot_id \(other.id.uuidString)）"
+        } else if target < 0.3 {
+            review.concern = "用户可能不是在说这件（\(Self.jevText(lot))）"
+        } else {
+            review.concern = interpret(answers)
+        }
+        return review
+    }
+
+    /// For each new item that already exists at home: is it really a new purchase? Is a package date stated?
+    private func reviewAdd(_ items: [InventoryActions.NewItem]) async -> Review {
+        var questions: [JevClient.Question] = []
+        var existing: [Int: [LotFacts]] = [:]
+        for (index, item) in items.enumerated() {
+            let lots = ((try? activeLots()) ?? []).filter { $0.name == item.name || $0.productID == item.existingProductID }
+            existing[index] = Array(lots.prefix(4))
+            questions += lots.prefix(4).map {
+                .init(id: "n.\(index).\($0.id.uuidString)", question: Self.newPurchaseQuestion,
+                      candidate: Self.jevText($0) + "；用户这次提到：\(item.name) ×\(item.quantity) \(item.unit)")
+            }
+            if let date = item.packageExpiry {
+                questions.append(.init(id: "d.\(index)", question: Self.statedDateQuestion,
+                                       candidate: "\(item.name) 包装有效期 \(date.isoDay)"))
+            }
+        }
+        guard !questions.isEmpty else { return Review() }
+        guard let answers = await ask(questions) else { return Review() }
+        var review = Review(checked: true)
+        for (index, item) in items.enumerated() {
+            let lots = existing[index] ?? []
+            let newP = lots.map { answers["n.\(index).\($0.id.uuidString)"] ?? 1 }
+            if let first = lots.first, let highest = newP.max(), highest < 0.4 {
+                review.concern = "用户可能是在说家里已有的 \(Self.jevText(first))（lot_id \(first.id.uuidString)），不是新买；如果是纠正，请修改原记录"
+                break
+            }
+            if let stated = answers["d.\(index)"], stated < 0.3 {
+                review.concern = "\(item.name) 的包装有效期看起来不是用户明确说出的，不要推测，改为 null"
+                break
+            }
+        }
+        return review
+    }
+
+    /// nil = go ahead. Otherwise the tool output telling the model what Jev objected to.
+    private func gate(_ signature: String, _ review: Review) -> String? {
+        guard let concern = review.concern else { return nil }
+        if raisedConcerns.contains(signature) { insistedConcern = concern; return nil }
+        raisedConcerns.insert(signature)
+        return (try? encode(["status": "needs_review", "saved": false, "jev_concern": concern,
+                             "hint": "请按这个判断修正后重新提出；拿不准就直接问用户，不要猜。如果你仍确定原提议正确，可以原样再提一次，卡片上会显示这条提醒让用户决定。"]
+                            as [String: Any])) ?? #"{"status":"needs_review","saved":false}"#
     }
 
     private func allLots() throws -> [(InventoryLot, CatalogProduct?)] {
@@ -233,6 +397,25 @@ final class ButlerTools {
         let products = Dictionary(try context.fetch(FetchDescriptor<CatalogProduct>()).map { ($0.id, $0) },
                                   uniquingKeysWith: { first, _ in first })
         return try context.fetch(FetchDescriptor<InventoryLot>()).map { ($0, products[$0.productID]) }
+    }
+
+    private func activeLots() throws -> [LotFacts] {
+        try allLots().filter { $0.0.state == .active }.map { LotFacts(lot: $0.0, product: $0.1) }
+    }
+
+    private func siblings(of lot: LotFacts) throws -> [LotFacts] {
+        Array(try activeLots().filter { $0.id != lot.id && ($0.productID == lot.productID || $0.name == lot.name) }.prefix(6))
+    }
+
+    /// One line Jev can read about a lot.
+    static func jevText(_ lot: LotFacts) -> String {
+        var parts = [lot.name + (lot.brand.map { "（\($0)）" } ?? ""), "\(lot.quantity) \(lot.unit)"]
+        if let storage = lot.storageLocation { parts.append("放在\(storage)") }
+        parts.append("\(lot.startedAt.monthDay)买的")
+        if let date = lot.governingDate {
+            parts.append((lot.governingDateKind == .plannedUseBy ? "计划 " : "有效期 ") + date.monthDay)
+        }
+        return parts.joined(separator: "，")
     }
 
     private func activeLot(_ raw: String) throws -> LotFacts {
@@ -250,7 +433,7 @@ final class ButlerTools {
         try activeLot(lot.id.uuidString)
     }
 
-    private func searchInventory(_ query: String, includeFinished: Bool) throws -> [String: Any] {
+    private func searchInventory(_ query: String, includeFinished: Bool) async throws -> [String: Any] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let lots = try allLots()
         // "牛奶 鸡蛋" or "牛奶、鸡蛋" matches either word.
@@ -263,14 +446,40 @@ final class ButlerTools {
                     || (product?.canonicalName).map { !$0.isEmpty && word.localizedStandardContains($0) } == true
             }
         }
-        let active = lots.filter { $0.0.state == .active && matches($0.0, $0.1) }
+        let allActive = lots.filter { $0.0.state == .active }.map { LotFacts(lot: $0.0, product: $0.1) }
+            .sorted { ($0.daysLeft ?? .max) < ($1.daysLeft ?? .max) }
+        var active = lots.filter { $0.0.state == .active && matches($0.0, $0.1) }
             .map { LotFacts(lot: $0.0, product: $0.1) }
             .sorted { ($0.daysLeft ?? .max) < ($1.daysLeft ?? .max) }
-        var result: [String: Any] = [
-            "today": Date.now.isoDay,
-            "count": active.count,
-            "items": active.prefix(80).map(Self.describe),
-        ]
+        var items = active.prefix(80).map(Self.describe)
+        var result: [String: Any] = ["today": Date.now.isoDay]
+
+        // Jev between the data and the model: rank what the words matched, or find what they missed.
+        // An overview ("" query) has nothing to disambiguate and is left as is.
+        if !words.isEmpty {
+            let pool = active.count >= 2 && active.count <= 30 ? active
+                : active.isEmpty && allActive.count <= 60 ? allActive : []
+            let answers = await ask(pool.map {
+                .init(id: $0.id.uuidString, question: Self.relevanceQuestion, candidate: Self.jevText($0))
+            })
+            if let answers {
+                let keywordMissed = active.isEmpty
+                let scored = pool.map { ($0, answers[$0.id.uuidString] ?? 0) }
+                let kept = active.isEmpty ? scored.filter { $0.1 >= 0.5 } : scored // never drop what the words matched
+                active = kept.sorted { $0.1 > $1.1 }.map(\.0)
+                items = kept.sorted { $0.1 > $1.1 }.map { lot, p in
+                    var item = Self.describe(lot)
+                    item["relevance"] = (p * 100).rounded() / 100
+                    return item
+                }
+                result["judged_by"] = "jev"
+                if keywordMissed { result["found_by"] = "jev（关键词没有直接命中）" }
+            } else if let jevFailure, !pool.isEmpty {
+                result["jev"] = "暂时不可用（\(jevFailure)），以下是未经判断的原始结果"
+            }
+        }
+        result["count"] = active.count
+        result["items"] = items
         if includeFinished {
             let cutoff = Calendar.current.date(byAdding: .day, value: -30, to: .now) ?? .distantPast
             result["finished"] = lots.filter { $0.0.state != .active && $0.0.updatedAt >= cutoff && matches($0.0, $0.1) }

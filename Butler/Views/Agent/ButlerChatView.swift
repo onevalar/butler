@@ -139,6 +139,16 @@ struct ButlerChatView: View {
                         if let detail = change.detail {
                             Text(detail).font(Theme.body(13)).foregroundStyle(Theme.muted)
                         }
+                        switch change.check {
+                        case .passed:
+                            Label("Jev 已核对", systemImage: "checkmark.seal")
+                                .font(Theme.body(12)).foregroundStyle(Theme.cobalt)
+                        case .concern(let concern):
+                            Label("Jev 提醒：\(concern)", systemImage: "exclamationmark.triangle")
+                                .font(Theme.body(12)).foregroundStyle(Theme.vermilion)
+                        case nil:
+                            EmptyView()
+                        }
                     }
                     Spacer(minLength: 0)
                     Button { chat.tools?.removePending(change.id) } label: {
@@ -290,7 +300,7 @@ struct ButlerChatView: View {
                 } header: {
                     Text("Jev 条件判断")
                 } footer: {
-                    Text("接入后，管家在分不清你说的是哪件东西、是纠正还是新增时，会请 Jev 帮忙判断。密钥保存在系统钥匙串。")
+                    Text("接入后，管家每次查家里的东西、每次提出修改，都会先请 Jev 核对：说的是哪一件、数字是剩余还是用掉、是新买还是纠正、日期是不是你说的。不填也能完整使用，只是少这一道核对。密钥保存在系统钥匙串。")
                 }
 
                 Section {

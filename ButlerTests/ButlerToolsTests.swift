@@ -5,12 +5,25 @@ import XCTest
 
 @MainActor
 final class ButlerToolsTests: XCTestCase {
-    private func makeTools() throws -> (ButlerTools, ModelContainer) {
+    private func makeTools(jev: (any ConditionJudge)? = nil) throws -> (ButlerTools, ModelContainer) {
         let configuration = ModelConfiguration(schema: ButlerStore.schema, isStoredInMemoryOnly: true)
         let container = try ModelContainer(for: ButlerStore.schema, configurations: [configuration])
         let notesFile = FileManager.default.temporaryDirectory.appendingPathComponent("notes-\(UUID()).json")
-        let tools = ButlerTools(container: container, notes: try LocalMemoryStore(file: notesFile), jev: JevClient())
+        let tools = ButlerTools(container: container, notes: try LocalMemoryStore(file: notesFile), jev: jev ?? NoJudge())
         return (tools, container)
+    }
+
+    /// Two milks: an older one in the fridge (3 left) and a newer one in the freezer (6 left).
+    private func seedTwoMilks(_ container: ModelContainer) throws -> (fridge: InventoryLot, freezer: InventoryLot) {
+        let context = ModelContext(container)
+        let product = CatalogProduct(canonicalName: "牛奶")
+        let fridge = InventoryLot(productID: product.id, quantity: 3, unit: "瓶")
+        fridge.storageLocation = "冷藏"
+        let freezer = InventoryLot(productID: product.id, quantity: 6, unit: "瓶")
+        freezer.storageLocation = "冷冻"
+        context.insert(product); context.insert(fridge); context.insert(freezer)
+        try context.save()
+        return (fridge, freezer)
     }
 
     private func call(_ tools: ButlerTools, _ name: String, _ arguments: String) async -> [String: Any] {
@@ -75,6 +88,129 @@ final class ButlerToolsTests: XCTestCase {
     func testJevToolOnlyOfferedWithKey() throws {
         let (tools, _) = try makeTools()
         XCTAssertNotNil(try JSONSerialization.jsonObject(with: Data(tools.toolJSON.utf8)) as? [Any])
-        XCTAssertEqual(tools.toolJSON.contains("judge_with_jev"), tools.jev.isConfigured)
+        XCTAssertFalse(tools.toolJSON.contains("judge_with_jev"))
+    }
+
+    // MARK: - Jev as the layer between the model and the data
+
+    func testWithoutJevNothingIsCheckedAndEverythingStillWorks() async throws {
+        let (tools, container) = try makeTools()
+        let milks = try seedTwoMilks(container)
+        tools.beginTurn(request: "冷藏的牛奶还剩2瓶", previous: nil)
+        let output = await call(tools, "propose_set_quantity", #"{"lot_id":"\#(milks.fridge.id.uuidString)","quantity":2}"#)
+        XCTAssertEqual(output["status"] as? String, "waiting_for_user_confirmation")
+        XCTAssertNil(tools.pending.first?.check)
+    }
+
+    func testJevRanksSearchResultsAndFindsWhatKeywordsMissed() async throws {
+        let judge = FakeJudge()
+        let (tools, container) = try makeTools(jev: judge)
+        let milks = try seedTwoMilks(container)
+        judge.answer = { id, _ in id == milks.freezer.id.uuidString ? 0.9 : 0.2 }
+        tools.beginTurn(request: "冻起来的那箱奶还有多少", previous: nil)
+        let ranked = await call(tools, "search_inventory", #"{"query":"牛奶","include_finished":false}"#)
+        XCTAssertEqual(ranked["judged_by"] as? String, "jev")
+        let items = try XCTUnwrap(ranked["items"] as? [[String: Any]])
+        XCTAssertEqual(items.count, 2, "Jev reorders but never drops what the words matched")
+        XCTAssertEqual(items.first?["lot_id"] as? String, milks.freezer.id.uuidString)
+
+        let missed = await call(tools, "search_inventory", #"{"query":"早餐奶","include_finished":false}"#)
+        XCTAssertNotNil(missed["found_by"])
+        XCTAssertEqual((missed["items"] as? [[String: Any]])?.first?["lot_id"] as? String, milks.freezer.id.uuidString)
+        XCTAssertEqual((missed["items"] as? [[String: Any]])?.count, 1)
+    }
+
+    func testJevPushesBackOnWrongLotThenOwnerSeesConcernIfModelInsists() async throws {
+        let judge = FakeJudge()
+        let (tools, container) = try makeTools(jev: judge)
+        let milks = try seedTwoMilks(container)
+        judge.answer = { id, _ in id == "t." + milks.freezer.id.uuidString ? 0.9 : 0.1 }
+        tools.beginTurn(request: "冷冻那箱奶喝完了", previous: nil)
+        let arguments = #"{"lot_id":"\#(milks.fridge.id.uuidString)","reason":"used_up"}"#
+        let first = await call(tools, "propose_close", arguments)
+        XCTAssertEqual(first["status"] as? String, "needs_review")
+        XCTAssertTrue((first["jev_concern"] as? String)?.contains(milks.freezer.id.uuidString) == true)
+        XCTAssertTrue(tools.pending.isEmpty)
+
+        let insisted = await call(tools, "propose_close", arguments)
+        XCTAssertEqual(insisted["status"] as? String, "waiting_for_user_confirmation")
+        guard case .concern? = tools.pending.first?.check else { return XCTFail("owner must see Jev's concern") }
+
+        tools.beginTurn(request: "冷冻那箱奶喝完了", previous: nil)
+        let right = await call(tools, "propose_close", #"{"lot_id":"\#(milks.freezer.id.uuidString)","reason":"used_up"}"#)
+        XCTAssertEqual(right["status"] as? String, "waiting_for_user_confirmation")
+        XCTAssertEqual(tools.pending.first?.check, .passed)
+    }
+
+    func testJevCatchesEatenVersusRemaining() async throws {
+        let judge = FakeJudge()
+        let (tools, container) = try makeTools(jev: judge)
+        let milks = try seedTwoMilks(container)
+        // "喝了2瓶" from 6: "used 2, 4 left" is right; "2 left" is not.
+        judge.answer = { id, question in
+            if id.hasPrefix("m.") { return question.candidate.contains("还剩 4") ? 0.9 : 0.1 }
+            return id.hasSuffix(milks.freezer.id.uuidString) ? 0.9 : 0.1
+        }
+        tools.beginTurn(request: "冷冻的牛奶喝了2瓶", previous: nil)
+        let output = await call(tools, "propose_set_quantity", #"{"lot_id":"\#(milks.freezer.id.uuidString)","quantity":2}"#)
+        XCTAssertEqual(output["status"] as? String, "needs_review")
+        XCTAssertTrue((output["jev_concern"] as? String)?.contains("应剩 4") == true)
+        let fixed = await call(tools, "propose_set_quantity", #"{"lot_id":"\#(milks.freezer.id.uuidString)","quantity":4}"#)
+        XCTAssertEqual(fixed["status"] as? String, "waiting_for_user_confirmation")
+    }
+
+    func testJevQuestionsNewPurchaseAndInventedPackageDate() async throws {
+        let judge = FakeJudge()
+        let (tools, container) = try makeTools(jev: judge)
+        _ = try seedTwoMilks(container)
+        judge.answer = { id, _ in id.hasPrefix("n.") ? 0.1 : 0.9 }
+        tools.beginTurn(request: "不是山姆的，是盒马买的牛奶", previous: "山姆买了牛奶")
+        let correction = await call(tools, "propose_add_items",
+            #"{"items":[{"name":"牛奶","quantity":1,"unit":"瓶","storage":null,"package_expiry":null,"planned_use_by":null}]}"#)
+        XCTAssertEqual(correction["status"] as? String, "needs_review")
+        XCTAssertEqual(judge.requests.last, "上一句：山姆买了牛奶\n这一句：不是山姆的，是盒马买的牛奶")
+
+        judge.answer = { id, _ in id.hasPrefix("d.") ? 0.05 : 0.9 }
+        tools.beginTurn(request: "买了一袋面包", previous: nil)
+        let invented = await call(tools, "propose_add_items",
+            #"{"items":[{"name":"面包","quantity":1,"unit":"袋","storage":null,"package_expiry":"2026-10-01","planned_use_by":null}]}"#)
+        XCTAssertEqual(invented["status"] as? String, "needs_review")
+        XCTAssertTrue(tools.pending.isEmpty)
+    }
+
+    func testJevFailureNeverBlocks() async throws {
+        let judge = FakeJudge()
+        judge.fails = true
+        let (tools, container) = try makeTools(jev: judge)
+        let milks = try seedTwoMilks(container)
+        tools.beginTurn(request: "牛奶还剩一瓶", previous: nil)
+        let search = await call(tools, "search_inventory", #"{"query":"牛奶","include_finished":false}"#)
+        XCTAssertEqual((search["items"] as? [[String: Any]])?.count, 2)
+        XCTAssertNotNil(search["jev"])
+        let output = await call(tools, "propose_set_quantity", #"{"lot_id":"\#(milks.fridge.id.uuidString)","quantity":1}"#)
+        XCTAssertEqual(output["status"] as? String, "waiting_for_user_confirmation")
+        XCTAssertNil(tools.pending.first?.check)
+    }
+}
+
+@MainActor
+private final class NoJudge: ConditionJudge {
+    var isConfigured: Bool { false }
+    nonisolated deinit {}
+    func judge(request: String, questions: [JevClient.Question]) async throws -> [String: Double] { [:] }
+}
+
+@MainActor
+private final class FakeJudge: ConditionJudge {
+    var isConfigured: Bool { true }
+    var fails = false
+    var answer: (String, JevClient.Question) -> Double = { _, _ in 0.9 }
+    private(set) var requests: [String] = []
+    nonisolated deinit {}
+
+    func judge(request: String, questions: [JevClient.Question]) async throws -> [String: Double] {
+        requests.append(request)
+        if fails { throw JevClient.JevError.timeout }
+        return Dictionary(questions.map { ($0.id, answer($0.id, $0)) }, uniquingKeysWith: { first, _ in first })
     }
 }
