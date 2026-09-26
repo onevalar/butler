@@ -5,10 +5,16 @@ import Foundation
 final class SubscriptionModel: LocalAgentModel {
     private let connection: SubscriptionConnection
     private let network: URLSession
+    private let instructions: () -> String
+    private let tools: () -> String
 
-    init(connection: SubscriptionConnection, network: URLSession = .shared) {
+    init(connection: SubscriptionConnection, network: URLSession = .shared,
+         instructions: @escaping () -> String = { SubscriptionModel.instructions },
+         tools: @escaping () -> String = { SubscriptionModel.toolJSON }) {
         self.connection = connection
         self.network = network
+        self.instructions = instructions
+        self.tools = tools
     }
 
     func reply(to messages: [LocalAgentMessage]) async throws -> LocalModelReply {
@@ -21,14 +27,22 @@ final class SubscriptionModel: LocalAgentModel {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.setValue("butler_ios", forHTTPHeaderField: "originator")
-        request.httpBody = try Self.requestBody(messages)
+        request.httpBody = try Self.requestBody(messages, instructions: instructions(), toolJSON: tools())
         let (bytes, response) = try await network.bytes(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         if status == 401 {
             try connection.signOut()
             throw SubscriptionError.signInRequired
         }
-        guard (200..<300).contains(status) else { throw SubscriptionError.unavailable(status) }
+        guard (200..<300).contains(status) else {
+            // Keep the service's own words: they say what is actually wrong (model, quota, format).
+            var body = Data()
+            for try await byte in bytes {
+                body.append(byte)
+                if body.count > 1500 { break }
+            }
+            throw SubscriptionError.rejected(status, Self.serviceMessage(body))
+        }
         var stream = SubscriptionStream()
         var size = 0
         var line = Data()
@@ -50,7 +64,18 @@ final class SubscriptionModel: LocalAgentModel {
         return try stream.finish()
     }
 
-    static func requestBody(_ messages: [LocalAgentMessage]) throws -> Data {
+    static func serviceMessage(_ body: Data) -> String? {
+        if let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
+            if let error = json["error"] as? [String: Any], let message = error["message"] as? String { return message }
+            if let detail = json["detail"] as? String { return detail }
+            if let message = json["message"] as? String { return message }
+        }
+        let text = String(decoding: body, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : String(text.prefix(300))
+    }
+
+    static func requestBody(_ messages: [LocalAgentMessage], instructions: String = SubscriptionModel.instructions,
+                            toolJSON: String = SubscriptionModel.toolJSON) throws -> Data {
         var input: [[String: Any]] = []
         for message in messages {
             switch message {
@@ -71,6 +96,9 @@ final class SubscriptionModel: LocalAgentModel {
             case .receipt(let id, let saved):
                 let text = "手机执行回执：预览\(id.uuidString)\(saved ? "已确认并保存" : "已取消，未保存")。这是用户操作后的实际结果。"
                 input.append(["role": "developer", "content": [["type": "input_text", "text": text]]])
+            case .note(let summary):
+                input.append(["role": "developer", "content": [["type": "input_text",
+                    "text": "手机执行回执（用户操作后的实际结果）：\n" + summary]]])
             }
         }
         let tools = try JSONSerialization.jsonObject(with: Data(toolJSON.utf8))
@@ -129,11 +157,16 @@ struct SubscriptionStream {
             output.append(item)
         case "response.completed":
             guard let response = event["response"] as? [String: Any], response["id"] is String else { throw SubscriptionError.invalidResponse }
-            if let model = response["model"] as? String, model != "gpt-6-sol" { throw SubscriptionError.invalidResponse }
+            // Dated snapshots ("gpt-6-sol-2026-…") are the same model; anything else is a silent fallback.
+            if let model = response["model"] as? String, !model.hasPrefix("gpt-6-sol") { throw SubscriptionError.invalidResponse }
             // Subscription streams can finish with output: [] after emitting complete items.
             if let items = response["output"] as? [[String: Any]], !items.isEmpty { output = items }
             completed = true
-        case "response.failed", "response.incomplete", "error": throw SubscriptionError.invalidResponse
+        case "response.failed", "response.incomplete", "error":
+            let response = event["response"] as? [String: Any]
+            let error = (response?["error"] ?? event["error"]) as? [String: Any]
+            let reason = (response?["incomplete_details"] as? [String: Any])?["reason"] as? String
+            throw SubscriptionError.failed((error?["message"] as? String) ?? reason ?? (error?["code"] as? String))
         default: break
         }
     }
@@ -153,8 +186,7 @@ struct SubscriptionStream {
             case "message":
                 let content = item["content"] as? [[String: Any]] ?? []
                 text.append(contentsOf: content.compactMap { $0["type"] as? String == "output_text" ? $0["text"] as? String : nil })
-            case "reasoning": break
-            default: throw SubscriptionError.invalidResponse
+            default: break // reasoning and any newer item types are kept in wireOutput, never executed
             }
         }
         let answer = text.isEmpty ? deltas : text.joined(separator: "\n")

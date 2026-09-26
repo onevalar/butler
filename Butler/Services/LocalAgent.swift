@@ -85,6 +85,22 @@ final class LocalMemoryStore {
 
     func discard() { preview = nil }
 
+    /// Saves a note the user already confirmed elsewhere (e.g. a batch confirm card).
+    func upsert(_ memory: LocalMemory) throws {
+        var next = snapshot
+        if let index = next.records.firstIndex(where: { $0.id == memory.id }) {
+            next.records[index] = memory
+        } else {
+            next.records.append(memory)
+        }
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder().encode(next).write(to: file, options: .atomic)
+        snapshot = next
+    }
+
+    /// The owner's real notes and habits (the file name is historical).
+    static func openNotes() throws -> LocalMemoryStore { try openOnDevice() }
+
     func confirm(_ id: UUID) throws {
         if snapshot.confirmed.contains(id) { return }
         guard let preview, preview.id == id else { throw LocalAgentError.expiredPreview }
@@ -122,6 +138,8 @@ enum LocalAgentMessage {
     case assistant(LocalModelReply)
     case tool(id: String, result: String)
     case receipt(preview: UUID, saved: Bool)
+    /// What the phone actually did (or that the owner cancelled), in plain words.
+    case note(String)
 }
 
 /// The cloud adapter handles authentication/transport only. It cannot access the store.

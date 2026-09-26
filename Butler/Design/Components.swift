@@ -179,6 +179,7 @@ struct ChoiceChip: View {
 struct Dock: View {
     var onShelf: (() -> Void)?
     let onSpeak: () -> Void
+    var onCapture: (() -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 10) {
@@ -211,7 +212,18 @@ struct Dock: View {
                 .background(Capsule().fill(Theme.capsule))
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("说给管家听")
+            .accessibilityLabel("和管家聊聊")
+            if let onCapture {
+                Button(action: onCapture) {
+                    Image(systemName: "camera.viewfinder")
+                        .font(.system(size: 20, weight: .regular))
+                        .foregroundStyle(Theme.ink)
+                        .frame(width: 56, height: 56)
+                        .background(Circle().fill(Theme.surface))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("拍照或快速记一笔")
+            }
         }
         .padding(.horizontal, 20)
         .padding(.top, 28)

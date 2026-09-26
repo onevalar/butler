@@ -6,6 +6,7 @@ struct HomeView: View {
     let onOpenLot: (UUID) -> Void
     let onOpenShelf: () -> Void
     let onSpeak: () -> Void
+    var onCapture: (() -> Void)? = nil
 
     @Environment(\.modelContext) private var modelContext
     @State private var datingLot: LotFacts?
@@ -40,7 +41,7 @@ struct HomeView: View {
             }
             .scrollIndicators(.hidden)
 
-            Dock(onShelf: facts.isEmpty ? nil : onOpenShelf, onSpeak: onSpeak)
+            Dock(onShelf: facts.isEmpty ? nil : onOpenShelf, onSpeak: onSpeak, onCapture: onCapture)
         }
         .background(Theme.ground.ignoresSafeArea())
         .fullScreenCover(item: $datingLot) { lot in

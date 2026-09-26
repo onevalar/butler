@@ -15,10 +15,12 @@ struct ContentView: View {
     @State private var refreshID = UUID()
     #if DEBUG
     @State private var capturing = ProcessInfo.processInfo.environment["BUTLER_CAPTURE_TEXT"] != nil
-    @State private var agentTesting = ProcessInfo.processInfo.arguments.contains("--agent-test")
+    @State private var chatting = ProcessInfo.processInfo.arguments.contains("--butler-chat")
     #else
     @State private var capturing = false
+    @State private var chatting = false
     #endif
+    @Environment(\.modelContext) private var modelContext
 
     private var facts: [LotFacts] {
         let byID = Dictionary(products.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -43,28 +45,23 @@ struct ContentView: View {
                 facts: facts,
                 onOpenLot: { path.append(.lot($0)) },
                 onOpenShelf: { path.append(.inventory) },
-                onSpeak: { capturing = true }
+                onSpeak: { chatting = true },
+                onCapture: { capturing = true }
             )
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: Route.self) { route in
                 switch route {
                 case .inventory:
-                    InventoryView(facts: facts, history: history, onOpenLot: { path.append(.lot($0)) }, onSpeak: { capturing = true })
+                    InventoryView(facts: facts, history: history, onOpenLot: { path.append(.lot($0)) }, onSpeak: { chatting = true }, onCapture: { capturing = true })
                 case .lot(let id):
                     LotDetailView(lotID: id)
                 }
             }
         }
         .tint(Theme.ink)
-        #if DEBUG
-        .safeAreaInset(edge: .top) {
-            Button { agentTesting = true } label: {
-                Label("与管家聊聊 · 本机记忆试用", systemImage: "bubble.left.and.bubble.right")
-                    .font(.footnote).frame(maxWidth: .infinity).padding(12)
-            }.background(Theme.surface).accessibilityIdentifier("agent.open")
+        .fullScreenCover(isPresented: $chatting) {
+            ButlerChatView(container: modelContext.container)
         }
-        .fullScreenCover(isPresented: $agentTesting) { AgentTestView() }
-        #endif
         .fullScreenCover(isPresented: $capturing) {
             CaptureView()
         }
@@ -81,6 +78,7 @@ struct ContentView: View {
         .onChange(of: NotificationManager.shared.pendingLotID, initial: true) { _, id in
             guard let id else { return }
             capturing = false
+            chatting = false
             path = [.lot(id)]
             NotificationManager.shared.clearPendingRoute()
         }

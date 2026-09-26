@@ -70,11 +70,71 @@ struct InventoryActions {
                                expectedRevision: lot.revision, evidence: evidence)))
     }
 
+    /// One new purchase, as the assistant understood it. Dates are only what the user said.
+    struct NewItem: Equatable, Sendable {
+        var name: String
+        var quantity: Int
+        var unit: String
+        var storage: String?
+        var packageExpiry: Date?
+        var plannedUseBy: Date?
+        /// Link to this existing product instead of creating a new one.
+        var existingProductID: UUID?
+    }
+
+    /// Adds several purchases in one transaction (all or nothing).
+    func add(_ items: [NewItem], sourceText: String) throws {
+        guard !items.isEmpty else { return }
+        var operations: [PlannedInventoryOperation] = []
+        for item in items {
+            let kind = ProductLexicon.lookup(item.name)?.kind ?? .unknown
+            let productID = item.existingProductID ?? UUID()
+            if item.existingProductID == nil {
+                var evidence = [ProposedFieldEvidence(fieldKey: .canonicalName, source: .modelInference, confidence: 0.9, rawText: sourceText)]
+                if kind.categoryRawValue != nil {
+                    evidence.append(.init(fieldKey: .category, source: .modelInference, confidence: 0.8, rawText: item.name))
+                }
+                operations.append(.init(operationID: UUID(), operation: .createProduct(.init(
+                    productID: productID, canonicalName: item.name, brand: nil,
+                    categoryRawValue: kind.categoryRawValue, defaultUnit: nil, evidence: evidence))))
+            }
+            var evidence: [ProposedFieldEvidence] = [
+                .init(fieldKey: .quantity, source: .modelInference, confidence: 0.9, rawText: sourceText),
+                .init(fieldKey: .unit, source: .modelInference, confidence: 0.9, rawText: item.unit),
+            ]
+            if item.storage != nil {
+                evidence.append(.init(fieldKey: .storageLocation, source: .modelInference, confidence: 0.9, rawText: item.storage))
+            }
+            if item.packageExpiry != nil {
+                // The user tapped confirm on a card that showed this exact date.
+                evidence.append(.init(fieldKey: .packageExpiryDate, source: .userStated, confidence: 1, rawText: sourceText))
+            }
+            var planned = item.plannedUseBy
+            if planned != nil {
+                evidence.append(.init(fieldKey: .plannedUseByDate, source: .modelInference, confidence: 0.8, rawText: sourceText))
+            } else if item.packageExpiry == nil, let horizon = kind.suggestedPlan,
+                      let date = horizon.date(from: .now, calendar: .current) {
+                planned = date
+                evidence.append(.init(fieldKey: .plannedUseByDate, source: .systemEstimate, confidence: 0.7,
+                                      rawText: "本地默认：\(horizon.phrase)内用完"))
+            }
+            operations.append(.init(operationID: UUID(), operation: .addLot(.init(
+                lotID: UUID(), productID: productID, quantity: item.quantity, unit: item.unit,
+                purchasedAt: nil, packageExpiryDate: item.packageExpiry, estimatedExpiryDate: nil,
+                plannedUseByDate: planned, storageLocation: item.storage, evidence: evidence))))
+        }
+        try run(operations)
+    }
+
     private func run(_ operation: InventoryOperation) throws {
+        try run([.init(operationID: UUID(), operation: operation)])
+    }
+
+    private func run(_ operations: [PlannedInventoryOperation]) throws {
         let plan = InventoryOperationPlan(
             schemaVersion: InventoryOperationPlan.currentSchemaVersion,
             planID: UUID(), inputID: UUID(),
-            operations: [.init(operationID: UUID(), operation: operation)],
+            operations: operations,
             unresolvedFields: []
         )
         let receipts: [TrustedInventoryConfirmation]
