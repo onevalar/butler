@@ -46,3 +46,21 @@ final class InventoryEvent {
         self.createdAt = createdAt
     }
 }
+
+extension InventoryEvent {
+    /// A revision check makes undo safe across navigation, relaunch and later edits.
+    func undoQuantity(currentQuantity: Int, revision: Int) -> Int? {
+        guard payloadSchemaVersion == 1,
+              let operation = try? InventoryOperationCoding.makeJSONDecoder().decode(InventoryOperation.self, from: payloadJSON),
+              revision > 0 else { return nil }
+        switch operation {
+        case .closeLot(let close) where close.expectedRevision == revision - 1:
+            guard let quantity = close.quantityBeforeClosing, quantity > 0 else { return nil }
+            return quantity
+        case .adjustQuantity(let adjustment) where adjustment.expectedRevision == revision - 1:
+            let previous = currentQuantity.subtractingReportingOverflow(adjustment.delta)
+            return !previous.overflow && previous.partialValue > 0 ? previous.partialValue : nil
+        default: return nil
+        }
+    }
+}

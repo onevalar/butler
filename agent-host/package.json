@@ -1,0 +1,12 @@
+{
+  "name": "butler-agent-host",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "test": "node --test",
+    "start": "node cli.mjs",
+    "check": "node cli.mjs check"
+  },
+  "dependencies": { "@openai/codex": "0.157.1" }
+}

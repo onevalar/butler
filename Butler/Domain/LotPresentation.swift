@@ -32,9 +32,11 @@ struct LotFacts: Identifiable, Sendable {
     let governingDate: Date?
     let governingDateKind: LotDateKind?
     let daysLeft: Int?
+    let packageDaysLeft: Int?
     let tier: UrgencyTier
     let startedAt: Date
     let revision: Int
+    let state: InventoryLotState
 
     /// No date of any kind: Butler must ask instead of guessing.
     var needsDate: Bool { governingDate == nil }
@@ -54,6 +56,8 @@ struct LotFacts: Identifiable, Sendable {
         storageLocation = lot.storageLocation
         startedAt = lot.purchasedAt ?? lot.createdAt
         revision = lot.revision
+        state = lot.state
+        packageDaysLeft = lot.packageExpiryDate.map { LotFacts.days(from: now, to: $0, calendar: calendar) }
 
         let dated: [(LotDateKind, Date)] = [
             lot.packageExpiryDate.map { (.packageExpiry, $0) },
@@ -73,11 +77,62 @@ struct LotFacts: Identifiable, Sendable {
         return calendar.dateComponents([.day], from: start, to: end).day ?? 0
     }
 
+    var stateLabel: String {
+        switch state {
+        case .active: return "在库"
+        case .depleted: return "已用完"
+        case .discarded: return "已丢弃"
+        case .gifted: return "已送人"
+        case .archived: return "已归档"
+        }
+    }
+
+    func matchesSearch(_ query: String) -> Bool {
+        var text = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let soon = text.contains("快过期") || text.contains("快到期")
+        for phrase in ["快过期", "快到期", "还有吗", "有没有", "还有", "？", "?"] {
+            text = text.replacingOccurrences(of: phrase, with: "")
+        }
+        text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if soon {
+            if text.hasPrefix("的") { text.removeFirst() }
+            guard let packageDaysLeft, (0...7).contains(packageDaysLeft) else { return false }
+        }
+        if text == "药" || text == "药品" { return isMedicine }
+        guard !text.isEmpty else { return true }
+        return name.localizedCaseInsensitiveContains(text)
+            || (brand?.localizedCaseInsensitiveContains(text) ?? false)
+            || (storageLocation?.localizedCaseInsensitiveContains(text) ?? false)
+    }
+
+    /// Keep the meaning of the governing date wherever it is displayed.
+    var dateKindLabel: String {
+        switch governingDateKind {
+        case .packageExpiry: return "包装有效期"
+        case .estimatedExpiry: return "预计到期"
+        case .plannedUseBy: return "计划用完"
+        case nil: return "待补日期"
+        }
+    }
+
+    var dateStatusLabel: String {
+        guard let daysLeft else { return "待补日期" }
+        if daysLeft < 0 {
+            switch governingDateKind {
+            case .packageExpiry: return "已过期 \(-daysLeft) 天"
+            case .estimatedExpiry: return "已超过预计日期 \(-daysLeft) 天"
+            case .plannedUseBy: return "已超过计划日期 \(-daysLeft) 天"
+            case nil: return "待补日期"
+            }
+        }
+        return "\(dateKindLabel) · \(timeLeftLabel)"
+    }
+
     /// Short human phrase for the time left, e.g. "今天", "2 天", "4 个月".
     var timeLeftLabel: String {
         guard let daysLeft else { return "待补日期" }
         switch daysLeft {
-        case ..<0: return "过期 \(-daysLeft) 天"
+        case ..<0: return dateStatusLabel
         case 0: return "今天"
         case 1...20: return "\(daysLeft) 天"
         case 21...59: return "\(daysLeft / 7) 周"

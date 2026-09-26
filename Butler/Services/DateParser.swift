@@ -1,88 +1,56 @@
-//
-//  DateParser.swift
-//  Butler
-//
-//  Created by 安宇佳 on 2026/1/6.
-//
-
 import Foundation
 
-/// Utility to parse various date string formats into standard Date objects
+/// OCR is a candidate, never proof that a printed date is an expiry date.
 struct DateParser {
-    
-    /// Try to parse a string into a Date
-    static func parse(_ text: String) -> Date? {
-        let cleanText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        
-        // 1. Define Regex Patterns to extract potential date substrings.
-        // This solves the issue where OCR outputs are noisy (e.g. "EXP: 2026.06.19 12A").
-        let patterns = [
-            // Year-Month-Day structure: yyyy-MM-dd, yy.MM.dd, 2026 06 19, etc.
-            "([0-9]{4}|[0-9]{2})[\\-/.\\s年]([0-9]{1,2})[\\-/.\\s月]([0-9]{1,2})日?",
-            // Day-Month-Year structure: dd/MM/yyyy, d-M-yy, etc.
-            "([0-9]{1,2})[\\-/.\\s月]([0-9]{1,2})[\\-/.\\s年]([0-9]{4}|[0-9]{2})",
-            // Continuous digits: yyyyMMdd (8 digits) or yyMMdd (6 digits)
-            "\\b([0-9]{8}|[0-9]{6})\\b"
-        ]
-        
-        var candidates: [String] = []
-        
-        for pattern in patterns {
-            if let regex = try? NSRegularExpression(pattern: pattern, options: []) {
-                let nsString = cleanText as NSString
-                let results = regex.matches(in: cleanText, options: [], range: NSRange(location: 0, length: nsString.length))
-                for result in results {
-                    candidates.append(nsString.substring(with: result.range))
-                }
+    enum Context: Equatable { case expiry, production, ambiguous, unlabeled }
+    struct Candidate {
+        let date: Date?
+        let context: Context
+        var guidance: String {
+            switch context {
+            case .expiry: return "请核对识别日期，并确认它是包装有效期。"
+            case .production: return "这是生产日期，不能当作有效期。请另选包装有效期。"
+            case .ambiguous: return "日期有歧义或包含多个日期，请手动选择包装有效期。"
+            case .unlabeled: return "未找到有效期标记，请核实这不是生产日期。"
             }
         }
-        
-        // Add basic fallback where we just clean headers/colons
-        let basicClean = cleanText
-            .replacingOccurrences(of: "EXP", with: "", options: .caseInsensitive)
-            .replacingOccurrences(of: "：", with: "")
-            .replacingOccurrences(of: ":", with: "")
-            .trimmingCharacters(in: .whitespaces)
-        candidates.append(basicClean)
-        
-        // 2. Comprehensive formats to check
-        let formats = [
-            // Year First
-            "yyyy/MM/dd", "yyyy-MM-dd", "yyyy.MM.dd", "yyyy MM dd", "yyyy年MM月dd日",
-            "yyyy/M/d", "yyyy-M-d", "yyyy.M.d", "yyyy年M月d日",
-            "yy/MM/dd", "yy-MM-dd", "yy.MM.dd", "yy MM dd",
-            "yy/M/d", "yy-M-d", "yy.M.d",
-            "yyyyMMdd", "yyMMdd",
-            
-            // Day First
-            "dd/MM/yyyy", "dd-MM-yyyy", "dd.MM.yyyy", "dd MM yyyy",
-            "d/M/yyyy", "d-M-yyyy", "d.M.yyyy",
-            "dd/MM/yy", "dd-MM-yy", "dd.MM.yy",
-            "d/M/yy", "d-M-yy", "d.M.yy"
-        ]
-        
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        
-        for candidate in candidates {
-            // Clean common punctuation from the extracted candidate
-            let normalized = candidate
-                .replacingOccurrences(of: "：", with: "")
-                .replacingOccurrences(of: ":", with: "")
-                .trimmingCharacters(in: .whitespaces)
-            
-            for format in formats {
-                formatter.dateFormat = format
-                if let date = formatter.date(from: normalized) {
-                    // Sanity check: Date shouldn't be too far in past or future
-                    let year = Calendar.current.component(.year, from: date)
-                    if year > 2000 && year < 2100 {
-                        return date
-                    }
-                }
-            }
+    }
+
+    static func parse(_ text: String) -> Date? { candidate(in: text).date }
+
+    static func candidate(in text: String, calendar: Calendar = .current) -> Candidate {
+        let upper = text.uppercased()
+        let production = ["生产", "制造", "MFG", "MFD", "PROD"].contains { upper.contains($0) }
+        let expiry = ["有效期至", "有效日期", "到期", "失效", "EXP", "BEST BEFORE", "USE BY"].contains { upper.contains($0) }
+        // Deliberately reject two-digit years, month/day ambiguity and partial dates.
+        let pattern = "(?<![0-9])(?:[0-9]{4}[-/.年\\s][0-9]{1,2}[-/.月\\s][0-9]{1,2}日?|[0-9]{8}|[0-9]{1,2}[-/.][0-9]{1,2}[-/.][0-9]{4})(?![0-9])"
+        let ns = text as NSString
+        let matches = (try? NSRegularExpression(pattern: pattern))?.matches(in: text, range: NSRange(location: 0, length: ns.length)) ?? []
+        guard matches.count == 1, !(production && expiry) else {
+            return Candidate(date: nil, context: production && !expiry ? .production : .ambiguous)
         }
-        
-        return nil
+        let raw = ns.substring(with: matches[0].range)
+        var parts = raw.components(separatedBy: CharacterSet.decimalDigits.inverted).filter { !$0.isEmpty }
+        if parts.count == 1, raw.count == 8 {
+            parts = [String(raw.prefix(4)), String(raw.dropFirst(4).prefix(2)), String(raw.suffix(2))]
+        }
+        guard parts.count == 3 else { return Candidate(date: nil, context: .ambiguous) }
+        var year: Int, month: Int, day: Int
+        if parts[0].count == 4 {
+            year = Int(parts[0])!; month = Int(parts[1])!; day = Int(parts[2])!
+        } else {
+            day = Int(parts[0])!; month = Int(parts[1])!; year = Int(parts[2])!
+            guard day > 12 else { return Candidate(date: nil, context: .ambiguous) }
+        }
+        var gregorian = Calendar(identifier: .gregorian)
+        gregorian.timeZone = calendar.timeZone
+        let components = DateComponents(year: year, month: month, day: day)
+        guard (2001..<2100).contains(year), let date = gregorian.date(from: components),
+              gregorian.component(.year, from: date) == year,
+              gregorian.component(.month, from: date) == month,
+              gregorian.component(.day, from: date) == day else {
+            return Candidate(date: nil, context: .ambiguous)
+        }
+        return Candidate(date: production ? nil : date, context: production ? .production : (expiry ? .expiry : .unlabeled))
     }
 }

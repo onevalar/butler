@@ -3,7 +3,8 @@ import VisionKit
 
 /// Live text scanner. Tapping a highlighted date reports the parsed date and the raw text seen.
 struct CameraScanner: UIViewControllerRepresentable {
-    var onDateSelected: (Date, String) -> Void
+    var onDateSelected: (DateParser.Candidate, String) -> Void
+    var onError: (String) -> Void
 
     func makeUIViewController(context: Context) -> DataScannerViewController {
         let scanner = DataScannerViewController(
@@ -12,11 +13,16 @@ struct CameraScanner: UIViewControllerRepresentable {
             isHighlightingEnabled: true
         )
         scanner.delegate = context.coordinator
-        try? scanner.startScanning()
+        do { try scanner.startScanning() }
+        catch { DispatchQueue.main.async { onError("相机识别不可用，请手动选择日期。\(error.localizedDescription)") } }
         return scanner
     }
 
     func updateUIViewController(_ uiViewController: DataScannerViewController, context: Context) {}
+
+    static func dismantleUIViewController(_ uiViewController: DataScannerViewController, coordinator: Coordinator) {
+        uiViewController.stopScanning()
+    }
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
 
@@ -25,15 +31,16 @@ struct CameraScanner: UIViewControllerRepresentable {
 
         init(parent: CameraScanner) { self.parent = parent }
 
+        func dataScanner(_ dataScanner: DataScannerViewController, becameUnavailableWithError error: DataScannerViewController.ScanningUnavailable) {
+            parent.onError("相机识别已中断，请手动选择日期。")
+        }
+
         func dataScanner(_ dataScanner: DataScannerViewController, didTapOn item: RecognizedItem) {
             guard case .text(let text) = item else { return }
             let feedback = UINotificationFeedbackGenerator()
-            if let date = DateParser.parse(text.transcript) {
-                feedback.notificationOccurred(.success)
-                parent.onDateSelected(date, text.transcript)
-            } else {
-                feedback.notificationOccurred(.error)
-            }
+            let candidate = DateParser.candidate(in: text.transcript)
+            feedback.notificationOccurred(candidate.date == nil ? .warning : .success)
+            parent.onDateSelected(candidate, text.transcript)
         }
     }
 }

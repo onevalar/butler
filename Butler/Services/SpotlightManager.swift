@@ -16,7 +16,8 @@ final class SpotlightManager {
             let attributes = CSSearchableItemAttributeSet(contentType: .item)
             attributes.title = lot.name
             let place = lot.storageLocation.map { "\($0) · " } ?? ""
-            attributes.contentDescription = "\(place)\(lot.quantity) \(lot.unit) · \(lot.timeLeftLabel)"
+            let date = lot.governingDate.map { $0.formatted(date: .numeric, time: .omitted) }
+            attributes.contentDescription = "\(place)\(lot.quantity) \(lot.unit) · \(lot.dateKindLabel) \(date ?? "")"
             attributes.keywords = [lot.name, lot.brand, lot.storageLocation, lot.isMedicine ? "药" : nil].compactMap { $0 }
             return CSSearchableItem(uniqueIdentifier: lot.id.uuidString, domainIdentifier: domainIdentifier, attributeSet: attributes)
         }

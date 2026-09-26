@@ -9,7 +9,11 @@ struct DateCaptureView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
-    @State private var date = Calendar.current.date(byAdding: .day, value: 7, to: .now) ?? .now
+    @State private var date = Date.now
+    @State private var hasSelectedDate = false
+    @State private var confirmedExpiry = false
+    @State private var scanGuidance: String?
+    @State private var scannerError: String?
     @State private var scannedDate: Date?
     @State private var scannedText: String?
     @State private var errorMessage: String?
@@ -21,20 +25,23 @@ struct DateCaptureView: View {
     var body: some View {
         VStack(spacing: 0) {
             ZStack(alignment: .topLeading) {
-                if scannerAvailable {
-                    CameraScanner { found, text in
+                if scannerAvailable && scannerError == nil {
+                    CameraScanner { candidate, text in
                         withAnimation(.snappy) {
-                            date = found
-                            scannedDate = found
+                            if let found = candidate.date { date = found }
+                            hasSelectedDate = candidate.date != nil
+                            confirmedExpiry = false
+                            scannedDate = candidate.date
                             scannedText = text
+                            scanGuidance = candidate.guidance
                         }
-                    }
+                    } onError: { scannerError = $0 }
                 } else {
                     Theme.capsule
                     VStack(spacing: 10) {
                         Image(systemName: "camera.viewfinder")
                             .font(.system(size: 44, weight: .thin))
-                        Text("这台设备不能用相机识别，直接选日期就好")
+                        Text(scannerError ?? "这台设备不能用相机识别，直接选日期就好")
                             .font(Theme.body(13))
                     }
                     .foregroundStyle(Theme.capsuleText)
@@ -63,15 +70,33 @@ struct DateCaptureView: View {
                             .foregroundStyle(Theme.ink)
                     }
                 }
-                DatePicker("包装有效期", selection: $date, displayedComponents: .date)
+                if let scanGuidance {
+                    Text(scanGuidance).font(Theme.body(12)).foregroundStyle(Theme.ink)
+                }
+                DatePicker("包装有效期", selection: Binding(get: { date }, set: {
+                    date = $0
+                    hasSelectedDate = true
+                    confirmedExpiry = false
+                    scannedDate = nil
+                }), displayedComponents: .date)
                     .datePickerStyle(.wheel)
                     .labelsHidden()
                     .environment(\.locale, Locale(identifier: "zh_CN"))
                     .frame(maxWidth: .infinity)
-                    .frame(height: 150)
+                    .frame(height: 216)
                     .clipped()
-                Button("就是这天", action: save)
+                    .contentShape(Rectangle())
+                if !hasSelectedDate {
+                    Button("选择显示的日期（\(date.formatted(date: .numeric, time: .omitted))）") {
+                        hasSelectedDate = true
+                    }
+                }
+                Toggle("我已核对：这是包装有效期，不是生产日期", isOn: $confirmedExpiry)
+                    .font(Theme.body(12))
+                    .disabled(!hasSelectedDate)
+                Button("确认包装有效期", action: save)
                     .buttonStyle(PillButtonStyle(kind: .primary))
+                    .disabled(!hasSelectedDate || !confirmedExpiry)
                 Text("这是包装上印的日期，我会按它提醒你")
                     .font(Theme.body(12))
                     .foregroundStyle(Theme.muted)
@@ -97,6 +122,7 @@ struct DateCaptureView: View {
     }
 
     private func save() {
+        guard hasSelectedDate && confirmedExpiry else { return }
         let fromScan = scannedDate.map { Calendar.current.isDate($0, inSameDayAs: date) } ?? false
         do {
             try InventoryActions(modelContainer: modelContext.container).setPackageExpiry(

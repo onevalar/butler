@@ -13,10 +13,14 @@ struct LotDetailView: View {
 
     @State private var capturingDate = false
     @State private var planningDate = false
+    @State private var estimatingDate = false
+    @State private var clearingDate: LotDateKind?
     @State private var showingHistory = false
     @State private var pendingClose: InventoryLotState?
     @State private var choosingPlace = false
     @State private var errorMessage: String?
+    @State private var editingQuantity = false
+    @State private var quantityText = ""
 
     init(lotID: UUID) {
         self.lotID = lotID
@@ -40,15 +44,23 @@ struct LotDetailView: View {
             } else {
                 VStack(spacing: 12) {
                     SealView(glyph: "完", style: .quiet, size: 60)
-                    Text("这件东西已经处理好了")
+                    Text(facts?.stateLabel ?? "找不到这条记录")
                         .font(Theme.display(17, weight: .regular))
                         .foregroundStyle(Theme.muted)
+                    if let facts {
+                        Text(facts.name).font(Theme.display(20))
+                        undoButton(facts)
+                        Button("查看处理记录") { showingHistory = true }
+                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .background(Theme.ground.ignoresSafeArea())
         .toolbarBackground(.hidden, for: .navigationBar)
+        .sheet(isPresented: $showingHistory) {
+            HistorySheet(events: events).presentationDetents([.medium, .large])
+        }
         .alert("没能保存", isPresented: .constant(errorMessage != nil)) {
             Button("好") { errorMessage = nil }
         } message: {
@@ -77,11 +89,44 @@ struct LotDetailView: View {
         }
         .fullScreenCover(isPresented: $capturingDate) { DateCaptureView(lot: facts) }
         .sheet(isPresented: $planningDate) {
-            PlanDateSheet(name: facts.name) { date in perform { try $0.setPlannedUseBy(date, for: facts) } }
+            PlanDateSheet(name: facts.name, initialDate: lot.plannedUseByDate) { date in
+                perform { try $0.setPlannedUseBy(date, for: facts) }
+            }
                 .presentationDetents([.medium])
         }
-        .sheet(isPresented: $showingHistory) {
-            HistorySheet(events: events).presentationDetents([.medium, .large])
+        .sheet(isPresented: $estimatingDate) {
+            PlanDateSheet(name: facts.name, initialDate: lot.estimatedExpiryDate, isEstimate: true) { date in
+                perform { try $0.setDate(date, kind: .estimatedExpiry, for: facts) }
+            }
+            .presentationDetents([.medium])
+        }
+        .confirmationDialog("清除此日期？原记录仍保留在历史中。", isPresented: Binding(
+            get: { clearingDate != nil }, set: { if !$0 { clearingDate = nil } }
+        ), titleVisibility: .visible) {
+            if let kind = clearingDate {
+                Button("确认清除", role: .destructive) {
+                    perform { try $0.setDate(nil, kind: kind, for: facts) }
+                    clearingDate = nil
+                }
+            }
+        }
+        .sheet(isPresented: $editingQuantity) {
+            VStack(alignment: .leading, spacing: 20) {
+                Text("现在还剩多少？").font(Theme.display(24))
+                Text("按完整包装记数；填 0 表示全部用完。")
+                TextField("剩余数量", text: $quantityText).keyboardType(.numberPad)
+                    .textFieldStyle(.roundedBorder)
+                Text(facts.unit)
+                Button("确认剩余数量") {
+                    guard let quantity = Int(quantityText), quantity >= 0 else { return }
+                    if perform({ try $0.adjustQuantity(facts, to: quantity) }) { editingQuantity = false }
+                }
+                .buttonStyle(PillButtonStyle(kind: .primary))
+                .disabled(Int(quantityText).map { $0 >= 0 } != true)
+                if let errorMessage { Text(errorMessage).foregroundStyle(Theme.vermilion) }
+            }
+            .padding(24)
+            .presentationDetents([.medium])
         }
         .confirmationDialog("放在哪？", isPresented: $choosingPlace, titleVisibility: .visible) {
             ForEach(["冷藏", "冷冻", "常温", "零食柜", "药箱"], id: \.self) { place in
@@ -128,16 +173,17 @@ struct LotDetailView: View {
         if let days = facts.daysLeft, let end = facts.governingDate {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .lastTextBaseline, spacing: 10) {
-                    Text(days < 0 ? "已经过期" : "还有")
+                    Text(days < 0 ? "已超过" : "还有")
                         .font(Theme.display(18, weight: .regular))
                         .foregroundStyle(Theme.inkSoft)
                     Text("\(abs(days))")
                         .font(Theme.numeral(96))
                         .foregroundStyle(days <= 0 ? Theme.vermilion : Theme.ink)
-                    Text(days < 0 ? "天" : (facts.governingDateKind == .plannedUseBy ? "天该吃完" : "天到期"))
+                    Text("天")
                         .font(Theme.display(18, weight: .regular))
                         .foregroundStyle(Theme.inkSoft)
                 }
+                Text(facts.dateStatusLabel).font(Theme.body(14)).foregroundStyle(Theme.muted)
                 LifeBar(start: facts.startedAt, end: end, urgent: days <= 0)
             }
         } else {
@@ -162,7 +208,7 @@ struct LotDetailView: View {
                 .padding(.bottom, 6)
             ledgerRow("包装有效期") {
                 if let date = lot.packageExpiryDate {
-                    Text(date.packageStyle)
+                    Button(date.packageStyle + " · 修改") { capturingDate = true }
                         .font(Theme.numeral(20, italic: false))
                         .foregroundStyle(Theme.ink)
                     Spacer()
@@ -179,7 +225,9 @@ struct LotDetailView: View {
             }
             ledgerRow("我的估算") {
                 if let date = lot.estimatedExpiryDate {
-                    InferredText(text: date.monthDay, inferred: true, font: Theme.body(14))
+                    Button { estimatingDate = true } label: {
+                        InferredText(text: date.monthDay + " · 修改", inferred: true, font: Theme.body(14))
+                    }
                 } else {
                     Text(lot.packageExpiryDate == nil ? "没有估算" : "不需要，已有包装日期")
                         .font(Theme.body(14))
@@ -190,8 +238,10 @@ struct LotDetailView: View {
             ledgerRow("计划用完") {
                 if let date = lot.plannedUseByDate {
                     let source = latest(.plannedUseByDate)
-                    InferredText(text: date.monthDay + "前",
-                                 inferred: source?.isInferred ?? false, font: Theme.body(14))
+                    Button { planningDate = true } label: {
+                        InferredText(text: date.monthDay + "前 · 修改",
+                                     inferred: source?.isInferred ?? false, font: Theme.body(14))
+                    }
                     Spacer()
                     sourceBadge(for: .plannedUseByDate)
                 } else {
@@ -211,6 +261,13 @@ struct LotDetailView: View {
                 Spacer()
                 sourceBadge(for: .storageLocation)
             }
+            Menu("清除填错的日期") {
+                if lot.packageExpiryDate != nil { Button("包装有效期") { clearingDate = .packageExpiry } }
+                if lot.estimatedExpiryDate != nil { Button("估算日期") { clearingDate = .estimatedExpiry } }
+                if lot.plannedUseByDate != nil { Button("计划日期") { clearingDate = .plannedUseBy } }
+            }
+            .font(Theme.body(13))
+            .padding(.top, 12)
         }
     }
 
@@ -268,16 +325,21 @@ struct LotDetailView: View {
                     .buttonStyle(PillButtonStyle(kind: .outlineDanger))
                     .frame(maxWidth: 120)
                 Button("已经用完了") {
-                    if facts.isMedicine { pendingClose = .depleted } else { close(facts, as: .depleted) }
+                    pendingClose = .depleted
                 }
                 .buttonStyle(PillButtonStyle(kind: .primary))
             }
             HStack(spacing: 22) {
+                Button("用掉一部分 / 改数量") {
+                    quantityText = String(facts.quantity)
+                    editingQuantity = true
+                }
                 Button("来龙去脉") { showingHistory = true }
                 Button("送给别人") { pendingClose = .gifted }
             }
             .font(Theme.body(13))
             .foregroundStyle(Theme.muted)
+            undoButton(facts)
         }
         .padding(.horizontal, 20)
         .padding(.top, 18)
@@ -305,7 +367,18 @@ struct LotDetailView: View {
     }
 
     private func close(_ facts: LotFacts, as state: InventoryLotState) {
-        if perform({ try $0.close(facts, as: state) }) { dismiss() }
+        perform { try $0.close(facts, as: state) }
+    }
+
+    @ViewBuilder
+    private func undoButton(_ facts: LotFacts) -> some View {
+        if let event = events.first(where: {
+            $0.undoQuantity(currentQuantity: facts.quantity, revision: facts.revision) != nil
+        }) {
+            Button("撤销上一次数量 / 处理操作") { perform { try $0.undo(event, for: facts) } }
+                .font(Theme.body(13))
+                .foregroundStyle(Theme.cobalt)
+        }
     }
 
     @discardableResult
@@ -343,14 +416,14 @@ private struct LifeBar: View {
                         .frame(width: 14, height: 14)
                         .offset(x: min(max(x - 7, 0), proxy.size.width - 14))
                 }
-                .frame(maxHeight: .infinity)
+                .frame(height: 14)
                 Text("今天")
                     .font(Theme.body(12, weight: .semibold))
                     .foregroundStyle(urgent ? Theme.vermilion : Theme.cobalt)
                     .fixedSize()
                     .position(x: min(max(x, 18), proxy.size.width - 18), y: 30)
             }
-            .frame(height: 14)
+            .frame(height: 44)
             HStack {
                 Text(start.monthDay + " 买入")
                 Spacer()
@@ -366,23 +439,31 @@ private struct LifeBar: View {
 
 private struct PlanDateSheet: View {
     let name: String
-    let onSave: (Date) -> Void
+    let onSave: (Date) -> Bool
+    let isEstimate: Bool
     @Environment(\.dismiss) private var dismiss
-    @State private var date = Calendar.current.date(byAdding: .day, value: 14, to: .now) ?? .now
+    @State private var date: Date
+
+    init(name: String, initialDate: Date?, isEstimate: Bool = false, onSave: @escaping (Date) -> Bool) {
+        self.name = name
+        self.onSave = onSave
+        self.isEstimate = isEstimate
+        _date = State(initialValue: initialDate ?? .now)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("打算哪天前\n吃完\(name)？")
+            Text(isEstimate ? "修改\(name)的估算日期" : "打算哪天前\n用完\(name)？")
                 .font(Theme.display(24))
                 .foregroundStyle(Theme.ink)
-            Text("这是你给自己定的小目标，不是包装上的保质期。")
+            Text(isEstimate ? "这只是估算，不是包装有效期，也不能保证食用安全。" : "这是你给自己定的小目标，不是包装上的保质期。")
                 .font(Theme.body(13))
                 .foregroundStyle(Theme.muted)
-            DatePicker("计划用完", selection: $date, in: Date.now..., displayedComponents: .date)
+            DatePicker(isEstimate ? "估算日期" : "计划用完", selection: $date, displayedComponents: .date)
                 .datePickerStyle(.compact)
                 .environment(\.locale, Locale(identifier: "zh_CN"))
             Spacer()
-            Button("定下来") { onSave(date); dismiss() }
+            Button("定下来") { if onSave(date) { dismiss() } }
                 .buttonStyle(PillButtonStyle(kind: .capsule))
         }
         .padding(24)
@@ -394,7 +475,8 @@ private struct HistorySheet: View {
     let events: [InventoryEvent]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        ScrollView {
+          VStack(alignment: .leading, spacing: 0) {
             Text("来龙去脉")
                 .font(Theme.display(24))
                 .foregroundStyle(Theme.ink)
@@ -423,6 +505,7 @@ private struct HistorySheet: View {
                 }
             }
             Spacer(minLength: 0)
+          }
         }
         .padding(24)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -436,6 +519,7 @@ private struct HistorySheet: View {
         case "lotMoved": "换了个地方放"
         case "quantityAdjusted": "数量变了"
         case "lotClosed": "处理掉了"
+        case "lotActionUndone": "撤销了上一次处理，库存已恢复"
         default: "有一次变动"
         }
     }

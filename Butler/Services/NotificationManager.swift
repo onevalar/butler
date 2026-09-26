@@ -1,50 +1,123 @@
 import Foundation
+import Observation
 import UserNotifications
 
-/// Local expiry reminders. Rebuilt from the current inventory whenever it changes,
-/// so there is no per-item bookkeeping to drift out of sync.
-final class NotificationManager {
-    static let shared = NotificationManager()
-    private init() {}
+extension Notification.Name {
+    static let butlerNotificationAuthorizationChanged = Notification.Name("butler.notificationAuthorizationChanged")
+}
 
+/// Pure reminder policy. The recorded fire date also acts as a durable receipt:
+/// an elapsed reminder is never recreated by an inventory resync.
+enum LotReminderPolicy {
+    static func fireDate(date: Date, isMedicine: Bool, leadDays: Int, now: Date,
+                         calendar: Calendar, recordedFireDate: Date?) -> Date? {
+        if let recordedFireDate, recordedFireDate <= now { return nil }
+        guard let day = calendar.date(byAdding: .day, value: -(max(1, leadDays) + (isMedicine ? 4 : 0)), to: date),
+              let scheduled = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: day) else { return nil }
+        // A newly added due-soon/today/overdue lot gets one catch-up, not one per sync.
+        if scheduled > now { return scheduled }
+        let catchup = now.addingTimeInterval(60)
+        return min(recordedFireDate ?? catchup, catchup)
+    }
+
+    static func receiptKey(for lot: LotFacts, calendar: Calendar) -> String? {
+        guard let date = lot.governingDate, let kind = lot.governingDateKind else { return nil }
+        return "\(lot.id.uuidString).\(kind.rawValue).\(date.timeIntervalSince1970)"
+    }
+}
+
+/// Retained at app launch. Parent observes pendingLotID and clears it after routing.
+@MainActor @Observable
+final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
+    static let shared = NotificationManager()
+    private(set) var pendingLotID: UUID?
+    private var syncTask: Task<Void, Never>?
     private let identifierPrefix = "butler.lot."
+    private let receiptsKey = "butler.reminderReceipts.v1"
+
+    private override init() { super.init() }
+
+    func installDelegate() { UNUserNotificationCenter.current().delegate = self }
+    func clearPendingRoute() { pendingLotID = nil }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                           didReceive response: UNNotificationResponse,
+                                           withCompletionHandler completionHandler: @escaping () -> Void) {
+        if response.actionIdentifier == UNNotificationDefaultActionIdentifier,
+           let raw = response.notification.request.content.userInfo["lotID"] as? String,
+           let id = UUID(uuidString: raw) {
+            Task { @MainActor in self.pendingLotID = id }
+        }
+        completionHandler()
+    }
 
     @discardableResult
     func requestAuthorization() async -> Bool {
-        (try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound])) ?? false
+        let granted = (try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound])) ?? false
+        if granted {
+            NotificationCenter.default.post(name: .butlerNotificationAuthorizationChanged, object: nil)
+        }
+        return granted
     }
 
     func resync(_ lots: [LotFacts], now: Date = Date(), calendar: Calendar = .current) async {
+        // Actor isolation alone does not serialize across await points.
+        let previous = syncTask
+        let task = Task {
+            await previous?.value
+            await rebuild(lots, now: now, calendar: calendar)
+        }
+        syncTask = task
+        await task.value
+    }
+
+    private func rebuild(_ lots: [LotFacts], now: Date, calendar: Calendar) async {
         let center = UNUserNotificationCenter.current()
         let pending = await center.pendingNotificationRequests()
-        center.removePendingNotificationRequests(
-            withIdentifiers: pending.map(\.identifier).filter { $0.hasPrefix(identifierPrefix) }
-        )
-
         let defaults = UserDefaults.standard
-        guard defaults.bool(forKey: "notificationsEnabled") else { return }
-        let leadDays = max(defaults.integer(forKey: "expiryWarningDays"), 1)
-
-        for lot in lots {
-            guard let date = lot.governingDate,
-                  let remindDay = calendar.date(byAdding: .day, value: -(lot.isMedicine ? leadDays + 4 : leadDays), to: date),
-                  let fireDate = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: remindDay),
-                  fireDate > now else { continue }
-
-            let content = UNMutableNotificationContent()
-            content.title = lot.governingDateKind == .plannedUseBy ? "该吃掉了" : "快到期了"
-            let days = LotFacts.days(from: fireDate, to: date, calendar: calendar)
-            content.body = "\(lot.name)还有 \(days) 天\(lot.governingDateKind == .plannedUseBy ? "到你定的日子" : "到期")。"
-            content.sound = .default
-            content.userInfo = ["lotID": lot.id.uuidString]
-
-            let trigger = UNCalendarNotificationTrigger(
-                dateMatching: calendar.dateComponents([.year, .month, .day, .hour, .minute], from: fireDate),
-                repeats: false
-            )
-            try? await center.add(UNNotificationRequest(
-                identifier: identifierPrefix + lot.id.uuidString, content: content, trigger: trigger
-            ))
+        let settings = await center.notificationSettings()
+        let enabled = defaults.bool(forKey: "notificationsEnabled") &&
+            [UNAuthorizationStatus.authorized, .provisional, .ephemeral].contains(settings.authorizationStatus)
+        var receipts = (defaults.dictionary(forKey: receiptsKey) as? [String: Double]) ?? [:]
+        var desired = Set<String>()
+        if enabled {
+            for lot in lots {
+                guard let date = lot.governingDate,
+                      let key = LotReminderPolicy.receiptKey(for: lot, calendar: calendar),
+                      let fire = LotReminderPolicy.fireDate(
+                        date: date, isMedicine: lot.isMedicine, leadDays: defaults.integer(forKey: "expiryWarningDays"),
+                        now: now, calendar: calendar,
+                        recordedFireDate: receipts[key].map { Date(timeIntervalSince1970: $0) }
+                      ) else { continue }
+                let identifier = identifierPrefix + key
+                desired.insert(identifier)
+                let content = UNMutableNotificationContent()
+                content.title = lot.dateKindLabel + "提醒"
+                content.body = "\(lot.name)：\(lot.dateKindLabel) \(date.formatted(date: .numeric, time: .omitted))。请核对包装和实际状态。"
+                content.sound = .default
+                content.userInfo = ["lotID": lot.id.uuidString]
+                let trigger = UNCalendarNotificationTrigger(
+                    dateMatching: calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: fire),
+                    repeats: false
+                )
+                do {
+                    try await center.add(UNNotificationRequest(identifier: identifier, content: content, trigger: trigger))
+                    receipts[key] = fire.timeIntervalSince1970
+                    defaults.set(receipts, forKey: receiptsKey)
+                } catch {
+                    // No receipt on failure; a later sync may retry.
+                }
+            }
         }
+        let cancelled = pending.map(\.identifier).filter {
+            $0.hasPrefix(identifierPrefix) && !desired.contains($0)
+        }
+        center.removePendingNotificationRequests(withIdentifiers: cancelled)
+        for identifier in cancelled {
+            let key = String(identifier.dropFirst(identifierPrefix.count))
+            // A pending future reminder removed on close/permission loss was not delivered.
+            if let fire = receipts[key], fire > now.timeIntervalSince1970 { receipts.removeValue(forKey: key) }
+        }
+        defaults.set(receipts, forKey: receiptsKey)
     }
 }

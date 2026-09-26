@@ -11,6 +11,7 @@ struct ButlerApp: App {
             "expiryWarningDays": 2,
         ])
         FontRegistry.registerBundledFonts()
+        if !Self.isRunningTests { NotificationManager.shared.installDelegate() }
 
         do {
             modelContainer = Self.isRunningTests

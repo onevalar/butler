@@ -227,6 +227,7 @@ enum InventoryPolicy {
         case .setLotDate(let operation):
             evidence = operation.evidence
             validateRevision(operation.expectedRevision, operationID: plannedOperation.operationID, violations: &violations)
+            requireEvidence(operation.kind.fieldKey, in: evidence, operationID: plannedOperation.operationID, violations: &violations)
             validateDateEvidence(
                 operation.date,
                 fieldKey: operation.kind.fieldKey,
@@ -242,7 +243,7 @@ enum InventoryPolicy {
                 reason: operation.kind == .packageExpiry
                     ? .packageExpiryRequiresConfirmation
                     : .existingStateMutationRequiresConfirmation,
-                proposedValueIdentity: dateIdentity(operation.date),
+                proposedValueIdentity: operation.date.map(dateIdentity) ?? "clear",
                 expectedRevision: operation.expectedRevision
             ))
 
@@ -279,6 +280,20 @@ enum InventoryPolicy {
                 proposedValueIdentity: operation.state.rawValue,
                 expectedRevision: operation.expectedRevision
             ))
+
+        case .undoLot(let operation):
+            evidence = operation.evidence
+            validateRevision(operation.expectedRevision, operationID: plannedOperation.operationID, violations: &violations)
+            for field: InventoryFieldKey in [.state, .quantity] {
+                requireEvidence(field, in: evidence, operationID: plannedOperation.operationID, violations: &violations)
+                requirements.append(.init(
+                    planID: planID, operationID: plannedOperation.operationID,
+                    entityID: operation.lotID, fieldKey: field,
+                    reason: .existingStateMutationRequiresConfirmation,
+                    proposedValueIdentity: "undo:\(operation.originalOperationID.uuidString)",
+                    expectedRevision: operation.expectedRevision
+                ))
+            }
 
         case .createTemplate(let operation):
             evidence = operation.evidence

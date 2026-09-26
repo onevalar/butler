@@ -91,7 +91,7 @@ struct AdjustQuantityOperation: Codable, Sendable {
 struct SetLotDateOperation: Codable, Sendable {
     let lotID: UUID
     let kind: LotDateKind
-    let date: Date
+    let date: Date?
     let expectedRevision: Int
     let evidence: [ProposedFieldEvidence]
 }
@@ -106,6 +106,15 @@ struct MoveLotOperation: Codable, Sendable {
 struct CloseLotOperation: Codable, Sendable {
     let lotID: UUID
     let state: InventoryLotState
+    let expectedRevision: Int
+    let evidence: [ProposedFieldEvidence]
+    var quantityBeforeClosing: Int? = nil
+}
+
+/// Undo only a recorded quantity/close operation, never an arbitrary state overwrite.
+struct UndoLotOperation: Codable, Sendable {
+    let lotID: UUID
+    let originalOperationID: UUID
     let expectedRevision: Int
     let evidence: [ProposedFieldEvidence]
 }
@@ -143,6 +152,7 @@ enum InventoryOperation: Codable, Sendable {
     case setLotDate(SetLotDateOperation)
     case moveLot(MoveLotOperation)
     case closeLot(CloseLotOperation)
+    case undoLot(UndoLotOperation)
     case createTemplate(CreateTemplateOperation)
     case updateTemplate(UpdateTemplateOperation)
 
@@ -158,6 +168,7 @@ enum InventoryOperation: Codable, Sendable {
         case setLotDate
         case moveLot
         case closeLot
+        case undoLot
         case createTemplate
         case updateTemplate
     }
@@ -177,6 +188,8 @@ enum InventoryOperation: Codable, Sendable {
             self = .moveLot(try container.decode(MoveLotOperation.self, forKey: .payload))
         case .closeLot:
             self = .closeLot(try container.decode(CloseLotOperation.self, forKey: .payload))
+        case .undoLot:
+            self = .undoLot(try container.decode(UndoLotOperation.self, forKey: .payload))
         case .createTemplate:
             self = .createTemplate(try container.decode(CreateTemplateOperation.self, forKey: .payload))
         case .updateTemplate:
@@ -204,6 +217,9 @@ enum InventoryOperation: Codable, Sendable {
             try container.encode(payload, forKey: .payload)
         case .closeLot(let payload):
             try container.encode(OperationType.closeLot, forKey: .type)
+            try container.encode(payload, forKey: .payload)
+        case .undoLot(let payload):
+            try container.encode(OperationType.undoLot, forKey: .type)
             try container.encode(payload, forKey: .payload)
         case .createTemplate(let payload):
             try container.encode(OperationType.createTemplate, forKey: .type)

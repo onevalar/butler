@@ -2,6 +2,7 @@ import SwiftUI
 
 struct InventoryView: View {
     let facts: [LotFacts]
+    var history: [LotFacts] = []
     let onOpenLot: (UUID) -> Void
     let onSpeak: () -> Void
 
@@ -9,23 +10,15 @@ struct InventoryView: View {
 
     @State private var arrangement: Arrangement = .place
     @State private var query = ""
+    @State private var showingHistory = false
 
     private var filtered: [LotFacts] {
-        let text = query.trimmingCharacters(in: .whitespaces)
-        guard !text.isEmpty else { return facts }
-        let wantsMedicine = text.contains("药")
-        let wantsSoon = text.contains("快过期") || text.contains("快到期")
-        return facts.filter { lot in
-            if wantsMedicine && lot.isMedicine { return true }
-            if wantsSoon && lot.tier <= .week { return true }
-            return lot.name.localizedCaseInsensitiveContains(text)
-                || (lot.storageLocation?.contains(text) ?? false)
-                || (lot.brand?.localizedCaseInsensitiveContains(text) ?? false)
-        }
+        (showingHistory ? history : facts).filter { $0.matchesSearch(query) }
     }
 
     private var groups: [(title: String, lots: [LotFacts])] {
         let lots = filtered
+        if showingHistory { return lots.isEmpty ? [] : [("已处理记录", lots)] }
         switch arrangement {
         case .place:
             return Dictionary(grouping: lots) { StorageLocation.groupName(for: $0.storageLocation) }
@@ -63,7 +56,7 @@ struct InventoryView: View {
                             .padding(.top, 24)
                     }
                     if groups.isEmpty {
-                        Text(query.isEmpty ? "家里还空着" : "家里没有“\(query)”")
+                        Text(query.isEmpty ? (showingHistory ? "还没有处理记录" : "家里还空着") : "没有匹配“\(query)”的记录")
                             .font(Theme.display(17, weight: .regular))
                             .foregroundStyle(Theme.muted)
                             .padding(.top, 40)
@@ -88,17 +81,22 @@ struct InventoryView: View {
                     .font(Theme.display(34))
                     .foregroundStyle(Theme.ink)
                 Spacer()
-                Text("\(facts.count)")
+                Text("\((showingHistory ? history : facts).count)")
                     .font(Theme.numeral(38))
                     .foregroundStyle(Theme.cobalt)
                 Text("件")
                     .font(Theme.body(13))
                     .foregroundStyle(Theme.muted)
             }
+            Picker("库存范围", selection: $showingHistory) {
+                Text("在库").tag(false)
+                Text("已处理").tag(true)
+            }
+            .pickerStyle(.segmented)
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(Theme.muted)
-                TextField("", text: $query, prompt: Text("问问看：感冒药还有吗？").foregroundStyle(Theme.muted))
+                TextField("", text: $query, prompt: Text("搜索名称、品牌或位置").foregroundStyle(Theme.muted))
                     .font(Theme.display(15, weight: .regular))
                     .foregroundStyle(Theme.ink)
                     .submitLabel(.search)
@@ -145,16 +143,16 @@ struct InventoryView: View {
                                 Text(lot.name)
                                     .font(Theme.body(11))
                                     .foregroundStyle(Theme.inkSoft)
-                                Text(lot.timeLeftLabel)
+                                Text(showingHistory ? lot.stateLabel : lot.dateStatusLabel)
                                     .font(Theme.body(11, weight: lot.tier <= .soon ? .semibold : .regular))
                                     .foregroundStyle(labelColor(lot.tier))
                             }
-                            .lineLimit(1)
+                            .lineLimit(2)
                         }
                         .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("\(lot.name)，\(lot.quantity)\(lot.unit)，\(lot.timeLeftLabel)")
+                    .accessibilityLabel("\(lot.name)，\(lot.quantity)\(lot.unit)，\(showingHistory ? lot.stateLabel : lot.dateStatusLabel)")
                 }
             }
         }

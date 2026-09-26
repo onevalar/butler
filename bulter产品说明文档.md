@@ -1,6 +1,6 @@
 # Butler MVP 产品说明（历史版本）
 
-> 本文描述最初的 MVP 构想。Butler 2.0 的产品方向、领域模型、AI 执行协议、迁移约束与验收标准以 [`docs/BUTLER_2_SPEC.md`](docs/BUTLER_2_SPEC.md) 为唯一事实来源。
+> 本文仅存档最初的 MVP 构想，不代表当前实现或未来范围。最新的 Agent 管家构想、SwiftUI 交互规划、主模型与 Jev 分工、个人记忆和逐步实施路线以 [`docs/BUTLER_2_SPEC.md` §0](docs/BUTLER_2_SPEC.md#0-新方向理解个人生活的-agent-管家) 为准。下文“全部离线”“仅库存管理”和 iOS 17 等旧约束不再指导新开发。
 
 ## 1. 产品概述 (Executive Summary)
 1.1 产品愿景

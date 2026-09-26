@@ -39,6 +39,7 @@ struct CaptureView: View {
                     Color.black.opacity(0.38).ignoresSafeArea()
                         .transition(.opacity)
                     ClarifySheet(coordinator: coordinator, question: question)
+                        .id(question)
                         .transition(.move(edge: .bottom))
                 }
             }
@@ -277,9 +278,10 @@ struct CaptureView: View {
     }
 
     private func switchToTyping(note: String? = nil) {
-        voice.cancel()
         let spoken = [carriedText, voice.transcribedText].filter { !$0.isEmpty }.joined(separator: "，")
-        if typed.isEmpty { typed = spoken }
+        if mode == .listening { typed = spoken }
+        carriedText = ""
+        voice.cancel()
         mode = .typing
         notice = note
         typingFocused = true
@@ -335,7 +337,7 @@ struct CaptureView: View {
 
     /// Runs the same local planner on the partial text so seals "land" while the user talks.
     private func preview(_ partial: String) async {
-        let text = [carriedText, partial].filter { !$0.isEmpty }.joined(separator: "，")
+        let text = mode == .typing ? typed : [carriedText, partial].filter { !$0.isEmpty }.joined(separator: "，")
         guard !text.isEmpty else { heard = []; return }
         let input = InventoryPlanningInput(text: text, locale: .current, referenceDate: .now,
                                            timeZone: .current, inputID: UUID(), planID: UUID())

@@ -5,6 +5,7 @@ struct ReviewView: View {
     let coordinator: InventoryInputCoordinator
     let onAddMore: () -> Void
     let onBack: () -> Void
+    @State private var editing: Entry?
 
     private struct Entry: Identifiable {
         let id: UUID
@@ -18,6 +19,9 @@ struct ReviewView: View {
         let unit: String
         let storage: String?
         let storageInferred: Bool
+        let purchasedAt: Date?
+        let estimatedExpiry: Date?
+        let estimatedInferred: Bool
         let packageExpiry: Date?
         let plannedUseBy: Date?
         let plannedInferred: Bool
@@ -40,6 +44,9 @@ struct ReviewView: View {
                 unit: lot.unit,
                 storage: lot.storageLocation,
                 storageInferred: source(.storageLocation)?.isInference ?? false,
+                purchasedAt: lot.purchasedAt,
+                estimatedExpiry: lot.estimatedExpiryDate,
+                estimatedInferred: source(.estimatedExpiryDate)?.isInference ?? false,
                 packageExpiry: lot.packageExpiryDate,
                 plannedUseBy: lot.plannedUseByDate,
                 plannedInferred: source(.plannedUseByDate)?.isInference ?? false
@@ -107,7 +114,7 @@ struct ReviewView: View {
                 }
                 .buttonStyle(PillButtonStyle(kind: .primary, height: 58))
                 .disabled(coordinator.state == .executing)
-                if let missing = lines.first(where: { $0.packageExpiry == nil && $0.plannedUseBy == nil }) {
+                if let missing = lines.first(where: { $0.packageExpiry == nil && $0.plannedUseBy == nil && $0.estimatedExpiry == nil }) {
                     Text("\(missing.name)的日期，拍好后再补也可以")
                         .font(Theme.body(13))
                         .foregroundStyle(Theme.muted)
@@ -119,6 +126,14 @@ struct ReviewView: View {
             .background(alignment: .top) {
                 LinearGradient(colors: [Theme.ground.opacity(0), Theme.ground], startPoint: .top, endPoint: .init(x: 0.5, y: 0.3))
                     .ignoresSafeArea()
+            }
+        }
+        .disabled(coordinator.state == .executing)
+        .sheet(item: $editing) { entry in
+            if let draft = coordinator.reviewDraft(lotID: entry.id) {
+                CaptureReviewEditor(draft: draft) { edited in
+                    coordinator.editReview(lotID: entry.id, draft: edited)
+                }
             }
         }
     }
@@ -151,9 +166,12 @@ struct ReviewView: View {
                             .foregroundStyle(Theme.cobalt)
                     }
                     Spacer()
-                    InferredText(text: "×\(line.quantity)", inferred: line.quantityInferred,
+                    InferredText(text: "×\(line.quantity)\(line.unit)", inferred: line.quantityInferred,
                                  font: Theme.numeral(24, italic: false))
                 }
+                Button("编辑") { editing = line }
+                    .font(Theme.body(13, weight: .medium))
+                    .accessibilityLabel("编辑\(line.name)")
                 HStack(spacing: 6) {
                     if let storage = line.storage {
                         InferredText(text: storage, inferred: line.storageInferred)
@@ -177,11 +195,11 @@ struct ReviewView: View {
                     }
                 }
                 if let expiry = line.packageExpiry {
-                    Text("包装有效期 \(expiry.monthDay) · 保存时由你确认")
+                    Text("包装有效期 \(expiry.formatted(date: .abbreviated, time: .omitted)) · 保存时由你确认")
                         .font(Theme.body(12))
                         .foregroundStyle(Theme.muted)
                 } else if line.plannedUseBy != nil {
-                    Text("这是我建议的计划日期，不是包装上的保质期")
+                    Text(line.plannedInferred ? "这是我建议的计划日期，不是包装上的保质期" : "这是你的计划日期，不是包装上的保质期")
                         .font(Theme.body(12))
                         .foregroundStyle(Theme.muted)
                 } else {
@@ -195,6 +213,14 @@ struct ReviewView: View {
                             .foregroundStyle(Theme.muted)
                     }
                     .padding(.top, 2)
+                }
+                if let estimated = line.estimatedExpiry {
+                    InferredText(text: "估算到期 \(estimated.formatted(date: .abbreviated, time: .omitted))（非包装日期）",
+                                 inferred: line.estimatedInferred)
+                }
+                if let purchased = line.purchasedAt {
+                    Text("购买日期 \(purchased.formatted(date: .abbreviated, time: .omitted))")
+                        .font(Theme.body(12)).foregroundStyle(Theme.muted)
                 }
             }
         }

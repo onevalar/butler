@@ -224,10 +224,26 @@ final class InventoryRepository {
             guard lot.state == .active else {
                 throw InventoryRepositoryError.invalidState("Lot is already closed")
             }
+            if let previous = payload.quantityBeforeClosing, previous != lot.quantity {
+                throw InventoryRepositoryError.invalidState("Close snapshot does not match current quantity")
+            }
             lot.state = payload.state
             if payload.state == .depleted {
                 lot.quantity = 0
             }
+            try touch(lot)
+            return (.lot, lot.id)
+
+        case .undoLot(let payload):
+            let lot = try requireLot(id: payload.lotID, pendingLots: pendingLots, in: modelContext)
+            try requireRevision(payload.expectedRevision, actual: lot.revision, kind: "lot", id: lot.id)
+            guard let original = try event(operationID: payload.originalOperationID, in: modelContext),
+                  original.subjectID == lot.id,
+                  let quantity = original.undoQuantity(currentQuantity: lot.quantity, revision: lot.revision) else {
+                throw InventoryRepositoryError.invalidState("Only the latest quantity or close operation can be undone")
+            }
+            lot.quantity = quantity
+            lot.state = .active
             try touch(lot)
             return (.lot, lot.id)
 
@@ -305,6 +321,17 @@ final class InventoryRepository {
             let confirmation = requirement.flatMap { requirement in
                 trustedConfirmations.first { $0.matches(requirement) }
             }
+            let value: Data
+            if case .undoLot(let undo) = plannedOperation.operation {
+                let restored = try requireLot(id: undo.lotID, pendingLots: [:], in: modelContext)
+                switch proposal.fieldKey {
+                case .quantity: value = try encode(restored.quantity)
+                case .state: value = try encode(restored.state.rawValue)
+                default: throw InventoryRepositoryError.missingEvidenceValue(field: proposal.fieldKey)
+                }
+            } else {
+                value = try valueJSON(for: proposal.fieldKey, in: plannedOperation.operation)
+            }
             let evidence = FieldEvidence(
                 subjectKind: subject.kind,
                 subjectID: subject.id,
@@ -315,7 +342,7 @@ final class InventoryRepository {
                 rawText: proposal.rawText,
                 operationID: plannedOperation.operationID,
                 confirmationReceiptID: confirmation?.receiptID,
-                valueJSON: try valueJSON(for: proposal.fieldKey, in: plannedOperation.operation)
+                valueJSON: value
             )
             modelContext.insert(evidence)
         }
@@ -361,6 +388,7 @@ final class InventoryRepository {
         case .setLotDate(let value): return (.lot, value.lotID)
         case .moveLot(let value): return (.lot, value.lotID)
         case .closeLot(let value): return (.lot, value.lotID)
+        case .undoLot(let value): return (.lot, value.lotID)
         case .createTemplate(let value): return (.template, value.templateID)
         case .updateTemplate(let value): return (.template, value.templateID)
         }
@@ -374,6 +402,7 @@ final class InventoryRepository {
         case .setLotDate: return "lotDateSet"
         case .moveLot: return "lotMoved"
         case .closeLot: return "lotClosed"
+        case .undoLot: return "lotActionUndone"
         case .createTemplate: return "templateCreated"
         case .updateTemplate: return "templateUpdated"
         }
@@ -500,6 +529,7 @@ private extension InventoryOperation {
         case .setLotDate(let value): return value.evidence
         case .moveLot(let value): return value.evidence
         case .closeLot(let value): return value.evidence
+        case .undoLot(let value): return value.evidence
         case .createTemplate(let value): return value.evidence
         case .updateTemplate(let value): return value.evidence
         }

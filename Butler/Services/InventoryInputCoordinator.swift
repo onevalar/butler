@@ -91,6 +91,27 @@ final class InventoryInputCoordinator {
         refresh()
     }
 
+    func reviewDraft(lotID: UUID) -> InventoryReviewEdit? {
+        guard let planned = reviewPlan?.operations.first(where: {
+            if case .addLot(let lot) = $0.operation { return lot.lotID == lotID }; return false
+        }), case .addLot(let lot) = planned.operation,
+              let name = productDisplays[lot.productID]?.canonicalName else { return nil }
+        return .init(name: name, quantity: String(lot.quantity), unit: lot.unit,
+                     storage: lot.storageLocation ?? "", purchasedAt: lot.purchasedAt,
+                     packageExpiry: lot.packageExpiryDate, estimatedExpiry: lot.estimatedExpiryDate,
+                     plannedUseBy: lot.plannedUseByDate)
+    }
+
+    @discardableResult
+    func editReview(lotID: UUID, draft: InventoryReviewEdit) -> Bool {
+        guard state == .reviewing, let current = reviewDraft(lotID: lotID),
+              session?.edit(lotID: lotID, currentName: current.name, draft: draft) == true else { return false }
+        // No receipts are retained: refresh the exact value-bound requirements after every edit.
+        confirmationRequirements = []
+        refresh()
+        return state == .reviewing
+    }
+
     func reset() {
         guard state != .planning && state != .executing else { return }
         state = .idle; errorMessage = nil; questions = []; reviewPlan = nil
@@ -141,6 +162,11 @@ final class InventoryInputCoordinator {
     private func refresh() {
         guard let revision = session?.materialize() else { return }
         reviewPlan = revision.plan
+        for planned in revision.plan.operations {
+            guard case .createProduct(let product) = planned.operation else { continue }
+            productDisplays[product.productID] = .init(id: product.productID,
+                canonicalName: product.canonicalName, brand: product.brand, defaultUnit: product.defaultUnit)
+        }
         guard questions.isEmpty else { state = .clarifying; return }
         let unresolvedProduct = revision.plan.operations.contains { planned in
             guard case .addLot(let lot) = planned.operation else { return false }

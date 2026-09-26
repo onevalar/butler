@@ -6,7 +6,7 @@ struct ClarifySheet: View {
     let question: InventoryPlanningQuestion
 
     @State private var storageChoice: InventoryStorageChoice = .frozen
-    @State private var sameProduct = true
+    @State private var productChoice: InventoryProductChoice?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -34,6 +34,7 @@ struct ClarifySheet: View {
             VStack(spacing: 14) {
                 Button("好，继续", action: submit)
                     .buttonStyle(PillButtonStyle(kind: .capsule))
+                    .disabled(needsProductChoice)
                 if case .field(let field) = question {
                     Button("先跳过，回头在首页告诉我") { coordinator.postponeStorage(field) }
                         .font(Theme.body(14))
@@ -89,9 +90,8 @@ struct ClarifySheet: View {
         switch question {
         case .field:
             return "你说“放冰箱”，但冷冻和冷藏能放的时间差很多。"
-        case .productChoice(_, _, let candidates):
-            if let brand = candidates.first?.brand { return "之前记的是 \(brand) 的。同一种我会放在一起，方便算你多久买一次。" }
-            return "同一种我会放在一起，方便算你多久买一次。"
+        case .productChoice:
+            return "有多个同名产品，请选出这次买的那一种，或分开记为新产品。"
         }
     }
 
@@ -110,24 +110,36 @@ struct ClarifySheet: View {
                     storageChoice = .refrigerated
                 }
             }
-        case .productChoice:
-            HStack(spacing: 10) {
-                ChoiceTile(title: "同一种", number: nil, caption: "合在一起记", selected: sameProduct, warn: false) { sameProduct = true }
-                ChoiceTile(title: "新的一种", number: nil, caption: "分开记", selected: !sameProduct, warn: false) { sameProduct = false }
+        case .productChoice(_, _, let candidates):
+            ScrollView {
+                VStack(spacing: 10) {
+                    ForEach(candidates, id: \.id) { candidate in
+                        ChoiceTile(title: candidate.canonicalName, number: nil,
+                                   caption: "\(candidate.brand ?? "无品牌") · \(candidate.defaultUnit ?? "无默认单位") · \(candidate.id.uuidString)",
+                                   selected: productChoice == .existing(productID: candidate.id), warn: false) {
+                            productChoice = .existing(productID: candidate.id)
+                        }
+                    }
+                    ChoiceTile(title: "新的一种", number: nil, caption: "分开记",
+                               selected: productChoice == .createSeparate, warn: false) { productChoice = .createSeparate }
+                }
             }
+            .frame(maxHeight: 300)
         }
+    }
+
+    private var needsProductChoice: Bool {
+        if case .productChoice = question { return productChoice == nil }
+        return false
     }
 
     private func submit() {
         switch question {
         case .field(let field):
             coordinator.answerStorage(field, choice: storageChoice)
-        case .productChoice(let operationID, _, let candidates):
-            if sameProduct, let existing = candidates.first {
-                coordinator.chooseProduct(createOperationID: operationID, choice: .existing(productID: existing.id))
-            } else {
-                coordinator.chooseProduct(createOperationID: operationID, choice: .createSeparate)
-            }
+        case .productChoice(let operationID, _, _):
+            guard let productChoice else { return }
+            coordinator.chooseProduct(createOperationID: operationID, choice: productChoice)
         }
     }
 }

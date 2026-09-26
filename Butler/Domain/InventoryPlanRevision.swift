@@ -28,3 +28,24 @@ struct InventoryPlanRevision: Sendable {
     let plan: InventoryOperationPlan
     let localRevision: Int
 }
+
+/// A local review draft, never a repository mutation or a confirmation receipt.
+struct InventoryReviewEdit: Sendable {
+    var name: String
+    var quantity: String
+    var unit: String
+    var storage: String
+    var purchasedAt: Date?
+    var packageExpiry: Date?
+    var estimatedExpiry: Date?
+    var plannedUseBy: Date?
+
+    var isValid: Bool {
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !unit.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !quantity.isEmpty && quantity.allSatisfy { $0 >= "0" && $0 <= "9" } &&
+        (Int(quantity) ?? 0) > 0 &&
+        [purchasedAt, packageExpiry, estimatedExpiry, plannedUseBy].compactMap { $0 }
+            .allSatisfy { $0.timeIntervalSince1970.isFinite }
+    }
+}

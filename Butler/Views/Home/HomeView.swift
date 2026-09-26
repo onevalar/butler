@@ -83,13 +83,10 @@ struct HomeView: View {
         var lines: [String] = []
         let due = facts.filter { $0.tier <= .today }.sorted { ($0.daysLeft ?? 0) < ($1.daysLeft ?? 0) }
         if let first = due.first {
-            let verb = first.isMedicine ? "要处理" : (first.unit == "瓶" || first.unit == "杯" ? "要喝掉" : "要吃掉")
             if due.count > 1 {
-                lines.append("\(first.name)等 \(due.count) 样今天\(verb)")
-            } else if first.tier == .overdue {
-                lines.append("\(first.name)已经过期了")
+                lines.append("\(first.name)：\(first.dateStatusLabel)，共 \(due.count) 样需要查看")
             } else {
-                lines.append("\(first.name)今天\(verb)")
+                lines.append("\(first.name)：\(first.dateStatusLabel)")
             }
         }
         if !asks.isEmpty {
@@ -97,7 +94,7 @@ struct HomeView: View {
         }
         if lines.isEmpty {
             let week = facts.filter { $0.tier <= .week }.count
-            return week > 0 ? "这周有 \(week) 样要吃掉，\n别的都安好。" : "家里一切都好，\n这周不用操心。"
+            return week > 0 ? "这周有 \(week) 样需要查看，\n记得核对包装和实际状态。" : "这周没有日期提醒。"
         }
         if lines.count == 1, !lines[0].hasSuffix("。") { lines[0] += "。" }
         return lines.joined(separator: "，\n")
@@ -208,7 +205,7 @@ private struct WeekStrip: View {
         let count = grouped.values.reduce(0) { $0 + $1.count }
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline) {
-                Eyebrow("这一周要吃掉的")
+                Eyebrow("这一周要留意的")
                 Spacer()
                 Text(count == 0 ? "没有" : "\(count) 件")
                     .font(Theme.body(13, weight: .medium))
@@ -245,7 +242,7 @@ private struct WeekStrip: View {
                                  tilt: lot.tier <= .today ? -4 : (lot.tier == .week ? 3 : 0))
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("\(lot.name)，\(lot.timeLeftLabel)")
+                    .accessibilityLabel("\(lot.name)，\(lot.dateStatusLabel)")
                 }
                 if lots.count > 2 {
                     Text("+\(lots.count - 2)")

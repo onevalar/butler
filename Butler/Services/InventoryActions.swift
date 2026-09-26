@@ -25,7 +25,26 @@ struct InventoryActions {
 
     func close(_ lot: LotFacts, as state: InventoryLotState) throws {
         let evidence = [ProposedFieldEvidence(fieldKey: .state, source: .userStated, confidence: 1, rawText: state.rawValue)]
-        try run(.closeLot(.init(lotID: lot.id, state: state, expectedRevision: lot.revision, evidence: evidence)))
+        try run(.closeLot(.init(lotID: lot.id, state: state, expectedRevision: lot.revision,
+                               evidence: evidence, quantityBeforeClosing: lot.quantity)))
+    }
+
+    func adjustQuantity(_ lot: LotFacts, to quantity: Int) throws {
+        guard quantity >= 0 else { throw InventoryActionError.policyRejected(["数量不能小于零。"] ) }
+        let delta = quantity.subtractingReportingOverflow(lot.quantity)
+        guard !delta.overflow else { throw InventoryActionError.policyRejected(["数量超出范围。"] ) }
+        guard delta.partialValue != 0 else { return }
+        try run(.adjustQuantity(.init(lotID: lot.id, delta: delta.partialValue,
+            expectedRevision: lot.revision,
+            evidence: [.init(fieldKey: .quantity, source: .userEdited, confidence: 1, rawText: "改为 \(quantity)")])))
+    }
+
+    func undo(_ event: InventoryEvent, for lot: LotFacts) throws {
+        try run(.undoLot(.init(lotID: lot.id, originalOperationID: event.operationID,
+            expectedRevision: lot.revision,
+            evidence: [InventoryFieldKey.state, .quantity].map {
+                .init(fieldKey: $0, source: .userEdited, confidence: 1, rawText: "撤销上一次处理")
+            })))
     }
 
     func setPackageExpiry(_ date: Date, for lot: LotFacts, source: EvidenceSourceKind, rawText: String?) throws {
@@ -38,6 +57,11 @@ struct InventoryActions {
         let evidence = [ProposedFieldEvidence(fieldKey: .plannedUseByDate, source: .userEdited, confidence: 1, rawText: nil)]
         try run(.setLotDate(.init(lotID: lot.id, kind: .plannedUseBy, date: date,
                                   expectedRevision: lot.revision, evidence: evidence)))
+    }
+
+    func setDate(_ date: Date?, kind: LotDateKind, for lot: LotFacts) throws {
+        try run(.setLotDate(.init(lotID: lot.id, kind: kind, date: date, expectedRevision: lot.revision,
+            evidence: [.init(fieldKey: kind.fieldKey, source: .userEdited, confidence: 1, rawText: nil)])))
     }
 
     func move(_ lot: LotFacts, to location: String) throws {
