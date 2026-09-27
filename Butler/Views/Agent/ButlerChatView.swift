@@ -1,4 +1,6 @@
+import PhotosUI
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// How the chat was opened from home: typing, talking, or taking a photo.
 enum ChatStart: Hashable, Identifiable {
@@ -22,6 +24,9 @@ struct ButlerChatView: View {
     @Environment(\.butlerAccent) private var accent
     @State private var dictation = LiveDictation()
     @State private var showingCamera = false
+    @State private var showingLibrary = false
+    @State private var showingFiles = false
+    @State private var pickedPhotos: [PhotosPickerItem] = []
     @State private var showingSettings = false
     @FocusState private var composing: Bool
 
@@ -33,9 +38,15 @@ struct ButlerChatView: View {
                         if chat.turns.isEmpty { welcome }
                         ForEach(chat.turns) { turn in turnView(turn) }
                         if chat.working {
-                            HStack(spacing: 8) {
-                                ProgressView()
-                                Text("正在想，需要时会查家里的东西…")
+                            // Counts up after a few seconds, so a long wait never looks like nothing is happening.
+                            TimelineView(.periodic(from: .now, by: 1)) { context in
+                                let seconds = Int(context.date.timeIntervalSince(chat.workingSince ?? context.date))
+                                HStack(spacing: 8) {
+                                    ProgressView()
+                                    Text(seconds < 6 ? "正在想，需要时会查家里的东西…"
+                                         : seconds < 25 ? "还在想… \(seconds) 秒" : "这次有点慢… \(seconds) 秒，可以点停止")
+                                        .monospacedDigit()
+                                }
                             }
                             .font(.subheadline).foregroundStyle(.secondary)
                             .padding(.leading, 4)
@@ -98,6 +109,28 @@ struct ButlerChatView: View {
                 }
             }
             .onDisappear { dictation.cancel() }
+            .photosPicker(isPresented: $showingLibrary, selection: $pickedPhotos, maxSelectionCount: 4, matching: .images)
+            .onChange(of: pickedPhotos) { _, items in
+                guard !items.isEmpty else { return }
+                pickedPhotos = []
+                Task {
+                    for item in items {
+                        if let data = try? await item.loadTransferable(type: Data.self), let jpeg = UIImage(data: data)?.chatJPEG() {
+                            chat.photos.append(jpeg)
+                        }
+                    }
+                }
+            }
+            .fileImporter(isPresented: $showingFiles, allowedContentTypes: [.image], allowsMultipleSelection: true) { result in
+                guard case .success(let urls) = result else { return }
+                for url in urls.prefix(4) {
+                    let scoped = url.startAccessingSecurityScopedResource()
+                    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                    if let data = try? Data(contentsOf: url), let jpeg = UIImage(data: data)?.chatJPEG() {
+                        chat.photos.append(jpeg)
+                    }
+                }
+            }
         }
     }
 
@@ -246,13 +279,17 @@ struct ButlerChatView: View {
             if !chat.photos.isEmpty { attachedPhotos }
             GlassEffectContainer(spacing: 10) {
                 HStack(alignment: .bottom, spacing: 10) {
-                    Button { showingCamera = true } label: {
-                        Image(systemName: "camera").font(.system(size: 19, weight: .medium)).frame(width: 52, height: 52)
+                    Menu {
+                        Button { showingCamera = true } label: { Label("拍照", systemImage: "camera") }
+                        Button { showingLibrary = true } label: { Label("照片图库", systemImage: "photo.on.rectangle") }
+                        Button { showingFiles = true } label: { Label("选择文件", systemImage: "folder") }
+                    } label: {
+                        Image(systemName: "plus").font(.system(size: 20, weight: .medium)).frame(width: 52, height: 52)
                     }
                     .buttonStyle(.plain)
                     .glassEffect(.regular.interactive(), in: .circle)
                     .disabled(chat.working || dictation.listening)
-                    .accessibilityLabel("拍照")
+                    .accessibilityLabel("添加照片")
 
                     HStack(alignment: .bottom, spacing: 6) {
                         TextField(placeholder, text: $chat.draft, axis: .vertical)

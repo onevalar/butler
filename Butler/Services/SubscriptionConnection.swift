@@ -216,6 +216,18 @@ final class SubscriptionConnection {
     static func message(_ error: Error) -> String {
         if let known = error as? SubscriptionError { return known.localizedDescription }
         if error is CancellationError || (error as? URLError)?.code == .cancelled { return "已停止，本次没有保存修改。" }
-        return "连接中断或超时，请稍后重试。输入和本机记忆会保留，本次没有保存修改。"
+        if let url = error as? URLError {
+            switch url.code {
+            case .timedOut:
+                return "模型太久没有回应，已停止等待（自动重试过一次）。你说的话已放回输入框，可以直接再发。"
+            case .notConnectedToInternet, .networkConnectionLost, .dataNotAllowed, .internationalRoamingOff:
+                return "网络断开了，本次没有保存修改。连上网后再发一次，你说的话已放回输入框。"
+            case .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed, .secureConnectionFailed:
+                return "连不上模型服务，请稍后再试。你说的话已放回输入框。"
+            default:
+                return "网络出错（\(url.code.rawValue)），本次没有保存修改。你说的话已放回输入框。"
+            }
+        }
+        return "出错了：\(error.localizedDescription)。本次没有保存修改，你说的话已放回输入框。"
     }
 }

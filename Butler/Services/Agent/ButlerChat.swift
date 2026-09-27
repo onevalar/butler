@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import SwiftData
+import UIKit
 import UserNotifications
 
 struct ChatTurn: Identifiable, Codable, Equatable {
@@ -30,6 +31,8 @@ final class ButlerChat {
     private(set) var tools: ButlerTools?
     private(set) var turns: [ChatTurn] = []
     private(set) var working = false
+    /// When the current answer was asked for, to show how long it has been.
+    private(set) var workingSince: Date?
     var draft = UserDefaults.standard.string(forKey: "butlerChatDraft") ?? "" {
         didSet { UserDefaults.standard.set(draft, forKey: "butlerChatDraft") }
     }
@@ -90,6 +93,7 @@ final class ButlerChat {
         let attached = photos
         let text = typed.isEmpty ? Self.photoPrompt : typed
         working = true
+        workingSince = .now
         error = nil
         tools.beginTurn(request: text, previous: turns.last?.question, hasPhotos: !attached.isEmpty)
         // Every message starts from a fresh, bounded context: earlier turns as plain text only.
@@ -100,12 +104,24 @@ final class ButlerChat {
         let index = turns.count - 1
         draft = ""
         photos = []
+        // Keep going for a while if the owner switches away while the butler is answering.
+        let background = UIApplication.shared.beginBackgroundTask(withName: "butler-answer")
+        let started = Date.now
+        ChatDiagnostics.log("turn start chars=\(text.count) photos=\(attached.count)")
         task = Task {
-            defer { working = false; task = nil; save() }
+            defer {
+                working = false
+                workingSince = nil
+                task = nil
+                save()
+                if background != .invalid { UIApplication.shared.endBackgroundTask(background) }
+            }
             do {
                 turns[index].answer = try await run(attached.isEmpty ? .user(text) : .userPhotos(text, attached), tools: tools)
+                ChatDiagnostics.log("turn done \(Int(Date.now.timeIntervalSince(started)))s")
                 compactIfNeeded()
             } catch {
+                ChatDiagnostics.log("turn failed \(Int(Date.now.timeIntervalSince(started)))s \(ChatDiagnostics.describe(error))")
                 let message = SubscriptionConnection.message(error)
                 turns[index].failed = true
                 turns[index].answer = message
@@ -124,9 +140,11 @@ final class ButlerChat {
         messages.append(message)
         var completed: [String: String] = [:]
         do {
-            for _ in 0..<30 {
+            for round in 0..<30 {
                 try Task.checkCancellation()
+                let asked = Date.now
                 let reply = try await model.reply(to: messages)
+                ChatDiagnostics.log("round \(round) \(String(format: "%.1f", Date.now.timeIntervalSince(asked)))s calls=\(reply.calls.map(\.name).joined(separator: ","))")
                 try Task.checkCancellation()
                 messages.append(.assistant(reply))
                 if reply.calls.isEmpty { return reply.text.isEmpty ? "好的。" : reply.text }
@@ -135,7 +153,9 @@ final class ButlerChat {
                     if let previous = completed[call.id] {
                         output = previous
                     } else {
+                        let began = Date.now
                         output = await tools.execute(call)
+                        ChatDiagnostics.log("tool \(call.name) \(String(format: "%.1f", Date.now.timeIntervalSince(began)))s")
                         completed[call.id] = output
                     }
                     messages.append(.tool(id: call.id, result: output))
@@ -371,7 +391,8 @@ final class ButlerChat {
         - 库存本身（买了什么、剩多少、放哪）存在库存里，不写成笔记。以后还用得上的长期信息（习惯放哪里、常在哪买、家里人的偏好和忌口、家里的布局）用 propose_note 记住，可以和库存修改一起提出；回答前可用 search_notes 查。
         - 所有 propose_* 只是提出修改，手机会显示确认卡片，用户点“确认”后才真正保存。提出后简短告诉用户改了什么、请在下面确认；收到“手机执行回执”前不要说“已保存”。
         - 东西的到期提醒由手机根据库存日期自动发送，把日期设好即可。
-        - 用户要你在某个时间提醒他做某事（热饭、吃药、取快递、买菜），用 propose_reminder 设定时提醒，可以每天或每周重复；“11点”这类没说日期的，指今天，若已过就问用户是不是明天。查看或取消提醒用 list_reminders 和 propose_cancel_reminder。
+        - 用户要你在某个时间提醒他做某事（热饭、吃药、取快递、买菜），用 propose_reminder 设定时提醒，可以每天或每周重复。查看或取消提醒用 list_reminders 和 propose_cancel_reminder。
+        - 时间由你自己判断，不要反问：没说上午/下午/晚上的钟点（“7点”“7:00”“十点半”），取从现在起最近的、还没到的那个时刻——比如现在 18:55 说“7点”就是今天 19:00，现在 20:00 说“7点”就是明天 07:00；说了“早上/中午/下午/晚上/明天/周六”就照说的来；没说日期指今天，今天已过就是明天。提出后在回答里讲清是哪天几点（如“今天晚上 7:00”），用户觉得不对会纠正。
         \(jev ? "- 手机会自动请 Jev 条件判断模型把关：查询结果带 relevance（与这句话的相关程度，越高越相关）；提出修改时如果返回 needs_review，说明 Jev 对“是哪一件/数字是剩余还是用掉/是否新买/日期是否用户说的”有疑问，按 jev_concern 修正后重新提出，拿不准就直接问用户。其他需要判断的情况也可以用 judge_with_jev。Jev 的结果是参考，不是授权。" : "")
         - 用户发来照片（买回来的东西、购物小票、包装上的日期）时：认出里面的物品和数量，包装或小票上清楚印着的日期可以作为 package_expiry；看不清、拿不准的地方直接问，不要猜。认出后照常用 propose_add_items 或修改工具，让用户确认。
         - 关于以前的对话：你默认只带着更早对话的摘要和最近一段原话。按用户这次要做的事决定要读多少原始记录——

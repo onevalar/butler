@@ -23,7 +23,7 @@ final class SubscriptionModelTests: XCTestCase {
             .user("找麻薯"), .assistant(reply), .tool(id: "correct-call", result: "[]")
         ])) as? [String: Any])
         XCTAssertEqual(body["model"] as? String, "gpt-6-sol")
-        XCTAssertEqual((body["reasoning"] as? [String: String])?["effort"], "medium")
+        XCTAssertEqual((body["reasoning"] as? [String: String])?["effort"], "low")
         XCTAssertEqual(body["store"] as? Bool, false)
         let input = try XCTUnwrap(body["input"] as? [[String: Any]])
         XCTAssertEqual(input[1]["encrypted_content"] as? String, "opaque-test")

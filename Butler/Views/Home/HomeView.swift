@@ -82,7 +82,7 @@ struct HomeView: View {
                     }
                     .accessibilityLabel("家里")
                     Button(action: onOpenButler) {
-                        ButlerOrb(size: 26).frame(width: 44, height: 44)
+                        Image(systemName: "gearshape").font(.system(size: 18, weight: .medium)).frame(width: 44, height: 44)
                     }
                     .accessibilityLabel("管家与设置")
                 }
@@ -260,7 +260,6 @@ struct BriefCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
-                ButlerOrb(size: 28)
                 Text(brief.greeting).font(.headline)
                 Spacer()
                 Text(brief.isEvening ? "晚间简报" : "今日简报").font(.caption).foregroundStyle(.secondary)
