@@ -10,6 +10,7 @@ struct ButlerSettingsView: View {
     @State private var jevKey = ""
     @State private var confirmClear = false
     @State private var notificationStatus: UNAuthorizationStatus?
+    @Environment(CalendarFeed.self) private var calendarFeed: CalendarFeed?
     @AppStorage("expiryWarningDays") private var leadDays = 2
     @AppStorage("reminderMinutes") private var reminderMinutes = 9 * 60
     @Query(filter: #Predicate<InventoryLot> { $0.stateRawValue == "active" }) private var activeLots: [InventoryLot]
@@ -68,6 +69,24 @@ struct ButlerSettingsView: View {
                     Text("到期提醒")
                 } footer: {
                     Text("有日期的东西会在到期前按这里的时间提醒一次；药品会再多提前 4 天。“只记数量”的东西不提醒到期。")
+                }
+
+                if let calendarFeed {
+                    Section {
+                        Toggle("在首页显示系统日历", isOn: Binding(get: { calendarFeed.enabled && calendarFeed.canRead }, set: { on in
+                            calendarFeed.enabled = on
+                            if on { Task { if !(await calendarFeed.requestAccess()) { calendarFeed.enabled = false } } }
+                        }))
+                        if calendarFeed.isBlocked {
+                            Button("日历权限被关掉了，去系统设置打开") {
+                                if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                            }
+                        }
+                    } header: {
+                        Text("首页日程")
+                    } footer: {
+                        Text("打开后，日历里的会议和安排会出现在首页的时间线上（绿色）。管家只读取，不修改你的日历。")
+                    }
                 }
 
                 Section {

@@ -1,347 +1,397 @@
 import SwiftUI
-import SwiftData
 
+extension AgendaEntry.Kind {
+    var color: Color {
+        switch self {
+        case .expired: .red
+        case .expiring: .orange
+        case .lowStock: .gray
+        case .reminder: .blue
+        case .calendar: .green
+        }
+    }
+}
+
+extension Date {
+    /// "今天", "明天", "周三".
+    var relativeDayName: String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(self) { return "今天" }
+        if calendar.isDateInTomorrow(self) { return "明天" }
+        return formatted(.dateTime.weekday(.abbreviated).locale(Locale(identifier: "zh_CN")))
+    }
+
+    var clockTime: String {
+        formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
+    }
+}
+
+/// Home: what needs handling now, the selected day's schedule on a timeline, and the rest of the week.
 struct HomeView: View {
-    let facts: [LotFacts]
-    let onOpenLot: (UUID) -> Void
-    let onOpenShelf: () -> Void
-    let onChat: (ChatStart) -> Void
+    let agenda: HomeAgenda
+    @Binding var selectedDay: Date
+    let onOpen: (AgendaEntry.Target) -> Void
+    let onOpenDay: (Date) -> Void
+    let onOpenInventory: () -> Void
     let onSettings: () -> Void
-
-    @Environment(\.modelContext) private var modelContext
-    @State private var datingLot: LotFacts?
-    @State private var errorMessage: String?
-
-    private let calendar = Calendar.current
+    let onChat: (ChatStart) -> Void
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    Masthead(onSettings: onSettings)
-                        .padding(.top, 6)
-                    greeting
-                        .padding(.top, 30)
-                    if facts.isEmpty {
-                        EmptyHome()
-                            .padding(.top, 36)
-                    } else {
-                        WeekStrip(facts: facts, onOpenLot: onOpenLot)
-                            .padding(.top, 30)
-                        if !asks.isEmpty {
-                            asksSection
-                                .padding(.top, 26)
-                        }
-                        calmLine
-                            .padding(.top, 18)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                title
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 14)
+                WeekStrip(agenda: agenda, selected: $selectedDay)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 20)
+                if isEmpty {
+                    emptyState.padding(.horizontal, 16)
+                } else {
+                    if !agenda.needsAttention.isEmpty || agenda.missingInfoCount > 0 {
+                        attention.padding(.horizontal, 16).padding(.bottom, 24)
+                    }
+                    schedule.padding(.horizontal, 16).padding(.bottom, 24)
+                    upcoming.padding(.horizontal, 16)
+                }
+            }
+            .padding(.bottom, 24)
+        }
+        .scrollIndicators(.hidden)
+        .background(Color(.systemGroupedBackground))
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button(action: onOpenInventory) { Image(systemName: "refrigerator") }
+                    .accessibilityLabel("家里的东西")
+                Button(action: onSettings) { Image(systemName: "gearshape") }
+                    .accessibilityLabel("设置")
+            }
+        }
+        .safeAreaBar(edge: .bottom) {
+            HomeInputBar(onChat: onChat)
+        }
+    }
+
+    private var isEmpty: Bool {
+        agenda.needsAttention.isEmpty && agenda.missingInfoCount == 0 && agenda.days.allSatisfy { agenda.entries(on: $0).isEmpty }
+    }
+
+    // MARK: Title
+
+    private var title: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(Date.now.formatted(.dateTime.month().day().weekday(.wide).locale(Locale(identifier: "zh_CN"))))
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.red)
+            Text("今天")
+                .font(.largeTitle.bold())
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
+    }
+
+    // MARK: Needs attention
+
+    private var attention: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionTitle("需要处理")
+            GroupCard {
+                ForEach(Array(agenda.needsAttention.enumerated()), id: \.element.id) { index, entry in
+                    AgendaRow(entry: entry, accessory: .action(entry.kind == .lowStock ? "补货" : "处理")) { onOpen(entry.target) }
+                    if index < agenda.needsAttention.count - 1 || agenda.missingInfoCount > 0 {
+                        RowDivider(inset: 36)
                     }
                 }
-                .padding(.horizontal, 24)
-                .padding(.bottom, 130)
-            }
-            .scrollIndicators(.hidden)
-
-            Dock(onShelf: facts.isEmpty ? nil : onOpenShelf, onChat: onChat)
-        }
-        .background(Theme.ground.ignoresSafeArea())
-        .fullScreenCover(item: $datingLot) { lot in
-            DateCaptureView(lot: lot)
-        }
-        .alert("没能保存", isPresented: .constant(errorMessage != nil)) {
-            Button("好") { errorMessage = nil }
-        } message: {
-            Text(errorMessage ?? "")
-        }
-    }
-
-    // MARK: Greeting
-
-    private var greeting: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(salutation)
-                .font(Theme.display(52))
-                .foregroundStyle(Theme.ink)
-                .tracking(-1)
-            Text(summary)
-                .font(Theme.display(20, weight: .regular))
-                .foregroundStyle(Theme.inkSoft)
-                .lineSpacing(8)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private var salutation: String {
-        switch calendar.component(.hour, from: Date()) {
-        case 5..<11: "早安。"
-        case 11..<14: "午安。"
-        case 14..<18: "下午好。"
-        default: "晚上好。"
-        }
-    }
-
-    private var summary: String {
-        if facts.isEmpty { return "家里还空着，\n说一句你买了什么，我来记。" }
-        var lines: [String] = []
-        let due = facts.filter { $0.tier <= .today }.sorted { ($0.daysLeft ?? 0) < ($1.daysLeft ?? 0) }
-        if let first = due.first {
-            if due.count > 1 {
-                lines.append("\(first.name)：\(first.dateStatusLabel)，共 \(due.count) 样需要查看")
-            } else {
-                lines.append("\(first.name)：\(first.dateStatusLabel)")
-            }
-        }
-        if !asks.isEmpty {
-            lines.append("还有 \(asks.count) 样东西在等你一句话。")
-        }
-        if lines.isEmpty {
-            let week = facts.filter { $0.tier <= .week }.count
-            return week > 0 ? "这周有 \(week) 样需要查看，\n记得核对包装和实际状态。" : "这周没有日期提醒。"
-        }
-        if lines.count == 1, !lines[0].hasSuffix("。") { lines[0] += "。" }
-        return lines.joined(separator: "，\n")
-    }
-
-    // MARK: Asks
-
-    private var asks: [LotFacts] {
-        facts.filter { $0.needsCompartment || $0.needsDate }
-    }
-
-    private var asksSection: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Eyebrow("等你一句话")
-                .padding(.bottom, 6)
-            ForEach(Array(asks.prefix(3).enumerated()), id: \.element.id) { index, lot in
-                AskRow(
-                    lot: lot,
-                    onPhoto: { datingLot = lot },
-                    onCompartment: { choose(lot, $0) },
-                    onOpen: { onOpenLot(lot.id) }
-                )
-                if index < min(asks.count, 3) - 1 {
-                    Divider().overlay(Theme.hairline)
-                }
-            }
-            if asks.count > 3 {
-                Button("还有 \(asks.count - 3) 件 →", action: onOpenShelf)
-                    .font(Theme.body(13, weight: .medium))
-                    .foregroundStyle(Theme.cobalt)
-                    .padding(.top, 8)
-            }
-        }
-    }
-
-    private func choose(_ lot: LotFacts, _ choice: InventoryStorageChoice) {
-        do {
-            try InventoryActions(modelContainer: modelContext.container).move(lot, to: choice.rawValue)
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    private var calmLine: some View {
-        let calm = facts.filter { $0.tier == .calm }.count
-        return HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text("\(calm)")
-                .font(Theme.numeral(20))
-                .foregroundStyle(Theme.cobalt)
-            Text(calm == facts.count ? "件东西都安好，不用操心" : "件其它东西都安好，不用操心")
-                .font(Theme.body(13))
-                .foregroundStyle(Theme.muted)
-        }
-        .opacity(calm > 0 ? 1 : 0)
-    }
-}
-
-// MARK: - Masthead
-
-private struct Masthead: View {
-    let onSettings: () -> Void
-
-    var body: some View {
-        HStack(alignment: .lastTextBaseline) {
-            HStack(spacing: 8) {
-                Text("管")
-                    .font(Theme.display(13))
-                    .foregroundStyle(.white)
-                    .frame(width: 22, height: 22)
-                    .background(RoundedRectangle(cornerRadius: 5).fill(Theme.cobaltFill))
-                Text("BUTLER")
-                    .font(.system(size: 11, weight: .semibold))
-                    .tracking(3.5)
-                    .foregroundStyle(Theme.ink)
-            }
-            Spacer()
-            HStack(alignment: .lastTextBaseline, spacing: 6) {
-                Text(Date.now.formatted(.dateTime.month(.abbreviated).day().locale(Locale(identifier: "en_US"))))
-                    .font(Theme.numeral(22))
-                    .foregroundStyle(Theme.ink)
-                Text(Date.now.formatted(.dateTime.weekday(.abbreviated).locale(Locale(identifier: "zh_CN"))))
-                    .font(Theme.body(12))
-                    .foregroundStyle(Theme.muted)
-            }
-            Button(action: onSettings) {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 18, weight: .regular))
-                    .foregroundStyle(Theme.ink)
-                    .frame(width: 36, height: 36)
-                    .background(Circle().fill(Theme.surface))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("设置")
-            .padding(.leading, 10)
-            .alignmentGuide(.lastTextBaseline) { $0[VerticalAlignment.center] + 6 }
-        }
-    }
-}
-
-// MARK: - Week strip
-
-private struct WeekStrip: View {
-    let facts: [LotFacts]
-    let onOpenLot: (UUID) -> Void
-
-    private let calendar = Calendar.current
-    private static let weekdayNames = ["日", "一", "二", "三", "四", "五", "六"]
-
-    private var byOffset: [Int: [LotFacts]] {
-        var result: [Int: [LotFacts]] = [:]
-        for lot in facts {
-            guard let days = lot.daysLeft, days <= 6 else { continue }
-            result[max(days, 0), default: []].append(lot)
-        }
-        return result.mapValues { $0.sorted { $0.tier < $1.tier } }
-    }
-
-    var body: some View {
-        let grouped = byOffset
-        let count = grouped.values.reduce(0) { $0 + $1.count }
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .firstTextBaseline) {
-                Eyebrow("这一周要留意的")
-                Spacer()
-                Text(count == 0 ? "没有" : "\(count) 件")
-                    .font(Theme.body(13, weight: .medium))
-                    .foregroundStyle(Theme.cobalt)
-            }
-            HStack(alignment: .top, spacing: 0) {
-                ForEach(0..<7, id: \.self) { offset in
-                    dayColumn(offset: offset, lots: grouped[offset] ?? [])
-                        .frame(maxWidth: .infinity)
-                }
-            }
-            .padding(.vertical, 16)
-            .padding(.horizontal, 6)
-            .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Theme.surface))
-        }
-    }
-
-    private func dayColumn(offset: Int, lots: [LotFacts]) -> some View {
-        let date = calendar.date(byAdding: .day, value: offset, to: .now) ?? .now
-        let isToday = offset == 0
-        let label = isToday ? "今天" : Self.weekdayNames[calendar.component(.weekday, from: date) - 1]
-        let dayColor: Color = isToday && !lots.isEmpty ? Theme.vermilion : (lots.isEmpty ? Theme.faint : Theme.ink)
-        return VStack(spacing: 10) {
-            Text(label)
-                .font(Theme.body(11, weight: isToday ? .semibold : .regular))
-                .foregroundStyle(isToday ? Theme.vermilion : Theme.muted)
-            Text("\(calendar.component(.day, from: date))")
-                .font(Theme.numeral(28, italic: false))
-                .foregroundStyle(dayColor)
-            VStack(spacing: 6) {
-                ForEach(Array(lots.prefix(2).enumerated()), id: \.element.id) { index, lot in
-                    Button { onOpenLot(lot.id) } label: {
-                        SealView(glyph: lot.glyph, style: SealStyle(tier: lot.tier), size: 40,
-                                 tilt: lot.tier <= .today ? -4 : (lot.tier == .week ? 3 : 0))
+                if agenda.missingInfoCount > 0 {
+                    Button(action: onOpenInventory) {
+                        HStack(spacing: 14) {
+                            KindBar(color: .gray)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("\(agenda.missingInfoCount) 样东西还缺信息").font(.body).foregroundStyle(.primary)
+                                Text("补上日期或位置，才能按时提醒").font(.subheadline).foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 8)
+                            CapsuleLabel("补上")
+                        }
+                        .padding(.leading, 16).padding(.trailing, 14).padding(.vertical, 10)
+                        .frame(minHeight: 52)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("\(lot.name)，\(lot.dateStatusLabel)")
-                }
-                if lots.count > 2 {
-                    Text("+\(lots.count - 2)")
-                        .font(Theme.numeral(15))
-                        .foregroundStyle(Theme.muted)
                 }
             }
         }
     }
-}
 
-// MARK: - Ask row
+    // MARK: Selected day on a timeline
 
-private struct AskRow: View {
-    let lot: LotFacts
-    let onPhoto: () -> Void
-    let onCompartment: (InventoryStorageChoice) -> Void
-    let onOpen: () -> Void
+    private var dayEntries: [AgendaEntry] { agenda.entries(on: selectedDay) }
 
-    var body: some View {
-        HStack(alignment: lot.needsCompartment ? .top : .center, spacing: 14) {
-            Button(action: onOpen) {
-                SealView(glyph: lot.glyph, style: .quiet, size: 40)
+    private var schedule: some View {
+        let items = dayEntries.map(\.timelineItem)
+        let window = CompactTimelineView.window(items: items, day: selectedDay, visibleHours: 4)
+        let calendar = Calendar.current
+        let timed = dayEntries.filter { !$0.isAllDay }
+        let later = timed.filter { ($0.start.map { calendar.component(.hour, from: $0) } ?? 0) > window.upperBound }
+        let hasTimeline = Calendar.current.isDateInToday(selectedDay) || !timed.isEmpty
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                SectionTitle("\(selectedDay.relativeDayName)的安排")
+                Spacer()
+                Button("全天") { onOpenDay(selectedDay) }
+                    .buttonStyle(.bordered)
+                    .buttonBorderShape(.capsule)
+                    .controlSize(.small)
+                    .fontWeight(.semibold)
+                    .tint(.blue)
+                    .padding(.bottom, 8)
             }
-            .buttonStyle(.plain)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(Theme.display(16, weight: .semibold))
-                    .foregroundStyle(Theme.ink)
-                Text(subtitle)
-                    .font(Theme.body(13))
-                    .foregroundStyle(Theme.muted)
-                if lot.needsCompartment {
+            GroupCard {
+                let allDay = items.filter(\.isAllDay)
+                if !allDay.isEmpty {
+                    TimelineAllDaySection(items: allDay, onTap: tap)
+                        .padding(.top, 16).padding(.trailing, 16).padding(.leading, 8)
+                        .padding(.bottom, hasTimeline ? 4 : 14)
+                    if hasTimeline { RowDivider(inset: 0) }
+                }
+                if hasTimeline {
+                    CompactTimelineView(items: items, day: selectedDay, visibleHours: 4, onTap: tap)
+                        .padding(.top, 20).padding(.leading, 8).padding(.trailing, 12).padding(.bottom, later.isEmpty ? 8 : 0)
+                } else if allDay.isEmpty {
+                    Text("这天没有安排")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, minHeight: 52)
+                }
+                if !later.isEmpty {
+                    RowDivider(inset: 0)
                     HStack(spacing: 8) {
-                        ChoiceChip(title: "冷冻", selected: true) { onCompartment(.frozen) }
-                        ChoiceChip(title: "冷藏") { onCompartment(.refrigerated) }
+                        KindBar(color: .blue, height: 16, width: 4)
+                        Text("晚些时候 · " + later.map { "\($0.start?.clockTime ?? "") \($0.title)" }.joined(separator: "，"))
+                            .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    .padding(.top, 10)
+                    .padding(.leading, TimelineMetrics.labelWidth + 16).padding(.trailing, 16).padding(.vertical, 14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            Spacer(minLength: 0)
-            if !lot.needsCompartment {
-                Button(action: onPhoto) {
-                    Image(systemName: "camera")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 40, height: 40)
-                        .background(Circle().fill(Theme.cobaltFill))
+        }
+    }
+
+    private func tap(_ item: TimelineItem) {
+        if let entry = dayEntries.first(where: { $0.id == item.id }) { onOpen(entry.target) }
+    }
+
+    // MARK: Rest of the week
+
+    @ViewBuilder
+    private var upcoming: some View {
+        let rows = agenda.upcoming(after: selectedDay)
+        if !rows.isEmpty {
+            VStack(alignment: .leading, spacing: 0) {
+                SectionTitle("接下来")
+                GroupCard {
+                    ForEach(Array(rows.enumerated()), id: \.element.id) { index, entry in
+                        AgendaRow(entry: entry, accessory: .none, leading: .day(entry)) { onOpen(entry.target) }
+                        if index < rows.count - 1 { RowDivider(inset: 92) }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: Empty
+
+    private var emptyState: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("这周还没有要管的事").font(.title3.weight(.semibold))
+            Text("买了东西、想被提醒，直接跟管家说。比如“买了两盒草莓，放冷藏”“明天早上 8 点提醒我带伞”。")
+                .font(.subheadline).foregroundStyle(.secondary)
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+    }
+}
+
+extension AgendaEntry {
+    var timelineItem: TimelineItem {
+        TimelineItem(id: id, title: title, subtitle: subtitle, startDate: start ?? day,
+                     endDate: end ?? day, isAllDay: isAllDay, color: kind.color)
+    }
+}
+
+// MARK: - Pieces shared by home and the day view
+
+/// White card with the concentric Liquid Glass-era radius.
+struct GroupCard<Content: View>: View {
+    @ViewBuilder let content: Content
+    var body: some View {
+        VStack(spacing: 0) { content }
+            .padding(.vertical, 4)
+            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+    }
+}
+
+struct SectionTitle: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+    var body: some View {
+        Text(text).font(.title3.bold()).foregroundStyle(.primary)
+            .padding(.horizontal, 6).padding(.bottom, 8)
+            .accessibilityAddTraits(.isHeader)
+    }
+}
+
+struct KindBar: View {
+    let color: Color
+    var height: CGFloat = 36
+    var width: CGFloat = 6
+    var body: some View {
+        RoundedRectangle(cornerRadius: width / 2).fill(color).frame(width: width, height: height)
+    }
+}
+
+struct RowDivider: View {
+    let inset: CGFloat
+    var body: some View {
+        Divider().padding(.leading, inset).padding(.trailing, inset > 0 ? 16 : 0)
+    }
+}
+
+struct CapsuleLabel: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+    var body: some View {
+        Text(text).font(.subheadline.weight(.semibold)).foregroundStyle(.blue)
+            .padding(.horizontal, 14).padding(.vertical, 7)
+            .background(Color(.tertiarySystemFill), in: Capsule())
+    }
+}
+
+struct AgendaRow: View {
+    enum Accessory { case none, action(String) }
+    enum Leading { case bar, day(AgendaEntry) }
+
+    let entry: AgendaEntry
+    var accessory: Accessory = .none
+    var leading: Leading = .bar
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                if case .day(let entry) = leading {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(entry.day.relativeDayName).font(.caption).foregroundStyle(.secondary)
+                        Text(entry.start?.clockTime ?? "全天").font(.subheadline.weight(.semibold)).monospacedDigit()
+                    }
+                    .frame(width: 44, alignment: .leading)
+                }
+                KindBar(color: entry.kind.color)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(entry.title).font(.body).foregroundStyle(.primary).lineLimit(1)
+                    if let subtitle = entry.subtitle {
+                        Text(subtitle).font(.subheadline)
+                            .foregroundStyle(entry.kind == .expired ? Color.red : .secondary).lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 8)
+                if case .action(let title) = accessory { CapsuleLabel(title) }
+            }
+            .padding(.leading, 16).padding(.trailing, 14).padding(.vertical, 10)
+            .frame(minHeight: 52)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// Seven days from today. Today is red; the selected day is a filled capsule.
+struct WeekStrip: View {
+    let agenda: HomeAgenda
+    @Binding var selected: Date
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(agenda.days, id: \.self) { day in
+                let isSelected = day == selected
+                let isToday = day == agenda.today
+                let fill: Color = isSelected ? (isToday ? .red : .primary) : .clear
+                Button {
+                    withAnimation(.snappy) { selected = day }
+                } label: {
+                    VStack(spacing: 3) {
+                        Text(day.formatted(.dateTime.weekday(.narrow).locale(Locale(identifier: "zh_CN"))))
+                            .font(.caption.weight(isSelected ? .semibold : .regular))
+                        Text(day.formatted(.dateTime.day()))
+                            .font(.title3.weight(isSelected || isToday ? .semibold : .regular))
+                            .monospacedDigit()
+                        HStack(spacing: 3) {
+                            ForEach(agenda.dots(on: day), id: \.self) { kind in
+                                Circle().fill(isSelected ? Color(.systemBackground) : kind.color).frame(width: 5, height: 5)
+                            }
+                        }
+                        .frame(height: 5)
+                    }
+                    .foregroundStyle(isSelected ? Color(.systemBackground) : (isToday ? .red : .primary))
+                    .frame(width: 46)
+                    .padding(.vertical, 8)
+                    .background(fill, in: Capsule())
+                    .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("拍下\(lot.name)的日期")
+                .accessibilityLabel("\(day.relativeDayName) \(day.formatted(.dateTime.month().day().locale(Locale(identifier: "zh_CN"))))")
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
         }
-        .padding(.vertical, 14)
-    }
-
-    private var title: String {
-        lot.needsCompartment ? "\(lot.name)放哪一层？" : "\(lot.name)哪天过期？"
-    }
-
-    private var subtitle: String {
-        if lot.needsCompartment { return "决定它能放两天还是两个月" }
-        return lot.isMedicine ? "药盒上印着，拍一下就好" : "包装上印着，拍一下就好"
+        .sensoryFeedback(.selection, trigger: selected)
     }
 }
 
-// MARK: - Empty state
+/// Floating Liquid Glass input: camera island + capsule field with a prominent mic.
+struct HomeInputBar: View {
+    let onChat: (ChatStart) -> Void
 
-private struct EmptyHome: View {
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(spacing: 12) {
-                SealView(glyph: "奶", style: .missing, size: 52, tilt: -4)
-                SealView(glyph: "面", style: .missing, size: 52)
-                SealView(glyph: "药", style: .missing, size: 52, tilt: 3)
-            }
-            VStack(alignment: .leading, spacing: 6) {
-                Eyebrow("试试这样说", color: Theme.muted)
-                Text("“买了一瓶牛奶，还有三包方便面”")
-                    .font(Theme.display(17, weight: .regular))
-                    .foregroundStyle(Theme.cobalt)
+        GlassEffectContainer(spacing: 10) {
+            HStack(spacing: 10) {
+                Button { onChat(.camera) } label: {
+                    Image(systemName: "camera")
+                        .font(.system(size: 19, weight: .medium))
+                        .frame(width: 52, height: 52)
+                }
+                .buttonStyle(.plain)
+                .glassEffect(.regular.interactive(), in: .circle)
+                .accessibilityLabel("拍照告诉管家")
+
+                HStack(spacing: 0) {
+                    Button { onChat(.typing) } label: {
+                        Text("和管家说…")
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                            .padding(.leading, 18)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("和管家聊聊")
+                    Button { onChat(.voice) } label: {
+                        Image(systemName: "mic.fill")
+                            .font(.system(size: 17, weight: .semibold))
+                            .frame(width: 40, height: 40)
+                    }
+                    .buttonStyle(.glassProminent)
+                    .buttonBorderShape(.circle)
+                    .tint(.blue)
+                    .padding(.trailing, 6)
+                    .accessibilityLabel("说给管家听")
+                }
+                .frame(height: 52)
+                .glassEffect(.regular.interactive(), in: .capsule)
             }
         }
-        .padding(22)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Theme.surface))
+        .foregroundStyle(.primary)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 4)
     }
 }

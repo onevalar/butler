@@ -4,6 +4,8 @@
 <dict>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>在首页时间线上显示你日历里的日程，管家只读取、不修改。</string>
 	<key>NSCameraUsageDescription</key>
 	<string>拍下买回来的东西、购物小票或包装上的日期，让管家帮你记下来。</string>
 	<key>NSMicrophoneUsageDescription</key>

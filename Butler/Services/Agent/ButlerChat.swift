@@ -57,13 +57,13 @@ final class ButlerChat {
             && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !photos.isEmpty) && draft.count <= 8000
     }
 
-    init(container: ModelContainer) {
+    init(container: ModelContainer, reminders: ReminderStore? = nil) {
         let directory = try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
                                                      appropriateFor: nil, create: true)
         transcriptURL = directory?.appendingPathComponent("butler-chat.json")
         do {
             tools = ButlerTools(container: container, notes: try LocalMemoryStore.openNotes(),
-                                reminders: .openOnDevice(), jev: jev)
+                                reminders: reminders ?? .openOnDevice(), jev: jev)
         } catch {
             self.error = "无法读取你的笔记文件。原文件已保留。"
         }

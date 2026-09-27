@@ -4,6 +4,7 @@ import SwiftData
 enum Route: Hashable {
     case inventory
     case lot(UUID)
+    case day(Date)
 }
 
 struct ContentView: View {
@@ -22,6 +23,12 @@ struct ContentView: View {
     #endif
     @State private var chat: ButlerChat?
     @State private var showingSettings = false
+    /// Shared by home (to show reminders) and the chat (to set them).
+    @State private var reminders = ReminderStore.openOnDevice()
+    @State private var calendarFeed = CalendarFeed()
+    @State private var selectedDay = Calendar.current.startOfDay(for: .now)
+    @State private var chosenReminder: TimedReminder?
+    @Environment(\.openURL) private var openURL
     @Environment(\.modelContext) private var modelContext
 
     private var facts: [LotFacts] {
@@ -42,23 +49,37 @@ struct ContentView: View {
 
     var body: some View {
         let facts = facts
+        let agenda = HomeAgenda.build(lots: facts, reminders: reminders.upcoming, events: calendarFeed.events)
         NavigationStack(path: $path) {
             HomeView(
-                facts: facts,
-                onOpenLot: { path.append(.lot($0)) },
-                onOpenShelf: { path.append(.inventory) },
-                onChat: { chatStart = $0 },
-                onSettings: { showingSettings = true }
+                agenda: agenda,
+                selectedDay: $selectedDay,
+                onOpen: open,
+                onOpenDay: { path.append(.day($0)) },
+                onOpenInventory: { path.append(.inventory) },
+                onSettings: { showingSettings = true },
+                onChat: { chatStart = $0 }
             )
-            .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: Route.self) { route in
                 switch route {
                 case .inventory:
                     InventoryView(facts: facts, history: history, onOpenLot: { path.append(.lot($0)) }, onChat: { chatStart = $0 })
                 case .lot(let id):
                     LotDetailView(lotID: id)
+                case .day(let day):
+                    DayScheduleView(agenda: agenda, day: day, onOpen: open)
                 }
             }
+        }
+        .environment(calendarFeed)
+        .confirmationDialog(chosenReminder?.text ?? "", isPresented: Binding(
+            get: { chosenReminder != nil }, set: { if !$0 { chosenReminder = nil } }
+        ), titleVisibility: .visible) {
+            if let reminder = chosenReminder {
+                Button("删除这个提醒", role: .destructive) { try? reminders.remove(reminder.id) }
+            }
+        } message: {
+            Text(chosenReminder?.whenLabel ?? "")
         }
         .tint(Theme.ink)
         .fullScreenCover(item: $chatStart) { start in
@@ -74,7 +95,19 @@ struct ContentView: View {
         }
         .task {
             // One conversation for the whole app, so it survives closing and reopening the chat.
-            if chat == nil { chat = ButlerChat(container: modelContext.container) }
+            if chat == nil { chat = ButlerChat(container: modelContext.container, reminders: reminders) }
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--seed-sample-reminders"), reminders.upcoming.isEmpty {
+                let calendar = Calendar.current
+                let later = calendar.date(byAdding: .hour, value: 2, to: .now) ?? .now
+                let evening = calendar.date(bySettingHour: 21, minute: 0, second: 0, of: .now) ?? .now
+                let friday = calendar.date(byAdding: .day, value: 3, to: calendar.date(bySettingHour: 15, minute: 30, second: 0, of: .now) ?? .now) ?? .now
+                try? reminders.add(TimedReminder(text: "热剩饭", fireDate: later))
+                try? reminders.add(TimedReminder(text: "吃药", fireDate: evening, repeats: .daily))
+                try? reminders.add(TimedReminder(text: "取快递", fireDate: friday))
+            }
+            #endif
+            await calendarFeed.refresh()
             // Items with dates already exist but reminders were never allowed: ask once.
             if !Self.isTesting, facts.contains(where: { $0.governingDate != nil }) {
                 await NotificationManager.shared.requestAuthorizationIfUndecided()
@@ -91,7 +124,12 @@ struct ContentView: View {
             refreshID = UUID()
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { refreshID = UUID() }
+            guard phase == .active else { return }
+            refreshID = UUID()
+            // A new day since the app was last open: start from today again.
+            let today = Calendar.current.startOfDay(for: .now)
+            if selectedDay < today { selectedDay = today }
+            Task { await calendarFeed.refresh() }
         }
         .onChange(of: NotificationManager.shared.pendingLotID, initial: true) { _, id in
             guard let id else { return }
@@ -104,6 +142,15 @@ struct ContentView: View {
             if let id = (activity.userInfo?["kCSSearchableItemActivityIdentifier"] as? String).flatMap(UUID.init) {
                 path = [.lot(id)]
             }
+        }
+    }
+
+    private func open(_ target: AgendaEntry.Target) {
+        switch target {
+        case .lot(let id): path.append(.lot(id))
+        case .reminder(let id): chosenReminder = reminders.upcoming.first { $0.id == id }
+        case .calendarEvent:
+            if let url = URL(string: "calshow:\(selectedDay.timeIntervalSinceReferenceDate)") { openURL(url) }
         }
     }
 
