@@ -138,6 +138,23 @@ final class ButlerToolsTests: XCTestCase {
         XCTAssertFalse(tools.reminders.upcoming.contains { $0.text == "吃药" })
     }
 
+    func testChatContextStaysBoundedAndCarriesNoPhotos() throws {
+        var turns = (0..<50).map { ChatTurn(question: "问题\($0)", answer: String(repeating: "长", count: 5000)) }
+        turns[49].photos = ["a.jpg"]
+        turns[49].receipts = ["✓ 新增 牛奶 ×1 瓶"]
+        let context = ButlerChat.context(from: turns)
+        let users = context.compactMap { message -> String? in
+            if case .user(let text) = message { return text }
+            return nil
+        }
+        XCTAssertEqual(users.count, ButlerChat.contextTurns)
+        XCTAssertEqual(users.first, "问题38")
+        XCTAssertEqual(users.last, "（当时附了照片）问题49")
+        XCTAssertFalse(context.contains { if case .userPhotos = $0 { return true }; return false })
+        for case .assistant(let reply) in context { XCTAssertLessThanOrEqual(reply.text.count, ButlerChat.contextAnswerLimit) }
+        XCTAssertTrue(context.contains { if case .note(let text) = $0 { return text.contains("牛奶") }; return false })
+    }
+
     // MARK: - Jev as the layer between the model and the data
 
     func testWithoutJevNothingIsCheckedAndEverythingStillWorks() async throws {

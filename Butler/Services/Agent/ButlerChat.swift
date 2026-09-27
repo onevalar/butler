@@ -76,6 +76,8 @@ final class ButlerChat {
         working = true
         error = nil
         tools.beginTurn(request: text, previous: turns.last?.question, hasPhotos: !attached.isEmpty)
+        // Every message starts from a fresh, bounded context: earlier turns as plain text only.
+        rebuildContext()
         var turn = ChatTurn(question: text)
         if !attached.isEmpty { turn.photos = savePhotos(attached, for: turn.id) }
         turns.append(turn)
@@ -203,11 +205,23 @@ final class ButlerChat {
                                   tools: { tools?.toolJSON ?? "[]" })
     }
 
-    /// Recent turns become plain context so a reopened chat still knows what was said.
+    /// How much earlier conversation the model sees with each message.
+    static let contextTurns = 12
+    static let contextAnswerLimit = 1200
+
     private func rebuildContext() {
-        messages = turns.suffix(12).flatMap { turn -> [LocalAgentMessage] in
+        messages = Self.context(from: turns)
+    }
+
+    /// Earlier turns as plain text: what was asked, what was answered, what was actually saved.
+    /// Photos, lookup results and reasoning from earlier turns are left out; the model looks up
+    /// fresh data each time instead, so the context stays the same size however long the chat runs.
+    static func context(from turns: [ChatTurn]) -> [LocalAgentMessage] {
+        turns.suffix(contextTurns).flatMap { turn -> [LocalAgentMessage] in
             var items: [LocalAgentMessage] = [.user((turn.photos?.isEmpty == false ? "（当时附了照片）" : "") + turn.question)]
-            if !turn.failed, !turn.answer.isEmpty { items.append(.assistant(LocalModelReply(text: turn.answer, calls: []))) }
+            if !turn.failed, !turn.answer.isEmpty {
+                items.append(.assistant(LocalModelReply(text: String(turn.answer.prefix(contextAnswerLimit)), calls: [])))
+            }
             if !turn.receipts.isEmpty { items.append(.receipt(summary: turn.receipts.joined(separator: "\n"))) }
             return items
         }
