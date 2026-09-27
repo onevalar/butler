@@ -164,13 +164,42 @@ final class ButlerToolsTests: XCTestCase {
         for case .assistant(let reply) in context { XCTAssertLessThanOrEqual(reply.text.count, ButlerChat.answerLimit) }
     }
 
-    func testConversationSearchToolIsOfferedAndReturnsMatches() async throws {
+    func testModelCanBrowseTheWholeConversationAsNeeded() async throws {
         let (tools, _) = try makeTools()
-        XCTAssertFalse(tools.toolJSON.contains("search_conversation"))
-        tools.searchConversation = { query in query.contains("剩饭") ? [["user": "11点提醒我热剩饭"]] : [] }
-        XCTAssertTrue(tools.toolJSON.contains("search_conversation"))
-        let found = await call(tools, "search_conversation", #"{"query":"剩饭"}"#)
-        XCTAssertEqual((found["matches"] as? [[String: Any]])?.first?["user"] as? String, "11点提醒我热剩饭")
+        XCTAssertFalse(tools.toolJSON.contains("read_conversation"))
+        let day = 86_400.0
+        var turns = (0..<40).map { index in
+            ChatTurn(question: "第\(index)句", answer: String(repeating: "答", count: 1000),
+                     date: Date(timeIntervalSince1970: 1_790_000_000 + Double(index / 10) * day))
+        }
+        turns[3].question = "11点提醒我热剩饭"
+        let archive = ConversationArchive(turns: turns, recentStart: 30, summaryThrough: 20)
+        tools.conversation = { archive }
+        XCTAssertTrue(tools.toolJSON.contains("read_conversation"))
+
+        let overview = await call(tools, "conversation_overview", "{}")
+        XCTAssertEqual(overview["total_turns"] as? Int, 40)
+        XCTAssertEqual((overview["days"] as? [[String: Any]])?.count, 4)
+        XCTAssertEqual(overview["already_in_context_from_turn"] as? Int, 31)
+
+        let found = await call(tools, "search_conversation", #"{"query":"剩饭","from_date":null,"to_date":null,"limit":10}"#)
+        XCTAssertEqual((found["matches"] as? [[String: Any]])?.first?["turn"] as? Int, 4)
+
+        // Reading everything pages through all 40 original turns, nothing truncated.
+        var cursor: Int? = nil
+        var read: [[String: Any]] = []
+        repeat {
+            let arguments = #"{"from_turn":null,"to_turn":null,"from_date":null,"to_date":null,"cursor":\#(cursor.map(String.init) ?? "null")}"#
+            let page = await call(tools, "read_conversation", arguments)
+            read += page["turns"] as? [[String: Any]] ?? []
+            cursor = page["next_cursor"] as? Int
+        } while cursor != nil
+        XCTAssertEqual(read.count, 40)
+        XCTAssertEqual((read[3]["butler"] as? String)?.count, 1000)
+
+        let oneDay = await call(tools, "read_conversation",
+            #"{"from_turn":null,"to_turn":null,"from_date":"\#(turns[15].date.isoDay)","to_date":"\#(turns[15].date.isoDay)","cursor":null}"#)
+        XCTAssertEqual((oneDay["turns"] as? [[String: Any]])?.count, 10)
     }
 
     // MARK: - Jev as the layer between the model and the data

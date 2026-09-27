@@ -39,8 +39,8 @@ final class ButlerTools {
     let reminders: ReminderStore
     let jev: any ConditionJudge
     private(set) var pending: [PendingChange] = []
-    /// Looks up older conversation (set by the chat that owns these tools).
-    var searchConversation: ((String) -> [[String: Any]])?
+    /// The saved conversation, provided by the chat that owns these tools.
+    var conversation: (() -> ConversationArchive)?
     /// What the owner said this turn (and just before), given to Jev as the request.
     private var request = ""
     private var previous: String?
@@ -75,7 +75,7 @@ final class ButlerTools {
 
     var toolJSON: String {
         var tools = Self.inventoryTools
-        if searchConversation != nil { tools += "," + Self.conversationTool }
+        if conversation != nil { tools += "," + Self.conversationTools }
         if jev.isConfigured { tools += "," + Self.jevTool }
         return "[" + tools + "]"
     }
@@ -95,8 +95,10 @@ final class ButlerTools {
     {"type":"function","name":"propose_note","description":"新增或更正一条需要长期记住的事（习惯、偏好、布局、提醒自己的话）。id=null 新建；更正时传原 id，保留没被纠正的内容。库存物品本身不要写成笔记。","strict":true,"parameters":{"type":"object","properties":{"id":{"type":["string","null"]},"title":{"type":"string"},"text":{"type":"string"}},"required":["id","title","text"],"additionalProperties":false}}
     """#
 
-    static let conversationTool = #"""
-    {"type":"function","name":"search_conversation","description":"按关键词查以前和用户的对话记录（包括摘要里没写细的部分）。多个关键词用空格分开，命中任意一个即返回，最多8条，新的在前。","strict":true,"parameters":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}}
+    static let conversationTools = #"""
+    {"type":"function","name":"conversation_overview","description":"看以前对话记录的概况：总共多少轮、每天聊了几轮和话题开头、哪些已在你的上下文里、摘要覆盖到哪。用于决定要不要、以及从哪里开始读原始记录。","strict":true,"parameters":{"type":"object","properties":{},"additionalProperties":false}},
+    {"type":"function","name":"search_conversation","description":"在以前的全部对话里找内容。query 多个关键词用空格分开，命中任意一个即返回；可用 from_date/to_date (YYYY-MM-DD) 限定日期，query 为空字符串时列出该日期范围内的对话。返回 turn 编号和片段，新的在前。","strict":true,"parameters":{"type":"object","properties":{"query":{"type":"string"},"from_date":{"type":["string","null"]},"to_date":{"type":["string","null"]},"limit":{"type":"integer","minimum":1,"maximum":50}},"required":["query","from_date","to_date","limit"],"additionalProperties":false}},
+    {"type":"function","name":"read_conversation","description":"读取以前对话的完整原文（按时间顺序，每页约1.2万字）。可按 turn 编号范围或日期范围读；返回 next_cursor 时表示还有，下次传 cursor 继续读。回顾、总结、核对以前说过什么时，读够原文再回答，不要只凭摘要。","strict":true,"parameters":{"type":"object","properties":{"from_turn":{"type":["integer","null"]},"to_turn":{"type":["integer","null"]},"from_date":{"type":["string","null"]},"to_date":{"type":["string","null"]},"cursor":{"type":["integer","null"]}},"required":["from_turn","to_turn","from_date","to_date","cursor"],"additionalProperties":false}}
     """#
 
     static let jevTool = #"""
@@ -208,10 +210,22 @@ final class ButlerTools {
                 add(.tracking(lot, quantityOnly: quantityOnly),
                     title: quantityOnly ? "\(lot.name) 只记数量" : "\(lot.name) 开始跟踪到期",
                     detail: quantityOnly ? "不再问过期日期，也不发到期提醒" : "之后会问日期并按日期提醒")
+            case "conversation_overview":
+                guard let archive = conversation?() else { throw ToolError("没有对话记录") }
+                return try encode(archive.overview())
             case "search_conversation":
-                struct Args: Decodable { var query: String }
-                let query = try JSONDecoder().decode(Args.self, from: data).query
-                return try encode(["matches": searchConversation?(query) ?? []] as [String: Any])
+                struct Args: Decodable { var query: String; var from_date: String?; var to_date: String?; var limit: Int? }
+                let args = try JSONDecoder().decode(Args.self, from: data)
+                guard let archive = conversation?() else { throw ToolError("没有对话记录") }
+                return try encode(archive.search(args.query, from: try Self.date(args.from_date),
+                                                 to: try Self.date(args.to_date), limit: args.limit ?? 10))
+            case "read_conversation":
+                struct Args: Decodable { var from_turn: Int?; var to_turn: Int?; var from_date: String?; var to_date: String?; var cursor: Int? }
+                let args = try JSONDecoder().decode(Args.self, from: data)
+                guard let archive = conversation?() else { throw ToolError("没有对话记录") }
+                return try encode(archive.read(fromTurn: args.from_turn, toTurn: args.to_turn,
+                                               from: try Self.date(args.from_date), to: try Self.date(args.to_date),
+                                               cursor: args.cursor))
             case "propose_reminder":
                 struct Args: Decodable { var text: String; var time: String; var `repeat`: String }
                 let args = try JSONDecoder().decode(Args.self, from: data)
