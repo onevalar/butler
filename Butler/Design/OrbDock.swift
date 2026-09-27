@@ -75,6 +75,10 @@ struct OrbDockView: View {
     @State private var cancelling = false
     /// Resets by itself when the system takes the touch away (an alert, a call), unlike `onEnded`.
     @GestureState private var touching = false
+    /// When the last fall or gather started; the pose is computed from the time since.
+    @State private var moveStart = Date.distantPast
+    @State private var moving = false
+    @State private var landed = 0
 
     static let ballSize: CGFloat = 64
     /// Ball centre above the bottom edge of the screen.
@@ -87,13 +91,17 @@ struct OrbDockView: View {
             GeometryReader { proxy in
                 let width = proxy.size.width
                 ZStack {
-                    OrbMorph(amount: dock.spread ? 1 : 0, width: width, height: Self.areaHeight,
-                             ballScale: dock.listening ? 1.3 : (pressing ? 0.92 : 1),
-                             active: working || dock.listening, tilt: reduceMotion ? .zero : motion.tilt)
-                        .allowsHitTesting(false)
+                    TimelineView(.animation(paused: !moving)) { context in
+                        let elapsed = context.date.timeIntervalSince(moveStart)
+                        OrbStage(pose: reduceMotion ? OrbPose.rest(spread: dock.spread) : OrbPose.at(elapsed, spreading: dock.spread),
+                                 width: width, height: Self.areaHeight,
+                                 ballScale: dock.listening ? 1.3 : (pressing ? 0.92 : 1),
+                                 active: working || dock.listening, tilt: reduceMotion ? .zero : motion.tilt)
+                    }
+                    .allowsHitTesting(false)
                     // Touch targets: the ball while floating, the raised water while spread.
                     if dock.spread {
-                        PuddleShape(inset: 0, edge: OrbMorph.puddleEdge, bump: OrbMorph.puddleBump)
+                        PuddleShape(inset: 0, side: OrbPose.restSide, peak: OrbPose.restPeak)
                             .fill(Color.white.opacity(0.001))
                             .onTapGesture { gather() }
                             .accessibilityElement()
@@ -119,10 +127,22 @@ struct OrbDockView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         .ignoresSafeArea(edges: .bottom)
         .ignoresSafeArea(.keyboard)
-        .animation(.spring(response: 0.55, dampingFraction: 0.68), value: dock.spread)
         .animation(.spring(response: 0.35, dampingFraction: 0.7), value: dock.listening)
         .animation(.spring(response: 0.25, dampingFraction: 0.7), value: pressing)
         .sensoryFeedback(.impact(weight: .medium), trigger: dock.listening) { _, new in new }
+        .sensoryFeedback(.impact(flexibility: .soft, intensity: 0.45), trigger: landed)
+        .onChange(of: dock.spread) { _, spread in
+            let start = Date.now
+            moveStart = start
+            moving = true
+            Task {
+                // A soft tap when the drop lands, or when the ball pops back up.
+                try? await Task.sleep(for: .milliseconds(spread ? 320 : 300))
+                if moveStart == start { landed += 1 }
+                try? await Task.sleep(for: .milliseconds(1400))
+                if moveStart == start { moving = false }
+            }
+        }
         .onChange(of: touching) { _, now in
             // The touch was taken away without ending normally: drop whatever was being said.
             guard !now, pressing else { return }
@@ -210,58 +230,126 @@ struct OrbDockView: View {
 
 // MARK: - Ball ↔ water
 
-/// One value drives the whole move: 0 is the floating ball, 1 is water spread along the bottom edge.
-/// The spring that animates it overshoots a little, which gives the drop its bounce.
-private struct OrbMorph: View, Animatable {
-    var amount: CGFloat
+/// Where everything is at one moment of the fall or the gather. Times are in seconds.
+struct OrbPose {
+    /// How far below its resting place the ball is.
+    var ballY: CGFloat = 0
+    var scaleX: CGFloat = 1
+    var scaleY: CGFloat = 1
+    var ballOpacity: CGFloat = 1
+    var waterOpacity: CGFloat = 0
+    /// 0: the water covers the whole bottom edge. 1: it is drawn together to the width of the ball.
+    var gathered: CGFloat = 1
+    /// Water thickness at the screen corners, and at the middle.
+    var side: CGFloat = 0
+    var peak: CGFloat = 0
+
+    static let restSide: CGFloat = 28
+    static let restPeak: CGFloat = 60
+    /// From resting height to sitting on the bottom edge.
+    static let fall: CGFloat = 50
+
+    static func rest(spread: Bool) -> OrbPose {
+        spread ? OrbPose(ballOpacity: 0, waterOpacity: 1, gathered: 0, side: restSide, peak: restPeak) : OrbPose()
+    }
+
+    static func at(_ t: Double, spreading: Bool) -> OrbPose {
+        if t > 2 { return rest(spread: spreading) }
+        return spreading ? falling(t) : gathering(t)
+    }
+
+    /// Winds up, falls faster and faster while stretching, lands flat, and the water runs out and wobbles still.
+    private static func falling(_ t: Double) -> OrbPose {
+        var p = OrbPose()
+        if t < 0.1 {
+            let k = sin(.pi * t / 0.1)
+            p.ballY = -5 * k
+            p.scaleX = 1 + 0.06 * k
+            p.scaleY = 1 - 0.06 * k
+        } else if t < 0.32 {
+            let k = (t - 0.1) / 0.22
+            p.ballY = fall * k * k
+            p.scaleX = 1 - 0.14 * k
+            p.scaleY = 1 + 0.26 * k
+        } else {
+            let k = clamp((t - 0.32) / 0.1)
+            p.ballY = fall + 6 * k
+            p.scaleX = 0.86 + 0.9 * k
+            p.scaleY = 1.26 - 0.86 * k
+            p.ballOpacity = 1 - k
+        }
+        let w = t - 0.3
+        p.waterOpacity = clamp(w / 0.08)
+        p.gathered = max(0, 1 - spring(w, period: 0.55, damping: 0.55))
+        p.side = restSide * clamp(spring(w, period: 0.5, damping: 0.75))
+        // The middle starts as tall as the drop and settles with a couple of wobbles.
+        p.peak = restPeak + (78 - restPeak) * (1 - spring(w, period: 0.42, damping: 0.32))
+        return p
+    }
+
+    /// The water draws into the middle and rises; the ball pops out squashed, overshoots and wobbles round.
+    private static func gathering(_ t: Double) -> OrbPose {
+        var p = OrbPose()
+        let g = smooth(clamp(t / 0.3))
+        p.gathered = g
+        p.side = restSide * (1 - g)
+        p.peak = restPeak + 16 * g
+        p.waterOpacity = 1 - clamp((t - 0.24) / 0.08)
+        let b = t - 0.24
+        if b < 0 {
+            p.ballOpacity = 0
+            p.ballY = fall
+        } else {
+            p.ballOpacity = clamp(b / 0.06)
+            p.ballY = fall * (1 - spring(b, period: 0.62, damping: 0.42))
+            let wobble = spring(b, period: 0.34, damping: 0.3)
+            p.scaleX = 1.45 + (1 - 1.45) * wobble
+            p.scaleY = 0.55 + (1 - 0.55) * wobble
+        }
+        return p
+    }
+
+    /// Step response of a damped spring: 0 at t = 0, settling at 1, overshooting when underdamped.
+    static func spring(_ t: Double, period: Double, damping: Double) -> CGFloat {
+        guard t > 0 else { return 0 }
+        let omega = 2 * .pi / period
+        let damped = omega * sqrt(1 - damping * damping)
+        return 1 - exp(-damping * omega * t) * (cos(damped * t) + damping * omega / damped * sin(damped * t))
+    }
+
+    private static func clamp(_ x: Double) -> CGFloat { max(0, min(1, x)) }
+    private static func smooth(_ x: CGFloat) -> CGFloat { x * x * (3 - 2 * x) }
+}
+
+/// Draws a pose. `ballScale` (pressing, listening) animates on its own spring.
+private struct OrbStage: View, Animatable {
+    let pose: OrbPose
     let width: CGFloat
     let height: CGFloat
     var ballScale: CGFloat
     let active: Bool
     let tilt: CGSize
 
-    static let puddleEdge: CGFloat = 40
-    static let puddleBump: CGFloat = 18
-
-    var animatableData: AnimatablePair<CGFloat, CGFloat> {
-        get { AnimatablePair(amount, ballScale) }
-        set { amount = newValue.first; ballScale = newValue.second }
+    var animatableData: CGFloat {
+        get { ballScale }
+        set { ballScale = newValue }
     }
 
     var body: some View {
-        let a = max(0, min(1, amount))
         let size = OrbDockView.ballSize * ballScale
-        // The ball falls, stretches as it goes, then flattens on the edge and fades into the water.
-        let fall = OrbDockView.ballLift - 26
-        let ballOpacity = 1 - smoothstep(0.45, 0.7, a)
-        let stretch = sin(a * .pi) // longest halfway down
-        let squash = smoothstep(0.5, 1, a)
-        let scaleX = 1 - 0.18 * stretch * (1 - squash) + 1.4 * squash
-        let scaleY = 1 + 0.25 * stretch * (1 - squash) - 0.6 * squash
-        // The water grows out from the middle, then settles to its low arc.
-        let waterOpacity = smoothstep(0.35, 0.6, a)
-        let inset = (1 - smoothstep(0.35, 1, amount)) * (width / 2 - 40)
-        let bump = Self.puddleBump + (1 - smoothstep(0.5, 1, amount)) * 26
-        let edge = Self.puddleEdge * smoothstep(0.55, 1, amount)
-
         ZStack {
-            if waterOpacity > 0 {
-                Water(inset: inset, edge: edge, bump: bump, tilt: tilt)
-                    .opacity(waterOpacity)
+            if pose.waterOpacity > 0 {
+                Water(inset: pose.gathered * (width / 2 - 48), side: pose.side, peak: pose.peak, tilt: tilt)
+                    .opacity(pose.waterOpacity)
             }
-            if ballOpacity > 0 {
+            if pose.ballOpacity > 0 {
                 GlassBall(size: size, active: active, tilt: tilt)
-                    .scaleEffect(x: scaleX, y: scaleY, anchor: .bottom)
-                    .position(x: width / 2, y: height - OrbDockView.ballLift + fall * a)
-                    .opacity(ballOpacity)
+                    .scaleEffect(x: pose.scaleX, y: pose.scaleY, anchor: .bottom)
+                    .position(x: width / 2, y: height - OrbDockView.ballLift + pose.ballY)
+                    .opacity(pose.ballOpacity)
             }
         }
         .frame(width: width, height: height)
-    }
-
-    private func smoothstep(_ from: CGFloat, _ to: CGFloat, _ x: CGFloat) -> CGFloat {
-        let t = max(0, min(1, (x - from) / (to - from)))
-        return t * t * (3 - 2 * t)
     }
 }
 
@@ -291,35 +379,35 @@ private struct GlassBall: View {
     }
 }
 
-/// Glass spread along the whole bottom edge: as thick as the home-indicator zone, raised in the middle.
+/// Glass spread along the whole bottom edge: one rounded arc from corner to corner, thickest in the middle.
 private struct Water: View {
     let inset: CGFloat
-    let edge: CGFloat
-    let bump: CGFloat
+    let side: CGFloat
+    let peak: CGFloat
     let tilt: CGSize
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        let shape = PuddleShape(inset: inset, edge: edge, bump: bump)
+        let shape = PuddleShape(inset: inset, side: side, peak: peak)
         let palette = colorScheme == .dark ? OrbPalette.night : OrbPalette.day
+        let glow = max(14, peak * 0.32)
         GeometryReader { proxy in
             let size = proxy.size
-            let peakY = size.height - edge - bump
             ZStack {
                 Color.clear.glassEffect(.clear, in: shape)
-                // A little of the orb's light, low in the middle of the raised part.
+                // A little of the orb's light, deep in the middle of the water.
                 ZStack {
-                    Ellipse().fill(palette.glow[0].0.opacity(0.35)).frame(width: bump * 2.4, height: bump * 1.1)
-                        .offset(x: -bump * 0.5)
-                    Ellipse().fill(palette.glow[1].0.opacity(0.35)).frame(width: bump * 2.2, height: bump)
-                        .offset(x: bump * 0.5)
+                    Ellipse().fill(palette.glow[0].0.opacity(0.35)).frame(width: glow * 2.6, height: glow * 1.2)
+                        .offset(x: -glow * 0.5)
+                    Ellipse().fill(palette.glow[1].0.opacity(0.35)).frame(width: glow * 2.4, height: glow * 1.1)
+                        .offset(x: glow * 0.5)
                 }
-                .blur(radius: 9)
-                .overlay(Ellipse().fill(palette.core.opacity(0.8)).frame(width: bump * 1.2, height: bump * 0.6).blur(radius: 4))
-                .position(x: size.width / 2 + tilt.width * 6, y: peakY + bump * 0.75)
+                .blur(radius: 10)
+                .overlay(Ellipse().fill(palette.core.opacity(0.8)).frame(width: glow * 1.3, height: glow * 0.65).blur(radius: 5))
+                .position(x: size.width / 2 + tilt.width * 6, y: size.height - peak * 0.5)
                 .clipShape(shape)
                 shape.rimPath(in: CGRect(origin: .zero, size: size))
-                    .stroke(LinearGradient(colors: [.white.opacity(0.5), .white.opacity(0.95), .white.opacity(0.5)],
+                    .stroke(LinearGradient(colors: [.white.opacity(0.45), .white.opacity(0.95), .white.opacity(0.45)],
                                            startPoint: .leading, endPoint: .trailing), lineWidth: 1.2)
             }
             .shadow(color: .black.opacity(0.08), radius: 6, y: -2)
@@ -327,22 +415,17 @@ private struct Water: View {
     }
 }
 
-/// Flat along the bottom, `edge` thick at the sides, rising by `bump` in the middle.
-/// `inset` pulls both ends towards the centre while the water gathers.
+/// Flat along the bottom; the top is a single smooth arc, `side` high at the ends and `peak` high in the middle.
+/// `inset` draws both ends in towards the centre.
 struct PuddleShape: Shape {
     var inset: CGFloat
-    var edge: CGFloat
-    var bump: CGFloat
-
-    var animatableData: AnimatablePair<CGFloat, AnimatablePair<CGFloat, CGFloat>> {
-        get { AnimatablePair(inset, AnimatablePair(edge, bump)) }
-        set { inset = newValue.first; edge = newValue.second.first; bump = newValue.second.second }
-    }
+    var side: CGFloat
+    var peak: CGFloat
 
     func path(in rect: CGRect) -> Path {
         var path = Path()
         path.move(to: CGPoint(x: rect.minX + inset, y: rect.maxY))
-        addRim(to: &path, in: rect, moving: false)
+        addArc(to: &path, in: rect, moving: false)
         path.addLine(to: CGPoint(x: rect.maxX - inset, y: rect.maxY))
         path.closeSubpath()
         return path
@@ -350,16 +433,16 @@ struct PuddleShape: Shape {
 
     func rimPath(in rect: CGRect) -> Path {
         var path = Path()
-        addRim(to: &path, in: rect, moving: true)
+        addArc(to: &path, in: rect, moving: true)
         return path
     }
 
-    private func addRim(to path: inout Path, in rect: CGRect, moving: Bool) {
-        let a = rect.minX + inset, b = rect.maxX - inset
-        let top = rect.maxY - edge, peak = rect.maxY - edge - bump
-        let mid = rect.midX, span = (b - a) / 2
-        if moving { path.move(to: CGPoint(x: a, y: top)) } else { path.addLine(to: CGPoint(x: a, y: top)) }
-        path.addCurve(to: CGPoint(x: mid, y: peak), control1: CGPoint(x: a + span * 0.45, y: top), control2: CGPoint(x: mid - span * 0.45, y: peak))
-        path.addCurve(to: CGPoint(x: b, y: top), control1: CGPoint(x: mid + span * 0.45, y: peak), control2: CGPoint(x: b - span * 0.45, y: top))
+    private func addArc(to path: inout Path, in rect: CGRect, moving: Bool) {
+        let start = CGPoint(x: rect.minX + inset, y: rect.maxY - side)
+        let end = CGPoint(x: rect.maxX - inset, y: rect.maxY - side)
+        // A quadratic curve reaches half-way to its control point, so the control sits twice as high.
+        let control = CGPoint(x: rect.midX, y: rect.maxY - (2 * peak - side))
+        if moving { path.move(to: start) } else { path.addLine(to: start) }
+        path.addQuadCurve(to: end, control: control)
     }
 }
