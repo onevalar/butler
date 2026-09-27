@@ -15,6 +15,7 @@ struct InventoryView: View {
     @State private var query = ""
     @State private var showingSearch = false
     @FocusState private var searching: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private static let quickAsks = ["买了", "用完了", "放哪了？", "什么快过期了？", "还剩多少"]
 
@@ -127,8 +128,8 @@ struct InventoryView: View {
                     .accessibilityLabel("跟管家说买了什么")
             }
         }
-        .animation(.snappy, value: scope)
-        .animation(.snappy, value: showingSearch)
+        .animation(reduceMotion ? nil : .snappy, value: scope)
+        .animation(reduceMotion ? nil : .snappy, value: showingSearch)
     }
 
     private var emptyText: String {
@@ -153,7 +154,7 @@ struct InventoryView: View {
         .padding(.horizontal, 16)
         .frame(height: 44)
         .glassEffect(.regular.interactive(), in: .capsule)
-        .transition(.move(edge: .top).combined(with: .opacity))
+        .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
     }
 }
 

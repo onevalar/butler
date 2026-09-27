@@ -6,6 +6,7 @@ struct DayScheduleView: View {
     let agenda: HomeAgenda
     @State var day: Date
     let onOpen: (AgendaEntry.Target) -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var entries: [AgendaEntry] { agenda.entries(on: day) }
     private var items: [TimelineItem] { entries.map(\.timelineItem) }
@@ -53,7 +54,7 @@ struct DayScheduleView: View {
         .toolbar {
             if day != agenda.today {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("今天") { withAnimation(.snappy) { day = agenda.today } }
+                    Button("今天") { withAnimation(reduceMotion ? nil : .snappy) { day = agenda.today } }
                 }
             }
         }
@@ -66,7 +67,7 @@ struct DayScheduleView: View {
     private func scroll(_ proxy: ScrollViewProxy, to hour: Int, animated: Bool) {
         // Wait one layout pass so the grid exists before scrolling to it.
         Task { @MainActor in
-            if animated {
+            if animated && !reduceMotion {
                 withAnimation { proxy.scrollTo("hour-\(hour)", anchor: .top) }
             } else {
                 proxy.scrollTo("hour-\(hour)", anchor: .top)

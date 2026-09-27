@@ -11,6 +11,7 @@ struct OnboardingView: View {
     @State private var step: Step = .welcome
     @State private var notificationsAsked = false
     @Environment(\.openURL) private var openURL
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     static let privacyURL = URL(string: "https://claude.ai/artifact/G4GMTvaTqe1oWBJkU7rQmX")!
 
@@ -41,14 +42,14 @@ struct OnboardingView: View {
                 .padding(.top, 24)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .id(step)
-                .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity),
+                .transition(reduceMotion ? .opacity : .asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity),
                                         removal: .move(edge: .leading).combined(with: .opacity)))
             }
             .scrollBounceBehavior(.basedOnSize)
         }
         .background { ButlerBackground() }
         .safeAreaBar(edge: .bottom) { buttons }
-        .animation(.snappy, value: step)
+        .animation(reduceMotion ? nil : .snappy, value: step)
         .onChange(of: chat.connection.isLoggedIn) { _, loggedIn in
             if loggedIn { chat.didSignIn() }
         }
@@ -240,6 +241,7 @@ private struct Feature: View {
 private struct ProgressDots: View {
     let count: Int
     let current: Int
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         HStack(spacing: 6) {
             ForEach(0..<count, id: \.self) { index in
@@ -248,7 +250,7 @@ private struct ProgressDots: View {
                     .frame(width: index == current ? 18 : 6, height: 6)
             }
         }
-        .animation(.snappy, value: current)
+        .animation(reduceMotion ? nil : .snappy, value: current)
         .accessibilityElement()
         .accessibilityLabel("第 \(current + 1) 步，共 \(count) 步")
     }

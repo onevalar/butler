@@ -6,6 +6,7 @@ struct LotDetailView: View {
     let lotID: UUID
 
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Query private var lots: [InventoryLot]
     @Query private var products: [CatalogProduct]
     @Query private var events: [InventoryEvent]
@@ -175,7 +176,7 @@ struct LotDetailView: View {
                     Text("\(facts.quantity)")
                         .font(.system(size: 48, weight: .semibold, design: .rounded))
                         .foregroundStyle(facts.isRunningLow ? .red : .primary)
-                        .contentTransition(.numericText())
+                        .contentTransition(reduceMotion ? .identity : .numericText())
                     Text(facts.unit).font(.body)
                 }
                 Text(facts.isRunningLow ? "快没了，记得补货" : "只记数量，不提醒到期")
@@ -187,7 +188,7 @@ struct LotDetailView: View {
                     Text("\(abs(days))")
                         .font(.system(size: 48, weight: .semibold, design: .rounded))
                         .foregroundStyle(days <= 0 ? .red : days <= 3 ? .orange : .primary)
-                        .contentTransition(.numericText())
+                        .contentTransition(reduceMotion ? .identity : .numericText())
                     Text(days < 0 ? "天" : "天到期").font(.body)
                 }
                 ProgressView(value: progress(from: facts.startedAt, to: end))
@@ -248,7 +249,7 @@ struct LotDetailView: View {
         if facts.quantity <= 1 {
             pendingClose = .depleted
         } else {
-            withAnimation(.snappy) { _ = perform { try $0.adjustQuantity(facts, to: facts.quantity - 1) } }
+            withAnimation(reduceMotion ? nil : .snappy) { _ = perform { try $0.adjustQuantity(facts, to: facts.quantity - 1) } }
         }
     }
 
@@ -443,6 +444,7 @@ private struct QuantitySheet: View {
     let unit: String
     let onSave: (Int) -> Bool
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var quantity: Int
 
     init(name: String, unit: String, initial: Int, onSave: @escaping (Int) -> Bool) {
@@ -459,7 +461,7 @@ private struct QuantitySheet: View {
                     Stepper(value: $quantity, in: 0...999) {
                         HStack(alignment: .firstTextBaseline, spacing: 4) {
                             Text("\(quantity)").font(.title.weight(.semibold)).monospacedDigit()
-                                .contentTransition(.numericText())
+                                .contentTransition(reduceMotion ? .identity : .numericText())
                             Text(unit).foregroundStyle(.secondary)
                         }
                     }
@@ -472,7 +474,7 @@ private struct QuantitySheet: View {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) { Button("保存") { if onSave(quantity) { dismiss() } } }
             }
-            .animation(.snappy, value: quantity)
+            .animation(reduceMotion ? nil : .snappy, value: quantity)
         }
         .presentationDetents([.height(260)])
     }

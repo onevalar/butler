@@ -13,10 +13,11 @@ struct ButlerOrb: View {
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         Group {
-            if (active || drift) && !reduceMotion {
+            if (active || drift) && !reduceMotion && scenePhase == .active {
                 TimelineView(.animation(minimumInterval: active ? nil : 1.0 / 30)) { context in
                     let t = context.date.timeIntervalSinceReferenceDate
                     ball(phase: active ? t : t * 0.35)

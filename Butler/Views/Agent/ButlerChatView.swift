@@ -22,6 +22,9 @@ struct ButlerChatView: View {
     let onClose: () -> Void
 
     @Environment(\.butlerAccent) private var accent
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var scrollPolicy = ChatScrollPolicy()
+    @State private var startTask: Task<Void, Never>?
     @State private var dictation = LiveDictation()
     @State private var showingCamera = false
     @State private var showingLibrary = false
@@ -54,25 +57,40 @@ struct ButlerChatView: View {
                         if let pending = chat.tools?.pending, !pending.isEmpty, !chat.working {
                             confirmCard(pending)
                         }
-                        Color.clear.frame(height: 1).id("bottom")
+                        Color.clear.frame(height: 1).padding(.bottom, 12).id("bottom")
                     }
-                    .padding(.horizontal, 16).padding(.vertical, 12)
+                    .padding(.horizontal, 16).padding(.top, 12)
                 }
                 .scrollDismissesKeyboard(.interactively)
-                .defaultScrollAnchor(.bottom)
-                .defaultScrollAnchor(.bottom, for: .sizeChanges)
-                .onAppear { proxy.scrollTo("bottom", anchor: .bottom) }
-                .onChange(of: composing) { _, focused in
-                    guard focused else { return }
-                    // Once the keyboard is up, bring the newest message back above the input.
-                    Task {
-                        try? await Task.sleep(for: .milliseconds(350))
-                        withAnimation { proxy.scrollTo("bottom", anchor: .bottom) }
+                .defaultScrollAnchor(.bottom, for: .initialOffset)
+                .onScrollGeometryChange(for: ChatScrollPolicy.Geometry.self) { geometry in
+                    Self.scrollGeometry(geometry)
+                } action: { _, geometry in
+                    scrollPolicy.geometryChanged(to: geometry)
+                }
+                .onScrollPhaseChange { _, phase, context in
+                    // Sample the final drag/deceleration offset before switching to idle.
+                    scrollPolicy.geometryChanged(to: Self.scrollGeometry(context.geometry))
+                    switch phase {
+                    case .idle: scrollPolicy.phaseChanged(to: .idle)
+                    case .tracking: scrollPolicy.phaseChanged(to: .tracking)
+                    case .interacting: scrollPolicy.phaseChanged(to: .interacting)
+                    case .decelerating: scrollPolicy.phaseChanged(to: .decelerating)
+                    case .animating: scrollPolicy.phaseChanged(to: .animating)
+                    @unknown default: break
                     }
                 }
-                .onChange(of: chat.turns) { _, _ in withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } }
-                .onChange(of: chat.working) { _, _ in withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } }
-                .onChange(of: chat.tools?.pending.count) { _, _ in withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } }
+                .onAppear { scrollPolicy.appear() }
+                .onDisappear { scrollPolicy.disappear() }
+                .task(id: scrollPolicy.revision) { @MainActor in
+                    // Coalesce layout notifications, not a guessed keyboard duration. A new
+                    // request, user touch, or disappearance cancels this view-owned task.
+                    await Task.yield()
+                    guard !Task.isCancelled, let scroll = scrollPolicy.takeScroll() else { return }
+                    var transaction = Transaction(animation: scroll == .animated && !reduceMotion ? .default : nil)
+                    transaction.disablesAnimations = reduceMotion || scroll == .immediate
+                    withTransaction(transaction) { proxy.scrollTo("bottom", anchor: .bottom) }
+                }
             }
             .background { ButlerBackground() }
             .safeAreaBar(edge: .bottom) { composer }
@@ -108,9 +126,11 @@ struct ButlerChatView: View {
             .onChange(of: request, initial: true) { _, new in
                 guard let start = new?.start else { return }
                 request = nil
-                Task {
-                    // Let the tab switch finish before the keyboard or the mic comes up.
-                    try? await Task.sleep(for: .milliseconds(250))
+                startTask?.cancel()
+                startTask = Task { @MainActor in
+                    // Give the tab switch an executor turn; keyboard geometry drives scrolling.
+                    await Task.yield()
+                    guard !Task.isCancelled else { return }
                     switch start {
                     case .camera: showingCamera = true
                     case .voice: await startListening()
@@ -118,7 +138,11 @@ struct ButlerChatView: View {
                     }
                 }
             }
-            .onDisappear { dictation.cancel() }
+            .onDisappear {
+                startTask?.cancel()
+                startTask = nil
+                dictation.cancel()
+            }
             .photosPicker(isPresented: $showingLibrary, selection: $pickedPhotos, maxSelectionCount: 4, matching: .images)
             .onChange(of: pickedPhotos) { _, items in
                 guard !items.isEmpty else { return }
@@ -142,6 +166,17 @@ struct ButlerChatView: View {
                 }
             }
         }
+    }
+
+    private nonisolated static func scrollGeometry(_ geometry: ScrollGeometry) -> ChatScrollPolicy.Geometry {
+        ChatScrollPolicy.Geometry(
+            offset: geometry.contentOffset.y,
+            contentHeight: geometry.contentSize.height,
+            containerHeight: geometry.containerSize.height,
+            containerWidth: geometry.containerSize.width,
+            topInset: geometry.contentInsets.top,
+            bottomInset: geometry.contentInsets.bottom
+        )
     }
 
     private var statusLine: String {
@@ -339,6 +374,7 @@ struct ButlerChatView: View {
                 .accessibilityLabel("停止听写")
         } else if chat.canSend {
             GlassCircleButton(systemImage: "arrow.up", tint: accent.fill, glyph: accent.onFill) {
+                scrollPolicy.sendToLatest()
                 composing = false
                 chat.send()
             }

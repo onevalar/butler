@@ -5,6 +5,9 @@ import SwiftData
 struct CaptureView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var isVisible = false
 
     @State private var coordinator: InventoryInputCoordinator?
     @State private var voice = VoiceManager()
@@ -32,20 +35,19 @@ struct CaptureView: View {
             Theme.ground.ignoresSafeArea()
             if let coordinator, coordinator.state == .reviewing || coordinator.state == .executing {
                 ReviewView(coordinator: coordinator, onAddMore: addMore, onBack: { coordinator.reset(); restart() })
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                    .transition(reduceMotion ? .opacity : .move(edge: .trailing).combined(with: .opacity))
             } else {
                 capture
                 if let coordinator, coordinator.state == .clarifying, let question = coordinator.questions.first {
                     Color.black.opacity(0.38).ignoresSafeArea()
                         .transition(.opacity)
                     ClarifySheet(coordinator: coordinator, question: question)
-                        .id(question)
-                        .transition(.move(edge: .bottom))
+                        .transition(reduceMotion ? .opacity : .move(edge: .bottom))
                 }
             }
         }
-        .animation(.snappy(duration: 0.35), value: coordinator?.state)
-        .animation(.snappy(duration: 0.35), value: coordinator?.questions.count)
+        .animation(reduceMotion ? nil : .snappy(duration: 0.35), value: coordinator?.state)
+        .onAppear { isVisible = true }
         .task { await prepare() }
         .onChange(of: voice.transcribedText) { _, text in Task { await preview(text) } }
         .onChange(of: coordinator?.state) { _, state in
@@ -56,7 +58,7 @@ struct CaptureView: View {
                 dismiss()
             }
         }
-        .onDisappear { voice.cancel() }
+        .onDisappear { isVisible = false; voice.cancel() }
     }
 
     // MARK: Capture screen
@@ -167,10 +169,10 @@ struct CaptureView: View {
                         }
                     }
                     .frame(maxWidth: 72)
-                    .transition(.scale(scale: 1.3).combined(with: .opacity))
+                    .transition(reduceMotion ? .opacity : .scale(scale: 1.3).combined(with: .opacity))
                 }
             }
-            .animation(.spring(response: 0.35, dampingFraction: 0.6), value: heard)
+            .animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.6), value: heard)
             if let asking = heard.first(where: \.needsQuestion) {
                 HStack(spacing: 6) {
                     Circle().fill(Theme.cobalt).frame(width: 5, height: 5)
@@ -205,9 +207,13 @@ struct CaptureView: View {
         Button(action: finish) {
             ZStack {
                 Circle().strokeBorder(Theme.hairline, lineWidth: 1).frame(width: 148, height: 148)
-                Circle().strokeBorder(Theme.cobalt.opacity(0.25), lineWidth: 1.5).frame(width: 118, height: 118)
-                    .scaleEffect(voice.state == .recording ? 1.04 : 1)
-                    .animation(.easeInOut(duration: 1).repeatForever(autoreverses: true), value: voice.state == .recording)
+                // Removing the pulsing view ends its animation rather than starting a repeat on stop.
+                if isVisible && scenePhase == .active && !reduceMotion && mode == .listening && voice.state == .recording {
+                    RecordingRing()
+                        .transition(.identity)
+                } else {
+                    Circle().strokeBorder(Theme.cobalt.opacity(0.25), lineWidth: 1.5).frame(width: 118, height: 118)
+                }
                 Circle().fill(Theme.cobaltFill).frame(width: 86, height: 86)
                 if planning {
                     ProgressView().tint(.white)
@@ -355,5 +361,20 @@ struct CaptureView: View {
                                    glyph: LotGlyph.glyph(for: name, isMedicine: isMedicine), needsQuestion: asks))
         }
         if items != heard { heard = items }
+    }
+}
+
+private struct RecordingRing: View {
+    @State private var expanded = false
+
+    var body: some View {
+        Circle().strokeBorder(Theme.cobalt.opacity(0.25), lineWidth: 1.5)
+            .frame(width: 118, height: 118)
+            .scaleEffect(expanded ? 1.04 : 1)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 1).repeatForever(autoreverses: true)) {
+                    expanded = true
+                }
+            }
     }
 }

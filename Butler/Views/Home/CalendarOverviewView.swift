@@ -11,6 +11,7 @@ struct CalendarOverviewView: View {
     @State private var mode: Mode = .month
     @State private var jumpTo: Date?
     private let calendar = Calendar.current
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// The first day of this month and the eleven after it.
     private var months: [Date] {
@@ -35,7 +36,7 @@ struct CalendarOverviewView: View {
                         ForEach(months, id: \.self) { month in
                             Button {
                                 jumpTo = month
-                                withAnimation(.snappy) { mode = .month }
+                                withAnimation(reduceMotion ? nil : .snappy) { mode = .month }
                             } label: {
                                 MiniMonth(month: month, agenda: agenda)
                             }
@@ -70,7 +71,7 @@ struct CalendarOverviewView: View {
                 .frame(width: 200)
             }
         }
-        .animation(.snappy, value: mode)
+        .animation(reduceMotion ? nil : .snappy, value: mode)
     }
 }
 

@@ -379,6 +379,7 @@ struct WeekStrip: View {
     /// Defaults to the agenda's first seven days (home); the day view passes the week it shows.
     var days: [Date]? = nil
     @Environment(\.butlerAccent) private var accent
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 0) {
@@ -387,7 +388,7 @@ struct WeekStrip: View {
                 let isToday = day == agenda.today
                 let fill: Color = isSelected ? accent.fill : .clear
                 Button {
-                    withAnimation(.snappy) { selected = day }
+                    withAnimation(reduceMotion ? nil : .snappy) { selected = day }
                 } label: {
                     VStack(spacing: 3) {
                         Text(day.formatted(.dateTime.weekday(.narrow).locale(Locale(identifier: "zh_CN"))))

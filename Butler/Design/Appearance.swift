@@ -136,6 +136,7 @@ struct AccentButtonStyle: ButtonStyle {
     var height: CGFloat = 44
     @Environment(\.butlerAccent) private var accent
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -145,7 +146,7 @@ struct AccentButtonStyle: ButtonStyle {
             .padding(.horizontal, 16)
             .background(accent.fill, in: Capsule())
             .opacity(isEnabled ? (configuration.isPressed ? 0.8 : 1) : 0.4)
-            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+            .scaleEffect(!reduceMotion && configuration.isPressed ? 0.98 : 1)
             .animation(.easeOut(duration: 0.15), value: configuration.isPressed)
     }
 }

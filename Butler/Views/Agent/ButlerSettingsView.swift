@@ -11,6 +11,7 @@ struct ButlerSettingsView: View {
     @FocusState private var editingProfile: Bool
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var jevKey = ""
     @State private var confirmClear = false
     @State private var notificationStatus: UNAuthorizationStatus?
@@ -35,7 +36,7 @@ struct ButlerSettingsView: View {
 
                 Section {
                     UnderstandingCard(chat: chat) {
-                        withAnimation { proxy.scrollTo("profile", anchor: .center) }
+                        withAnimation(reduceMotion ? nil : .default) { proxy.scrollTo("profile", anchor: .center) }
                         editingProfile = true
                     }
                 }

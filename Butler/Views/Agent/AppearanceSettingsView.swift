@@ -5,6 +5,7 @@ struct AppearanceSettingsView: View {
     @AppStorage(AccentChoice.modeKey) private var mode: AppearanceMode = .system
     @AppStorage(AccentChoice.storageKey) private var accentChoice: AccentChoice = .glass
     @AppStorage(AccentChoice.glowKey) private var glow = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Form {
@@ -20,7 +21,7 @@ struct AppearanceSettingsView: View {
             Section {
                 HStack(spacing: 0) {
                     ForEach(AccentChoice.allCases) { choice in
-                        Button { withAnimation(.snappy) { accentChoice = choice } } label: {
+                        Button { withAnimation(reduceMotion ? nil : .snappy) { accentChoice = choice } } label: {
                             VStack(spacing: 8) {
                                 swatch(choice)
                                 Text(choice.title)

@@ -5,6 +5,27 @@ struct ClarifySheet: View {
     let coordinator: InventoryInputCoordinator
     let question: InventoryPlanningQuestion
 
+    var body: some View {
+        // Only question-local state is recreated; the panel itself stays in place.
+        VStack(spacing: 0) {
+            ClarifyQuestionContent(coordinator: coordinator, question: question)
+                .id(question)
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 10)
+        .padding(.bottom, 12)
+        .background(
+            UnevenRoundedRectangle(topLeadingRadius: 30, topTrailingRadius: 30)
+                .fill(Theme.ground)
+                .ignoresSafeArea(edges: .bottom)
+        )
+    }
+}
+
+private struct ClarifyQuestionContent: View {
+    let coordinator: InventoryInputCoordinator
+    let question: InventoryPlanningQuestion
+
     @State private var storageChoice: InventoryStorageChoice = .frozen
     @State private var productChoice: InventoryProductChoice?
 
@@ -43,14 +64,6 @@ struct ClarifySheet: View {
             }
             .padding(.top, 22)
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 10)
-        .padding(.bottom, 12)
-        .background(
-            UnevenRoundedRectangle(topLeadingRadius: 30, topTrailingRadius: 30)
-                .fill(Theme.ground)
-                .ignoresSafeArea(edges: .bottom)
-        )
     }
 
     // MARK: Content per question

@@ -117,6 +117,7 @@ struct PillButtonStyle: ButtonStyle {
     var kind: Kind = .primary
     var height: CGFloat = 56
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -130,8 +131,8 @@ struct PillButtonStyle: ButtonStyle {
                     Capsule().strokeBorder(Theme.vermilion.opacity(0.35), lineWidth: 1.5)
                 }
             }
-            .opacity(isEnabled ? 1 : 0.4)
-            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .opacity(isEnabled ? (reduceMotion && configuration.isPressed ? 0.8 : 1) : 0.4)
+            .scaleEffect(!reduceMotion && configuration.isPressed ? 0.97 : 1)
             .animation(.easeOut(duration: 0.15), value: configuration.isPressed)
     }
 

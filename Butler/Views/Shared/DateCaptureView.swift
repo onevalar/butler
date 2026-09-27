@@ -9,6 +9,7 @@ struct DateCaptureView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var date = Date.now
     @State private var hasSelectedDate = false
     @State private var confirmedExpiry = false
@@ -27,7 +28,7 @@ struct DateCaptureView: View {
             ZStack(alignment: .topLeading) {
                 if scannerAvailable && scannerError == nil {
                     CameraScanner { candidate, text in
-                        withAnimation(.snappy) {
+                        withAnimation(reduceMotion ? nil : .snappy) {
                             if let found = candidate.date { date = found }
                             hasSelectedDate = candidate.date != nil
                             confirmedExpiry = false
