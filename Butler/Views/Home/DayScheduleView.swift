@@ -11,6 +11,14 @@ struct DayScheduleView: View {
     private var items: [TimelineItem] { entries.map(\.timelineItem) }
     private var allDay: [TimelineItem] { items.filter(\.isAllDay) }
 
+    /// Monday to Sunday around the day shown, so any date opened from the overview has its week.
+    private var week: [Date] {
+        let calendar = Calendar.current
+        let weekday = calendar.component(.weekday, from: day)
+        let monday = calendar.date(byAdding: .day, value: -((weekday + 5) % 7), to: day) ?? day
+        return (0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: monday) }
+    }
+
     var body: some View {
         let timeline = DayTimelineView(items: items, day: day)
         ScrollViewReader { proxy in
@@ -25,7 +33,7 @@ struct DayScheduleView: View {
             .background(Color(.systemGroupedBackground))
             .safeAreaBar(edge: .top) {
                 VStack(spacing: 12) {
-                    WeekStrip(agenda: agenda, selected: $day)
+                    WeekStrip(agenda: agenda, selected: $day, days: week)
                         .padding(.horizontal, 12)
                     if !allDay.isEmpty {
                         TimelineAllDaySection(items: allDay, onTap: tap)

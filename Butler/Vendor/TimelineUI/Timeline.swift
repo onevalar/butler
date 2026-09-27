@@ -215,14 +215,17 @@ struct CompactTimelineView: View {
     let items: [TimelineItem]
     let day: Date
     var visibleHours = 4
+    var anchorHour: Int? = nil
     var now: Date = .now
     var onTap: ((TimelineItem) -> Void)? = nil
 
     /// The hours this card shows. Items outside it are listed by the caller.
-    static func window(items: [TimelineItem], day: Date, visibleHours: Int, now: Date = .now,
+    static func window(items: [TimelineItem], day: Date, visibleHours: Int, anchorHour: Int? = nil, now: Date = .now,
                        calendar: Calendar = .current) -> ClosedRange<Int> {
         let anchor: Int
-        if calendar.isDate(now, inSameDayAs: day) {
+        if let anchorHour {
+            anchor = anchorHour
+        } else if calendar.isDate(now, inSameDayAs: day) {
             anchor = calendar.component(.hour, from: now)
         } else if let first = items.filter({ !$0.isAllDay }).map(\.startDate).min() {
             anchor = calendar.component(.hour, from: first)
@@ -235,7 +238,7 @@ struct CompactTimelineView: View {
 
     var body: some View {
         TimelineHourGrid(items: items, day: day,
-                         hours: Self.window(items: items, day: day, visibleHours: visibleHours, now: now),
+                         hours: Self.window(items: items, day: day, visibleHours: visibleHours, anchorHour: anchorHour, now: now),
                          now: now, onTap: onTap)
     }
 }

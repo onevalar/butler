@@ -16,6 +16,8 @@ final class CalendarFeed {
         }
     }
     private var observer: NSObjectProtocol?
+    /// How far ahead to read; the overview asks for a year.
+    var horizonDays = 8
 
     init() {
         observer = NotificationCenter.default.addObserver(forName: .EKEventStoreChanged, object: store, queue: .main) { [weak self] _ in
@@ -40,7 +42,8 @@ final class CalendarFeed {
         return canRead
     }
 
-    func refresh(from start: Date = Calendar.current.startOfDay(for: .now), days: Int = 8) async {
+    func refresh(from start: Date = Calendar.current.startOfDay(for: .now), days: Int? = nil) async {
+        let days = days ?? horizonDays
         status = EKEventStore.authorizationStatus(for: .event)
         guard enabled, canRead, let end = Calendar.current.date(byAdding: .day, value: days, to: start) else {
             events = []

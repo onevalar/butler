@@ -33,17 +33,16 @@ struct HomeView: View {
     let onOpen: (AgendaEntry.Target) -> Void
     let onOpenDay: (Date) -> Void
     let onOpenInventory: () -> Void
+    let onOpenOverview: () -> Void
     let onSettings: () -> Void
     let onChat: (ChatStart) -> Void
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                title
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 14)
                 WeekStrip(agenda: agenda, selected: $selectedDay)
                     .padding(.horizontal, 12)
+                    .padding(.top, 4)
                     .padding(.bottom, 20)
                 if isEmpty {
                     emptyState.padding(.horizontal, 16)
@@ -59,17 +58,42 @@ struct HomeView: View {
         }
         .scrollIndicators(.hidden)
         .background(Color(.systemGroupedBackground))
-        .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                Button(action: onOpenInventory) { Image(systemName: "refrigerator") }
-                    .accessibilityLabel("家里的东西")
-                Button(action: onSettings) { Image(systemName: "gearshape") }
-                    .accessibilityLabel("设置")
-            }
-        }
+        .toolbar(.hidden, for: .navigationBar)
+        // Title and the two glass buttons share one pinned row; content scrolls under it.
+        .safeAreaBar(edge: .top) { header }
         .safeAreaBar(edge: .bottom) {
             HomeInputBar(onChat: onChat)
         }
+    }
+
+    private var header: some View {
+        HStack(alignment: .center, spacing: 12) {
+            title
+            Spacer(minLength: 8)
+            GlassEffectContainer(spacing: 8) {
+                HStack(spacing: 0) {
+                    Button(action: onOpenOverview) {
+                        Image(systemName: "calendar").font(.system(size: 18, weight: .medium)).frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel("日程总览")
+                    Button(action: onOpenInventory) {
+                        Image(systemName: "refrigerator").font(.system(size: 18, weight: .medium)).frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel("家里的东西")
+                    Button(action: onSettings) {
+                        Image(systemName: "gearshape").font(.system(size: 18, weight: .medium)).frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel("设置")
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 4)
+                .glassEffect(.regular.interactive(), in: .capsule)
+            }
+        }
+        .foregroundStyle(.primary)
+        .padding(.horizontal, 20)
+        .padding(.top, 2)
+        .padding(.bottom, 8)
     }
 
     private var isEmpty: Bool {
@@ -81,10 +105,10 @@ struct HomeView: View {
     private var title: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(Date.now.formatted(.dateTime.month().day().weekday(.wide).locale(Locale(identifier: "zh_CN"))))
-                .font(.subheadline.weight(.semibold))
+                .font(.footnote.weight(.semibold))
                 .foregroundStyle(.red)
             Text("今天")
-                .font(.largeTitle.bold())
+                .font(.title.bold())
         }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isHeader)
@@ -129,11 +153,23 @@ struct HomeView: View {
 
     private var schedule: some View {
         let items = dayEntries.map(\.timelineItem)
-        let window = CompactTimelineView.window(items: items, day: selectedDay, visibleHours: 4)
         let calendar = Calendar.current
-        let timed = dayEntries.filter { !$0.isAllDay }
-        let later = timed.filter { ($0.start.map { calendar.component(.hour, from: $0) } ?? 0) > window.upperBound }
-        let hasTimeline = Calendar.current.isDateInToday(selectedDay) || !timed.isEmpty
+        let now = Date.now
+        let isToday = calendar.isDateInToday(selectedDay)
+        // Only what is still ahead earns an hour grid; an empty grid just takes space.
+        let ahead = dayEntries.filter { entry in
+            guard !entry.isAllDay else { return false }
+            return !isToday || (entry.end ?? entry.start ?? now) > now
+        }
+        let anchor: Int? = ahead.first?.start.map { start in
+            let next = calendar.component(.hour, from: start)
+            let hour = calendar.component(.hour, from: now)
+            // Keep the now line when the next thing is close; otherwise start at the next thing.
+            return isToday && next - hour <= 2 ? hour : next
+        }
+        let window = CompactTimelineView.window(items: items, day: selectedDay, visibleHours: 3, anchorHour: anchor)
+        let later = ahead.filter { ($0.start.map { calendar.component(.hour, from: $0) } ?? 0) > window.upperBound }
+        let allDay = items.filter(\.isAllDay)
         return VStack(alignment: .leading, spacing: 0) {
             HStack {
                 SectionTitle("\(selectedDay.relativeDayName)的安排")
@@ -147,20 +183,24 @@ struct HomeView: View {
                     .padding(.bottom, 8)
             }
             GroupCard {
-                let allDay = items.filter(\.isAllDay)
                 if !allDay.isEmpty {
                     TimelineAllDaySection(items: allDay, onTap: tap)
                         .padding(.top, 16).padding(.trailing, 16).padding(.leading, 8)
-                        .padding(.bottom, hasTimeline ? 4 : 14)
-                    if hasTimeline { RowDivider(inset: 0) }
+                        .padding(.bottom, ahead.isEmpty ? 14 : 4)
+                    if !ahead.isEmpty { RowDivider(inset: 0) }
                 }
-                if hasTimeline {
-                    CompactTimelineView(items: items, day: selectedDay, visibleHours: 4, onTap: tap)
+                if !ahead.isEmpty {
+                    CompactTimelineView(items: items, day: selectedDay, visibleHours: 3, anchorHour: anchor, onTap: tap)
                         .padding(.top, 20).padding(.leading, 8).padding(.trailing, 12).padding(.bottom, later.isEmpty ? 8 : 0)
                 } else if allDay.isEmpty {
-                    Text("这天没有安排")
-                        .font(.subheadline).foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, minHeight: 52)
+                    HStack(spacing: 10) {
+                        Image(systemName: "clock").foregroundStyle(.secondary)
+                        Text(isToday ? "今天接下来没有定时安排" : "这天没有安排")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(minHeight: 52)
                 }
                 if !later.isEmpty {
                     RowDivider(inset: 0)
@@ -269,7 +309,7 @@ struct CapsuleLabel: View {
 
 struct AgendaRow: View {
     enum Accessory { case none, action(String) }
-    enum Leading { case bar, day(AgendaEntry) }
+    enum Leading { case bar, day(AgendaEntry), time(AgendaEntry) }
 
     let entry: AgendaEntry
     var accessory: Accessory = .none
@@ -285,6 +325,11 @@ struct AgendaRow: View {
                         Text(entry.start?.clockTime ?? "全天").font(.subheadline.weight(.semibold)).monospacedDigit()
                     }
                     .frame(width: 44, alignment: .leading)
+                }
+                if case .time(let entry) = leading {
+                    Text(entry.start?.clockTime ?? "全天")
+                        .font(.subheadline.weight(.semibold)).monospacedDigit()
+                        .frame(width: 44, alignment: .leading)
                 }
                 KindBar(color: entry.kind.color)
                 VStack(alignment: .leading, spacing: 1) {
@@ -309,10 +354,12 @@ struct AgendaRow: View {
 struct WeekStrip: View {
     let agenda: HomeAgenda
     @Binding var selected: Date
+    /// Defaults to the agenda's first seven days (home); the day view passes the week it shows.
+    var days: [Date]? = nil
 
     var body: some View {
         HStack(spacing: 0) {
-            ForEach(agenda.days, id: \.self) { day in
+            ForEach(days ?? Array(agenda.days.prefix(7)), id: \.self) { day in
                 let isSelected = day == selected
                 let isToday = day == agenda.today
                 let fill: Color = isSelected ? (isToday ? .red : .primary) : .clear
@@ -375,16 +422,9 @@ struct HomeInputBar: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("和管家聊聊")
-                    Button { onChat(.voice) } label: {
-                        Image(systemName: "mic.fill")
-                            .font(.system(size: 17, weight: .semibold))
-                            .frame(width: 40, height: 40)
-                    }
-                    .buttonStyle(.glassProminent)
-                    .buttonBorderShape(.circle)
-                    .tint(.blue)
-                    .padding(.trailing, 6)
-                    .accessibilityLabel("说给管家听")
+                    GlassCircleButton(systemImage: "mic.fill", tint: .blue) { onChat(.voice) }
+                        .padding(.trailing, 6)
+                        .accessibilityLabel("说给管家听")
                 }
                 .frame(height: 52)
                 .glassEffect(.regular.interactive(), in: .capsule)
@@ -393,5 +433,24 @@ struct HomeInputBar: View {
         .foregroundStyle(.primary)
         .padding(.horizontal, 16)
         .padding(.bottom, 4)
+    }
+}
+
+/// A 40pt glass circle that stays inside a 52pt capsule (the system glass button styles add padding).
+struct GlassCircleButton: View {
+    let systemImage: String
+    var tint: Color? = nil
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(tint == nil ? Color.primary : Color.white)
+                .frame(width: 40, height: 40)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .glassEffect(tint.map { Glass.regular.tint($0).interactive() } ?? Glass.regular.interactive(), in: .circle)
     }
 }

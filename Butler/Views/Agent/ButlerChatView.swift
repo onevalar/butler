@@ -283,31 +283,21 @@ struct ButlerChatView: View {
     @ViewBuilder
     private var trailingButton: some View {
         if chat.working {
-            Button { chat.stop() } label: { Image(systemName: "stop.fill").frame(width: 40, height: 40) }
-                .buttonStyle(.glass).buttonBorderShape(.circle)
+            GlassCircleButton(systemImage: "stop.fill") { chat.stop() }
                 .accessibilityLabel("停止")
         } else if dictation.listening {
-            Button { Task { chat.draft = await dictation.stop() } } label: {
-                Image(systemName: "stop.fill").frame(width: 40, height: 40)
-            }
-            .buttonStyle(.glassProminent).buttonBorderShape(.circle).tint(.red)
-            .accessibilityLabel("停止听写")
+            GlassCircleButton(systemImage: "stop.fill", tint: .red) { Task { chat.draft = await dictation.stop() } }
+                .accessibilityLabel("停止听写")
         } else if chat.canSend {
-            Button {
+            GlassCircleButton(systemImage: "arrow.up", tint: .blue) {
                 composing = false
                 chat.send()
-            } label: {
-                Image(systemName: "arrow.up").font(.system(size: 17, weight: .bold)).frame(width: 40, height: 40)
             }
-            .buttonStyle(.glassProminent).buttonBorderShape(.circle).tint(.blue)
             .accessibilityLabel("发送")
         } else {
-            Button { Task { await startListening() } } label: {
-                Image(systemName: "mic.fill").font(.system(size: 17, weight: .semibold)).frame(width: 40, height: 40)
-            }
-            .buttonStyle(.glassProminent).buttonBorderShape(.circle).tint(.blue)
-            .disabled(dictation.preparing)
-            .accessibilityLabel("说话")
+            GlassCircleButton(systemImage: "mic.fill", tint: .blue) { Task { await startListening() } }
+                .disabled(dictation.preparing)
+                .accessibilityLabel("说话")
         }
     }
 

@@ -5,6 +5,7 @@ enum Route: Hashable {
     case inventory
     case lot(UUID)
     case day(Date)
+    case overview
 }
 
 struct ContentView: View {
@@ -29,6 +30,8 @@ struct ContentView: View {
     @State private var selectedDay = Calendar.current.startOfDay(for: .now)
     @State private var chosenReminder: TimedReminder?
     @AppStorage("onboardingDone") private var onboardingDone = false
+    /// Home's camera button opens the camera straight away; the photo then goes into the chat.
+    @State private var takingPhoto = false
     @Environment(\.openURL) private var openURL
     @Environment(\.modelContext) private var modelContext
 
@@ -58,21 +61,37 @@ struct ContentView: View {
                 onOpen: open,
                 onOpenDay: { path.append(.day($0)) },
                 onOpenInventory: { path.append(.inventory) },
+                onOpenOverview: { path.append(.overview) },
                 onSettings: { showingSettings = true },
-                onChat: { chatStart = $0 }
+                onChat: startChat
             )
             .navigationDestination(for: Route.self) { route in
                 switch route {
                 case .inventory:
-                    InventoryView(facts: facts, history: history, onOpenLot: { path.append(.lot($0)) }, onChat: { chatStart = $0 })
+                    InventoryView(facts: facts, history: history, onOpenLot: { path.append(.lot($0)) }, onChat: startChat)
                 case .lot(let id):
                     LotDetailView(lotID: id)
                 case .day(let day):
-                    DayScheduleView(agenda: agenda, day: day, onOpen: open)
+                    DayScheduleView(agenda: yearAgenda, day: day, onOpen: open)
+                case .overview:
+                    CalendarOverviewView(agenda: yearAgenda, onOpenDay: { path.append(.day($0)) }, onOpen: open)
+                        .task {
+                            calendarFeed.horizonDays = 370
+                            await calendarFeed.refresh()
+                        }
                 }
             }
         }
         .environment(calendarFeed)
+        .fullScreenCover(isPresented: $takingPhoto) {
+            PhotoCapture(onPhoto: { image in
+                if let data = image.chatJPEG() { chat?.photos.append(data) }
+                takingPhoto = false
+                // Open the chat once the camera has gone, with the photo ready to send.
+                Task { try? await Task.sleep(for: .milliseconds(450)); chatStart = .typing }
+            }, onCancel: { takingPhoto = false })
+            .ignoresSafeArea()
+        }
         .fullScreenCover(isPresented: Binding(get: { showsOnboarding }, set: { if !$0 { onboardingDone = true } })) {
             if let chat {
                 OnboardingView(chat: chat, calendarFeed: calendarFeed) { onboardingDone = true }
@@ -149,6 +168,15 @@ struct ContentView: View {
                 path = [.lot(id)]
             }
         }
+    }
+
+    /// A year ahead, for the overview and for days opened from it.
+    private var yearAgenda: HomeAgenda {
+        HomeAgenda.build(lots: facts, reminders: reminders.upcoming, events: calendarFeed.events, dayCount: 366)
+    }
+
+    private func startChat(_ start: ChatStart) {
+        if start == .camera { takingPhoto = true } else { chatStart = start }
     }
 
     private func open(_ target: AgendaEntry.Target) {
