@@ -39,6 +39,8 @@ final class ButlerTools {
     let reminders: ReminderStore
     let jev: any ConditionJudge
     private(set) var pending: [PendingChange] = []
+    /// Looks up older conversation (set by the chat that owns these tools).
+    var searchConversation: ((String) -> [[String: Any]])?
     /// What the owner said this turn (and just before), given to Jev as the request.
     private var request = ""
     private var previous: String?
@@ -73,6 +75,7 @@ final class ButlerTools {
 
     var toolJSON: String {
         var tools = Self.inventoryTools
+        if searchConversation != nil { tools += "," + Self.conversationTool }
         if jev.isConfigured { tools += "," + Self.jevTool }
         return "[" + tools + "]"
     }
@@ -90,6 +93,10 @@ final class ButlerTools {
     {"type":"function","name":"propose_cancel_reminder","description":"取消一个定时提醒，id 来自 list_reminders。","strict":true,"parameters":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":false}},
     {"type":"function","name":"search_notes","description":"查询用户告诉过你的习惯、偏好和其他需要记住的事（例如常去哪家店买、放在哪里、家里的布局）。query 为空返回全部。","strict":true,"parameters":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}},
     {"type":"function","name":"propose_note","description":"新增或更正一条需要长期记住的事（习惯、偏好、布局、提醒自己的话）。id=null 新建；更正时传原 id，保留没被纠正的内容。库存物品本身不要写成笔记。","strict":true,"parameters":{"type":"object","properties":{"id":{"type":["string","null"]},"title":{"type":"string"},"text":{"type":"string"}},"required":["id","title","text"],"additionalProperties":false}}
+    """#
+
+    static let conversationTool = #"""
+    {"type":"function","name":"search_conversation","description":"按关键词查以前和用户的对话记录（包括摘要里没写细的部分）。多个关键词用空格分开，命中任意一个即返回，最多8条，新的在前。","strict":true,"parameters":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}}
     """#
 
     static let jevTool = #"""
@@ -201,6 +208,10 @@ final class ButlerTools {
                 add(.tracking(lot, quantityOnly: quantityOnly),
                     title: quantityOnly ? "\(lot.name) 只记数量" : "\(lot.name) 开始跟踪到期",
                     detail: quantityOnly ? "不再问过期日期，也不发到期提醒" : "之后会问日期并按日期提醒")
+            case "search_conversation":
+                struct Args: Decodable { var query: String }
+                let query = try JSONDecoder().decode(Args.self, from: data).query
+                return try encode(["matches": searchConversation?(query) ?? []] as [String: Any])
             case "propose_reminder":
                 struct Args: Decodable { var text: String; var time: String; var `repeat`: String }
                 let args = try JSONDecoder().decode(Args.self, from: data)

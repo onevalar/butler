@@ -149,6 +149,8 @@ enum LocalAgentMessage {
     case receipt(preview: UUID, saved: Bool)
     /// What the phone actually did (or that the owner cancelled), in plain words.
     case note(String)
+    /// Background the phone supplies, e.g. the summary of older conversation.
+    case context(String)
 }
 
 /// The cloud adapter handles authentication/transport only. It cannot access the store.

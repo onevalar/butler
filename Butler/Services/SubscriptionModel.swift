@@ -101,16 +101,22 @@ final class SubscriptionModel: LocalAgentModel {
             case .receipt(let id, let saved):
                 let text = "手机执行回执：预览\(id.uuidString)\(saved ? "已确认并保存" : "已取消，未保存")。这是用户操作后的实际结果。"
                 input.append(["role": "developer", "content": [["type": "input_text", "text": text]]])
+            case .context(let text):
+                input.append(["role": "developer", "content": [["type": "input_text", "text": text]]])
             case .note(let summary):
                 input.append(["role": "developer", "content": [["type": "input_text",
                     "text": "手机执行回执（用户操作后的实际结果）：\n" + summary]]])
             }
         }
         let tools = try JSONSerialization.jsonObject(with: Data(toolJSON.utf8))
-        let body: [String: Any] = ["model": "gpt-6-sol", "reasoning": ["effort": "medium"],
-            "instructions": instructions, "input": input, "tools": tools, "tool_choice": "auto",
-            "parallel_tool_calls": false, "stream": true, "store": false,
+        var body: [String: Any] = ["model": "gpt-6-sol", "reasoning": ["effort": "medium"],
+            "instructions": instructions, "input": input, "stream": true, "store": false,
             "include": ["reasoning.encrypted_content"]]
+        if let list = tools as? [Any], !list.isEmpty {
+            body["tools"] = list
+            body["tool_choice"] = "auto"
+            body["parallel_tool_calls"] = false
+        }
         return try JSONSerialization.data(withJSONObject: body)
     }
 

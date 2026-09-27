@@ -166,4 +166,13 @@ private final class SubscriptionStubProtocol: URLProtocol, @unchecked Sendable {
         XCTAssertEqual(content.last?["type"] as? String, "input_image")
         XCTAssertEqual(content.last?["image_url"] as? String, "data:image/jpeg;base64,AQID")
     }
+
+    func testRequestWithoutToolsOmitsToolFields() throws {
+        let body = try JSONSerialization.jsonObject(with: SubscriptionModel.requestBody([.user("整理摘要")], instructions: "x", toolJSON: "[]")) as? [String: Any]
+        XCTAssertNil(body?["tools"])
+        XCTAssertNil(body?["tool_choice"])
+        let withContext = try JSONSerialization.jsonObject(with: SubscriptionModel.requestBody([.context("更早对话的摘要：…"), .user("你好")])) as? [String: Any]
+        let first = (withContext?["input"] as? [[String: Any]])?.first
+        XCTAssertEqual(first?["role"] as? String, "developer")
+    }
 }

@@ -138,21 +138,39 @@ final class ButlerToolsTests: XCTestCase {
         XCTAssertFalse(tools.reminders.upcoming.contains { $0.text == "吃药" })
     }
 
-    func testChatContextStaysBoundedAndCarriesNoPhotos() throws {
-        var turns = (0..<50).map { ChatTurn(question: "问题\($0)", answer: String(repeating: "长", count: 5000)) }
-        turns[49].photos = ["a.jpg"]
-        turns[49].receipts = ["✓ 新增 牛奶 ×1 瓶"]
-        let context = ButlerChat.context(from: turns)
-        let users = context.compactMap { message -> String? in
-            if case .user(let text) = message { return text }
-            return nil
-        }
-        XCTAssertEqual(users.count, ButlerChat.contextTurns)
-        XCTAssertEqual(users.first, "问题38")
-        XCTAssertEqual(users.last, "（当时附了照片）问题49")
+    func testChatContextIsSizedByContentNotTurnCount() throws {
+        // Many short turns all fit.
+        let short = (0..<60).map { ChatTurn(question: "问题\($0)", answer: "好的") }
+        XCTAssertEqual(ButlerChat.recentWindow(short).count, 60)
+        XCTAssertTrue(ButlerChat.turnsToSummarize(short, summary: .init()).isEmpty)
+
+        // Long turns: only what fits the budget stays verbatim; the rest goes to the summary.
+        var long = (0..<30).map { ChatTurn(question: "问题\($0)", answer: String(repeating: "长", count: 5000)) }
+        long[29].photos = ["a.jpg"]
+        long[29].receipts = ["✓ 新增 牛奶 ×1 瓶"]
+        let window = ButlerChat.recentWindow(long)
+        XCTAssertLessThan(window.count, 30)
+        XCTAssertGreaterThanOrEqual(window.count, 1)
+        let older = ButlerChat.turnsToSummarize(long, summary: .init())
+        XCTAssertEqual(older.count + window.count, 30)
+
+        let summary = ConversationSummary(text: "用户叫小安，想要每天提醒吃药", throughTurnID: older.last?.id)
+        XCTAssertTrue(ButlerChat.turnsToSummarize(long, summary: summary).isEmpty)
+        let context = ButlerChat.context(from: long, summary: summary)
+        guard case .context(let first)? = context.first else { return XCTFail("summary comes first") }
+        XCTAssertTrue(first.contains("小安"))
         XCTAssertFalse(context.contains { if case .userPhotos = $0 { return true }; return false })
-        for case .assistant(let reply) in context { XCTAssertLessThanOrEqual(reply.text.count, ButlerChat.contextAnswerLimit) }
-        XCTAssertTrue(context.contains { if case .note(let text) = $0 { return text.contains("牛奶") }; return false })
+        XCTAssertTrue(context.contains { if case .user(let text) = $0 { return text == "（当时附了照片）问题29" }; return false })
+        for case .assistant(let reply) in context { XCTAssertLessThanOrEqual(reply.text.count, ButlerChat.answerLimit) }
+    }
+
+    func testConversationSearchToolIsOfferedAndReturnsMatches() async throws {
+        let (tools, _) = try makeTools()
+        XCTAssertFalse(tools.toolJSON.contains("search_conversation"))
+        tools.searchConversation = { query in query.contains("剩饭") ? [["user": "11点提醒我热剩饭"]] : [] }
+        XCTAssertTrue(tools.toolJSON.contains("search_conversation"))
+        let found = await call(tools, "search_conversation", #"{"query":"剩饭"}"#)
+        XCTAssertEqual((found["matches"] as? [[String: Any]])?.first?["user"] as? String, "11点提醒我热剩饭")
     }
 
     // MARK: - Jev as the layer between the model and the data
