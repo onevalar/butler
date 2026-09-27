@@ -1,4 +1,5 @@
 import Foundation
+import SwiftData
 import XCTest
 @testable import Butler
 
@@ -106,5 +107,33 @@ final class DateReminderFoundationTests: XCTestCase {
                                                 now: date(21), calendar: calendar, recordedFireDate: oldFire), date(25))
         XCTAssertNil(LotReminderPolicy.fireDate(date: date(29), isMedicine: false, leadDays: 1,
                                               now: date(27), calendar: calendar, recordedFireDate: oldFire))
+    }
+}
+
+@MainActor
+final class NotificationActionTests: XCTestCase {
+    func testUsedUpFromANotificationClosesTheLot() throws {
+        let container = try ButlerStore.makePreviewContainer()
+        let context = ModelContext(container)
+        let product = CatalogProduct(canonicalName: "苹果")
+        let lot = InventoryLot(productID: product.id, quantity: 5, unit: "个")
+        context.insert(product); context.insert(lot); try context.save()
+
+        let manager = NotificationManager.shared
+        let previous = manager.container
+        manager.container = container
+        defer { manager.container = previous }
+        manager.markUsedUp(lot.id)
+        manager.markUsedUp(lot.id) // a second tap on an old notification changes nothing
+
+        let saved = try XCTUnwrap(ModelContext(container).fetch(FetchDescriptor<InventoryLot>()).first)
+        XCTAssertEqual(saved.state, .depleted)
+        let events = try ModelContext(container).fetch(FetchDescriptor<InventoryEvent>())
+        XCTAssertEqual(events.filter { $0.subjectID == lot.id }.count, 1)
+    }
+
+    func testCategoriesCarryTheButtons() {
+        XCTAssertEqual(NotificationManager.lotCategory, "butler.lot")
+        XCTAssertEqual(NotificationManager.reminderCategory, "butler.reminder")
     }
 }

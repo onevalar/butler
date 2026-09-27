@@ -74,6 +74,16 @@ final class ReminderStore {
         }
     }
 
+    /// Re-reads the file (after a restore) and replaces every scheduled reminder with what it says.
+    func reload() {
+        if schedules {
+            let ids = reminders.map { Self.prefix + $0.id.uuidString }
+            UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ids)
+        }
+        reminders = (try? Data(contentsOf: file)).flatMap { try? JSONDecoder().decode([TimedReminder].self, from: $0) } ?? []
+        rescheduleAll()
+    }
+
     /// Re-adds every upcoming reminder, e.g. right after notifications were allowed.
     func rescheduleAll() {
         upcoming.forEach(schedule)
@@ -91,6 +101,7 @@ final class ReminderStore {
         content.title = "小当家提醒"
         content.body = reminder.text
         content.sound = .default
+        content.categoryIdentifier = NotificationManager.reminderCategory
         let calendar = Calendar.current
         let components: DateComponents = switch reminder.repeats {
         case .daily: calendar.dateComponents([.hour, .minute], from: reminder.fireDate)

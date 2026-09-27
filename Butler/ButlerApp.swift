@@ -21,6 +21,7 @@ struct ButlerApp: App {
         } catch {
             fatalError("Could not create ModelContainer: \(error)")
         }
+        if !Self.isRunningTests { NotificationManager.shared.container = modelContainer }
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--seed-sample-inventory") {
             SampleInventory.seed(into: modelContainer)

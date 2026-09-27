@@ -98,6 +98,13 @@ final class LocalMemoryStore {
         snapshot = next
     }
 
+    /// Re-reads the file, e.g. after restoring a backup.
+    func reload() throws {
+        snapshot = FileManager.default.fileExists(atPath: file.path)
+            ? try JSONDecoder().decode(Snapshot.self, from: Data(contentsOf: file)) : Snapshot()
+        preview = nil
+    }
+
     func delete(_ id: UUID) throws {
         var next = snapshot
         next.records.removeAll { $0.id == id }

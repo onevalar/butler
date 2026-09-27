@@ -191,6 +191,20 @@ final class ButlerChat {
         save()
     }
 
+    /// Re-reads the saved conversation, notes and reminders after a backup was restored.
+    func reloadFromDisk() {
+        guard !working else { return }
+        turns = transcriptURL.flatMap { try? Data(contentsOf: $0) }
+            .flatMap { try? JSONDecoder().decode([ChatTurn].self, from: $0) } ?? []
+        summary = summaryURL.flatMap { try? Data(contentsOf: $0) }
+            .flatMap { try? JSONDecoder().decode(ConversationSummary.self, from: $0) } ?? ConversationSummary()
+        profile = UserDefaults.standard.string(forKey: "butlerProfile") ?? ""
+        try? tools?.notes.reload()
+        tools?.reminders.reload()
+        tools?.clearPending()
+        rebuildContext()
+    }
+
     // MARK: - Account & history
 
     func didSignIn() {

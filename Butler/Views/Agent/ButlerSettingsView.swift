@@ -1,5 +1,6 @@
 import SwiftData
 import SwiftUI
+import UniformTypeIdentifiers
 import UserNotifications
 
 /// Everything the owner configures: who they are, the model account, Jev, memories, chat history.
@@ -11,6 +12,11 @@ struct ButlerSettingsView: View {
     @State private var confirmClear = false
     @State private var notificationStatus: UNAuthorizationStatus?
     @Environment(CalendarFeed.self) private var calendarFeed: CalendarFeed?
+    @Environment(\.modelContext) private var modelContext
+    @State private var exportDocument: BackupDocument?
+    @State private var importing = false
+    @State private var pendingRestore: ButlerBackup?
+    @State private var backupMessage: String?
     @AppStorage("expiryWarningDays") private var leadDays = 2
     @AppStorage("reminderMinutes") private var reminderMinutes = 9 * 60
     @Query(filter: #Predicate<InventoryLot> { $0.stateRawValue == "active" }) private var activeLots: [InventoryLot]
@@ -158,6 +164,29 @@ struct ButlerSettingsView: View {
                 }
 
                 Section {
+                    Button {
+                        do {
+                            let backup = try BackupService.makeBackup(container: modelContext.container)
+                            exportDocument = BackupDocument(data: try BackupService.encode(backup))
+                        } catch {
+                            backupMessage = "没能生成备份：\(error.localizedDescription)"
+                        }
+                    } label: {
+                        Label("导出备份到文件", systemImage: "square.and.arrow.up")
+                    }
+                    Button { importing = true } label: {
+                        Label("从备份恢复", systemImage: "clock.arrow.circlepath")
+                    }
+                    if let backupMessage {
+                        Text(backupMessage).font(.footnote).foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("备份与恢复")
+                } footer: {
+                    Text("备份包含家里的东西和变动记录、习惯和偏好、提醒、对话文字和设置，不含对话里的照片。建议存到 iCloud 云盘，换手机或重装后可以恢复。")
+                }
+
+                Section {
                     Button("清空对话记录", role: .destructive) { confirmClear = true }
                         .disabled(chat.turns.isEmpty || chat.working)
                 } footer: {
@@ -179,12 +208,52 @@ struct ButlerSettingsView: View {
             .task { await refreshNotificationStatus() }
             .onChange(of: leadDays) { _, _ in rescheduleReminders() }
             .onChange(of: reminderMinutes) { _, _ in rescheduleReminders() }
+            .fileExporter(isPresented: Binding(get: { exportDocument != nil }, set: { if !$0 { exportDocument = nil } }),
+                          document: exportDocument, contentType: .json,
+                          defaultFilename: BackupService.fileName()) { result in
+                if case .success = result { backupMessage = "备份已保存。" }
+                exportDocument = nil
+            }
+            .fileImporter(isPresented: $importing, allowedContentTypes: [.json]) { result in
+                do {
+                    let url = try result.get()
+                    let scoped = url.startAccessingSecurityScopedResource()
+                    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                    pendingRestore = try BackupService.decode(Data(contentsOf: url))
+                } catch {
+                    backupMessage = (error as? LocalizedError)?.errorDescription ?? "没能读取这个文件。"
+                }
+            }
+            .confirmationDialog("用这个备份替换现在的数据？", isPresented: Binding(
+                get: { pendingRestore != nil }, set: { if !$0 { pendingRestore = nil } }
+            ), titleVisibility: .visible) {
+                Button("恢复", role: .destructive) { restorePending() }
+                Button("取消", role: .cancel) { pendingRestore = nil }
+            } message: {
+                if let backup = pendingRestore {
+                    Text("备份时间 \(backup.createdAt.formatted(date: .abbreviated, time: .shortened))，家里 \(backup.activeLotCount) 样东西。现在的数据会先自动保存一份，再被替换。")
+                }
+            }
             .confirmationDialog("清空全部对话记录？", isPresented: $confirmClear, titleVisibility: .visible) {
                 Button("清空", role: .destructive) { chat.clearHistory() }
             }
         }
 
         .presentationDetents([.large])
+    }
+
+    private func restorePending() {
+        guard let backup = pendingRestore else { return }
+        pendingRestore = nil
+        do {
+            try BackupService.restore(backup, container: modelContext.container)
+            chat.reloadFromDisk()
+            if let calendarFeed { calendarFeed.enabled = UserDefaults.standard.bool(forKey: "showSystemCalendar") }
+            rescheduleReminders()
+            backupMessage = "已恢复：家里 \(backup.activeLotCount) 样东西。"
+        } catch {
+            backupMessage = "恢复没有完成：\(error.localizedDescription)"
+        }
     }
 
     private var reminderTime: Binding<Date> {

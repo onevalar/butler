@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import SwiftData
 import UserNotifications
 
 extension Notification.Name {
@@ -38,18 +39,97 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     private override init() { super.init() }
 
-    func installDelegate() { UNUserNotificationCenter.current().delegate = self }
+    /// Where "用完了" on a notification writes to. Set at launch.
+    var container: ModelContainer?
+
+    static let lotCategory = "butler.lot"
+    static let reminderCategory = "butler.reminder"
+    static let usedUpAction = "butler.lot.usedUp"
+    static let snoozeLotAction = "butler.lot.tomorrow"
+    static let snoozeReminderAction = "butler.reminder.later"
+    static let doneReminderAction = "butler.reminder.done"
+    private let snoozePrefix = "butler.snooze."
+
+    func installDelegate() {
+        let center = UNUserNotificationCenter.current()
+        center.delegate = self
+        // Buttons shown when the owner long-presses or pulls down a notification.
+        let lot = UNNotificationCategory(identifier: Self.lotCategory, actions: [
+            UNNotificationAction(identifier: Self.usedUpAction, title: "用完了", options: [.authenticationRequired],
+                                 icon: UNNotificationActionIcon(systemImageName: "checkmark.circle")),
+            UNNotificationAction(identifier: Self.snoozeLotAction, title: "明天再提醒", options: [],
+                                 icon: UNNotificationActionIcon(systemImageName: "clock.arrow.circlepath")),
+        ], intentIdentifiers: [])
+        let reminder = UNNotificationCategory(identifier: Self.reminderCategory, actions: [
+            UNNotificationAction(identifier: Self.doneReminderAction, title: "完成", options: [],
+                                 icon: UNNotificationActionIcon(systemImageName: "checkmark")),
+            UNNotificationAction(identifier: Self.snoozeReminderAction, title: "10 分钟后再提醒", options: [],
+                                 icon: UNNotificationActionIcon(systemImageName: "clock")),
+        ], intentIdentifiers: [])
+        center.setNotificationCategories([lot, reminder])
+    }
+
     func clearPendingRoute() { pendingLotID = nil }
+
+    /// Show reminders even while the app is open.
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                           withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .list, .sound])
+    }
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
                                            didReceive response: UNNotificationResponse,
                                            withCompletionHandler completionHandler: @escaping () -> Void) {
-        if response.actionIdentifier == UNNotificationDefaultActionIdentifier,
-           let raw = response.notification.request.content.userInfo["lotID"] as? String,
-           let id = UUID(uuidString: raw) {
-            Task { @MainActor in self.pendingLotID = id }
+        let action = response.actionIdentifier
+        let content = response.notification.request.content
+        let lotID = (content.userInfo["lotID"] as? String).flatMap(UUID.init)
+        nonisolated(unsafe) let copy = content.mutableCopy() as? UNMutableNotificationContent
+        nonisolated(unsafe) let done = completionHandler
+        Task { @MainActor in
+            switch action {
+            case UNNotificationDefaultActionIdentifier:
+                if let lotID { self.pendingLotID = lotID }
+            case Self.usedUpAction:
+                if let lotID { self.markUsedUp(lotID) }
+            case Self.snoozeLotAction:
+                if let lotID, let copy { await self.snooze(copy, id: self.snoozePrefix + lotID.uuidString, after: .tomorrow) }
+            case Self.snoozeReminderAction:
+                if let copy { await self.snooze(copy, id: self.snoozePrefix + UUID().uuidString, after: .minutes(10)) }
+            default:
+                break
+            }
+            done()
         }
-        completionHandler()
+    }
+
+    /// The owner confirmed on the notification itself (after unlocking): the whole lot is used up.
+    func markUsedUp(_ lotID: UUID) {
+        guard let container else { return }
+        let context = ModelContext(container)
+        guard let lot = try? context.fetch(FetchDescriptor<InventoryLot>(predicate: #Predicate { $0.id == lotID })).first,
+              lot.state == .active else { return }
+        let productID = lot.productID
+        let product = try? context.fetch(FetchDescriptor<CatalogProduct>(predicate: #Predicate { $0.id == productID })).first
+        try? InventoryActions(modelContainer: container).close(LotFacts(lot: lot, product: product), as: .depleted)
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [snoozePrefix + lotID.uuidString])
+    }
+
+    enum SnoozeDelay { case tomorrow, minutes(Int) }
+
+    private func snooze(_ content: UNMutableNotificationContent, id: String, after delay: SnoozeDelay) async {
+        let calendar = Calendar.current
+        let fire: Date
+        switch delay {
+        case .minutes(let minutes):
+            fire = Date().addingTimeInterval(Double(minutes) * 60)
+        case .tomorrow:
+            let minutes = UserDefaults.standard.integer(forKey: "reminderMinutes")
+            let tomorrow = calendar.date(byAdding: .day, value: 1, to: .now) ?? .now
+            fire = calendar.date(bySettingHour: minutes / 60, minute: minutes % 60, second: 0, of: tomorrow) ?? tomorrow
+        }
+        let trigger = UNCalendarNotificationTrigger(
+            dateMatching: calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: fire), repeats: false)
+        try? await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: content, trigger: trigger))
     }
 
     /// Asks once, the first time there is something worth reminding about.
@@ -105,6 +185,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
                 content.title = lot.governingDateKind == .plannedUseBy ? "\(lot.name) 该吃掉了" : "\(lot.name) 快到期了"
                 content.body = "\(lot.dateKindLabel) \(date.monthDay)，\(when)。家里还有 \(lot.quantity) \(lot.unit)。"
                 content.sound = .default
+                content.categoryIdentifier = Self.lotCategory
                 content.userInfo = ["lotID": lot.id.uuidString]
                 let trigger = UNCalendarNotificationTrigger(
                     dateMatching: calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: fire),
@@ -119,6 +200,13 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
                 }
             }
         }
+        // A "明天再提醒" for something that has since been used up or thrown away is dropped.
+        let activeSnoozes = Set(lots.map { snoozePrefix + $0.id.uuidString })
+        let staleSnoozes = pending
+            .filter { $0.content.categoryIdentifier == Self.lotCategory && $0.identifier.hasPrefix(snoozePrefix) }
+            .map(\.identifier)
+            .filter { !activeSnoozes.contains($0) }
+        center.removePendingNotificationRequests(withIdentifiers: staleSnoozes)
         let cancelled = pending.map(\.identifier).filter {
             $0.hasPrefix(identifierPrefix) && !desired.contains($0)
         }
