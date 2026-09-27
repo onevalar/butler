@@ -21,51 +21,52 @@ struct ButlerChatView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 22) {
-                            if chat.turns.isEmpty { welcome }
-                            ForEach(chat.turns) { turn in turnView(turn) }
-                            if chat.working {
-                                HStack(spacing: 10) {
-                                    ProgressView()
-                                    Text("正在想，需要时会查家里的东西…")
-                                }
-                                .font(Theme.body(14)).foregroundStyle(Theme.muted)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 14) {
+                        if chat.turns.isEmpty { welcome }
+                        ForEach(chat.turns) { turn in turnView(turn) }
+                        if chat.working {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                Text("正在想，需要时会查家里的东西…")
                             }
-                            if let pending = chat.tools?.pending, !pending.isEmpty, !chat.working {
-                                confirmCard(pending)
-                            }
-                            Color.clear.frame(height: 1).id("bottom")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                            .padding(.leading, 4)
                         }
-                        .padding(.horizontal, 20).padding(.vertical, 16)
+                        if let pending = chat.tools?.pending, !pending.isEmpty, !chat.working {
+                            confirmCard(pending)
+                        }
+                        Color.clear.frame(height: 1).id("bottom")
                     }
-                    .scrollDismissesKeyboard(.interactively)
-                    .onAppear { proxy.scrollTo("bottom", anchor: .bottom) }
-                    .onChange(of: chat.turns) { _, _ in withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } }
-                    .onChange(of: chat.working) { _, _ in withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } }
+                    .padding(.horizontal, 16).padding(.vertical, 12)
                 }
-                composer
+                .scrollDismissesKeyboard(.interactively)
+                .onAppear { proxy.scrollTo("bottom", anchor: .bottom) }
+                .onChange(of: chat.turns) { _, _ in withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } }
+                .onChange(of: chat.working) { _, _ in withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } }
+                .onChange(of: chat.tools?.pending.count) { _, _ in withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } }
             }
-            .background(Theme.ground.ignoresSafeArea())
+            .background(Color(.systemBackground))
+            .safeAreaBar(edge: .bottom) { composer }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button { close() } label: { Image(systemName: "xmark") }
                         .accessibilityLabel("关闭")
                 }
                 ToolbarItem(placement: .principal) {
-                    HStack(spacing: 8) {
-                        SealView(glyph: "管", style: .solid, size: 24)
-                        Text("小当家").font(Theme.display(17))
+                    VStack(spacing: 0) {
+                        Text("小当家").font(.headline)
+                        Text(statusLine).font(.caption2).foregroundStyle(.secondary)
                     }
+                    .accessibilityElement(children: .combine)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showingSettings = true } label: { Image(systemName: "gearshape") }
                         .accessibilityLabel("设置")
                 }
             }
-            .toolbarBackground(Theme.ground, for: .navigationBar)
+            .navigationBarTitleDisplayMode(.inline)
             .sheet(isPresented: $showingSettings) { ButlerSettingsView(chat: chat) }
             .fullScreenCover(isPresented: $showingCamera) {
                 PhotoCapture(onPhoto: { image in
@@ -85,7 +86,11 @@ struct ButlerChatView: View {
             }
             .onDisappear { dictation.cancel() }
         }
-        .tint(Theme.cobalt)
+    }
+
+    private var statusLine: String {
+        guard chat.connection.isLoggedIn else { return "未登录" }
+        return chat.jev.isConfigured ? "GPT-6 Sol · Jev 已接入" : "GPT-6 Sol"
     }
 
     private func close() {
@@ -96,15 +101,17 @@ struct ButlerChatView: View {
     // MARK: - Conversation
 
     private var welcome: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("家里的事，\n直接跟我说。")
-                .font(Theme.display(30)).foregroundStyle(Theme.ink).lineSpacing(6)
-            Text("买了什么、吃了什么、放在哪，或者问我家里还有什么、什么快过期。也可以拍一张买回来的东西或小票。")
-                .font(Theme.body(15)).foregroundStyle(Theme.inkSoft)
+        VStack(alignment: .leading, spacing: 12) {
+            Text("家里的事，直接跟我说").font(.title2.bold())
+            Text("买了什么、吃了什么、放在哪，或者问我家里还有什么、什么快过期。也可以拍一张买回来的东西或小票，或者让我到点提醒你。")
+                .font(.subheadline).foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 8) {
-                ForEach(["盒马买了两盒草莓和一箱牛奶", "鸡蛋还剩4个", "冰箱里有什么快过期了？"], id: \.self) { example in
+                ForEach(["盒马买了两盒草莓和一箱牛奶", "鸡蛋还剩 4 个", "冰箱里有什么快过期了？", "11 点提醒我热剩饭"], id: \.self) { example in
                     Button { chat.draft = example; composing = true } label: {
-                        Text("“\(example)”").font(Theme.display(15, weight: .regular)).foregroundStyle(Theme.cobalt)
+                        Text(example)
+                            .font(.subheadline)
+                            .padding(.horizontal, 14).padding(.vertical, 8)
+                            .background(Color(.secondarySystemBackground), in: Capsule())
                     }
                     .buttonStyle(.plain)
                 }
@@ -112,160 +119,195 @@ struct ButlerChatView: View {
             .padding(.top, 4)
             if !chat.connection.isLoggedIn {
                 Button { showingSettings = true } label: {
-                    Text("先登录订阅，再开始对话")
+                    Text("先登录订阅，再开始对话").frame(maxWidth: .infinity, minHeight: 44)
                 }
-                .buttonStyle(PillButtonStyle(kind: .primary, height: 50))
+                .buttonStyle(.borderedProminent)
+                .buttonBorderShape(.capsule)
                 .padding(.top, 8)
                 if let onQuickCapture {
                     Button("不登录，先用本机快速记一笔") { dictation.cancel(); onQuickCapture() }
-                        .font(Theme.body(14)).foregroundStyle(Theme.muted)
+                        .font(.subheadline)
                         .frame(maxWidth: .infinity)
                 }
             }
         }
-        .padding(.vertical, 20)
+        .padding(.vertical, 16)
     }
 
     private func turnView(_ turn: ChatTurn) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             if let names = turn.photos, !names.isEmpty, let directory = chat.photoDirectory {
                 HStack(spacing: 6) {
                     Spacer(minLength: 48)
                     ForEach(names, id: \.self) { name in
                         if let image = UIImage(contentsOfFile: directory.appendingPathComponent(name).path) {
                             Image(uiImage: image).resizable().scaledToFill()
-                                .frame(width: 96, height: 96)
-                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                .frame(width: 110, height: 110)
+                                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                         }
                     }
                 }
             }
             HStack {
-                Spacer(minLength: 48)
+                Spacer(minLength: 56)
                 Text(turn.question)
-                    .font(Theme.body(16)).foregroundStyle(Theme.ink)
-                    .padding(.horizontal, 14).padding(.vertical, 10)
-                    .background(Theme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14).padding(.vertical, 9)
+                    .background(Color.blue, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                     .textSelection(.enabled)
             }
             if !turn.answer.isEmpty {
-                Text(turn.answer)
-                    .font(Theme.body(16))
-                    .foregroundStyle(turn.failed ? Theme.vermilion : Theme.ink)
-                    .lineSpacing(4)
-                    .textSelection(.enabled)
+                HStack {
+                    Text(turn.answer)
+                        .foregroundStyle(turn.failed ? Color.red : .primary)
+                        .padding(.horizontal, 14).padding(.vertical, 9)
+                        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .textSelection(.enabled)
+                    Spacer(minLength: 40)
+                }
             }
             if !turn.receipts.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 3) {
                     ForEach(Array(turn.receipts.enumerated()), id: \.offset) { _, line in
-                        Text(line).font(Theme.body(13))
-                            .foregroundStyle(line.hasPrefix("✗") ? Theme.vermilion : Theme.muted)
+                        Text(line).font(.footnote)
+                            .foregroundStyle(line.hasPrefix("✗") ? Color.red : .secondary)
                     }
                 }
+                .padding(.leading, 6)
             }
         }
     }
 
+    private func color(for change: PendingChange) -> Color {
+        switch change.kind {
+        case .reminder, .cancelReminder: .blue
+        case .note: .gray
+        case .add: .green
+        default: .orange
+        }
+    }
+
     private func confirmCard(_ pending: [PendingChange]) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Eyebrow("确认后才会保存", color: Theme.muted)
-            ForEach(pending) { change in
-                HStack(alignment: .top, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(change.title).font(Theme.display(16, weight: .semibold)).foregroundStyle(Theme.ink)
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(pending.enumerated()), id: \.element.id) { index, change in
+                HStack(alignment: .center, spacing: 12) {
+                    KindBar(color: color(for: change), height: 36)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(change.title).font(.body)
                         if let detail = change.detail {
-                            Text(detail).font(Theme.body(13)).foregroundStyle(Theme.muted)
+                            Text(detail).font(.footnote).foregroundStyle(.secondary)
                         }
                         switch change.check {
                         case .passed:
-                            Label("Jev 已核对", systemImage: "checkmark.seal")
-                                .font(Theme.body(12)).foregroundStyle(Theme.cobalt)
+                            Label("Jev 已核对", systemImage: "checkmark.seal").font(.caption).foregroundStyle(.blue)
                         case .concern(let concern):
-                            Label("Jev 提醒：\(concern)", systemImage: "exclamationmark.triangle")
-                                .font(Theme.body(12)).foregroundStyle(Theme.vermilion)
+                            Label("Jev 提醒：\(concern)", systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.red)
                         case nil:
                             EmptyView()
                         }
                     }
                     Spacer(minLength: 0)
                     Button { chat.tools?.removePending(change.id) } label: {
-                        Image(systemName: "minus.circle").foregroundStyle(Theme.faint)
+                        Image(systemName: "minus.circle.fill").font(.title3).symbolRenderingMode(.hierarchical).foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("去掉这一条")
                 }
+                .padding(.horizontal, 14).padding(.vertical, 10)
+                if index < pending.count - 1 { RowDivider(inset: 30) }
             }
             HStack(spacing: 10) {
-                Button("取消") { chat.discard() }
-                    .buttonStyle(PillButtonStyle(kind: .quiet, height: 46))
-                    .frame(maxWidth: 110)
-                Button(pending.count == 1 ? "确认" : "全部确认（\(pending.count)）") { chat.confirm() }
-                    .buttonStyle(PillButtonStyle(kind: .primary, height: 46))
+                Button { chat.discard() } label: { Text("取消").frame(maxWidth: .infinity, minHeight: 36) }
+                    .buttonStyle(.bordered)
+                    .tint(.primary)
+                Button { chat.confirm() } label: {
+                    Text(pending.count == 1 ? "确认" : "确认 \(pending.count) 项").fontWeight(.semibold).frame(maxWidth: .infinity, minHeight: 36)
+                }
+                .buttonStyle(.borderedProminent)
             }
+            .buttonBorderShape(.capsule)
+            .padding(12)
         }
-        .padding(18)
-        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).strokeBorder(Color(.separator), lineWidth: 0.5))
+        .padding(.trailing, 32)
+        .sensoryFeedback(.success, trigger: chat.turns.last?.receipts.count ?? 0)
     }
 
-    // MARK: - Composer
+    // MARK: - Composer (floating Liquid Glass)
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let error = dictation.error ?? (chat.working ? nil : chat.error) {
-                Text(error).font(Theme.body(13)).foregroundStyle(Theme.vermilion)
+                Text(error).font(.footnote).foregroundStyle(.red)
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    .glassEffect(.regular, in: .capsule)
             }
             if !chat.photos.isEmpty { attachedPhotos }
-            HStack(alignment: .bottom, spacing: 8) {
-                circleButton("camera", label: "拍照") { showingCamera = true }
+            GlassEffectContainer(spacing: 10) {
+                HStack(alignment: .bottom, spacing: 10) {
+                    Button { showingCamera = true } label: {
+                        Image(systemName: "camera").font(.system(size: 19, weight: .medium)).frame(width: 52, height: 52)
+                    }
+                    .buttonStyle(.plain)
+                    .glassEffect(.regular.interactive(), in: .circle)
                     .disabled(chat.working || dictation.listening)
+                    .accessibilityLabel("拍照")
 
-                ZStack(alignment: .trailing) {
-                    TextField("", text: $chat.draft,
-                              prompt: Text(dictation.preparing ? "正在准备语音…" : dictation.listening ? "正在听，说完点停止" : "和管家说…")
-                                .foregroundStyle(Theme.faint),
-                              axis: .vertical)
-                        .font(Theme.body(16))
-                        .lineLimit(1...6)
-                        .focused($composing)
-                        .padding(.leading, 14).padding(.trailing, 44).padding(.vertical, 11)
-                        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-                    Button(action: toggleVoice) {
-                        Image(systemName: dictation.listening ? "stop.circle.fill" : "mic")
-                            .font(.system(size: dictation.listening ? 24 : 18, weight: .regular))
-                            .foregroundStyle(dictation.listening ? Theme.vermilion : Theme.muted)
-                            .frame(width: 40, height: 40)
+                    HStack(alignment: .bottom, spacing: 6) {
+                        TextField(placeholder, text: $chat.draft, axis: .vertical)
+                            .lineLimit(1...6)
+                            .focused($composing)
+                            .padding(.leading, 18)
+                            .padding(.vertical, 15)
+                        trailingButton
+                            .padding(.trailing, 6).padding(.bottom, 6)
                     }
-                    .buttonStyle(.plain)
-                    .disabled(chat.working || dictation.preparing)
-                    .accessibilityLabel(dictation.listening ? "停止听写" : "说话")
-                    .padding(.trailing, 2)
-                }
-
-                if chat.working {
-                    circleButton("stop.fill", label: "停止") { chat.stop() }
-                } else {
-                    Button {
-                        Task {
-                            if dictation.listening { chat.draft = await dictation.stop() }
-                            composing = false
-                            chat.send()
-                        }
-                    } label: {
-                        Image(systemName: "arrow.up").font(.system(size: 17, weight: .bold))
-                            .foregroundStyle(.white).frame(width: 44, height: 44)
-                            .background(Circle().fill(Theme.cobaltFill))
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!chat.canSend && !dictation.listening)
-                    .opacity(chat.canSend || dictation.listening ? 1 : 0.35)
-                    .accessibilityLabel("发送")
+                    .frame(minHeight: 52)
+                    .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
                 }
             }
         }
-        .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 10)
-        .background(Theme.ground)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 4)
         .onChange(of: dictation.text) { _, text in
             if dictation.listening { chat.draft = text }
+        }
+    }
+
+    private var placeholder: String {
+        dictation.preparing ? "正在准备语音…" : dictation.listening ? "正在听，说完点停止" : "和管家说…"
+    }
+
+    /// Mic when empty, send when there's something to send, stop while listening or thinking.
+    @ViewBuilder
+    private var trailingButton: some View {
+        if chat.working {
+            Button { chat.stop() } label: { Image(systemName: "stop.fill").frame(width: 40, height: 40) }
+                .buttonStyle(.glass).buttonBorderShape(.circle)
+                .accessibilityLabel("停止")
+        } else if dictation.listening {
+            Button { Task { chat.draft = await dictation.stop() } } label: {
+                Image(systemName: "stop.fill").frame(width: 40, height: 40)
+            }
+            .buttonStyle(.glassProminent).buttonBorderShape(.circle).tint(.red)
+            .accessibilityLabel("停止听写")
+        } else if chat.canSend {
+            Button {
+                composing = false
+                chat.send()
+            } label: {
+                Image(systemName: "arrow.up").font(.system(size: 17, weight: .bold)).frame(width: 40, height: 40)
+            }
+            .buttonStyle(.glassProminent).buttonBorderShape(.circle).tint(.blue)
+            .accessibilityLabel("发送")
+        } else {
+            Button { Task { await startListening() } } label: {
+                Image(systemName: "mic.fill").font(.system(size: 17, weight: .semibold)).frame(width: 40, height: 40)
+            }
+            .buttonStyle(.glassProminent).buttonBorderShape(.circle).tint(.blue)
+            .disabled(dictation.preparing)
+            .accessibilityLabel("说话")
         }
     }
 
@@ -276,7 +318,7 @@ struct ButlerChatView: View {
                     if let image = UIImage(data: data) {
                         Image(uiImage: image).resizable().scaledToFill()
                             .frame(width: 64, height: 64)
-                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                             .overlay(alignment: .topTrailing) {
                                 Button { chat.photos.remove(at: index) } label: {
                                     Image(systemName: "xmark.circle.fill")
@@ -291,29 +333,9 @@ struct ButlerChatView: View {
                     }
                 }
             }
+            .padding(6)
         }
-    }
-
-    private func circleButton(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 17, weight: .regular))
-                .foregroundStyle(Theme.ink)
-                .frame(width: 44, height: 44)
-                .background(Circle().fill(Theme.surface))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(label)
-    }
-
-    private func toggleVoice() {
-        Task {
-            if dictation.listening {
-                chat.draft = await dictation.stop()
-            } else {
-                await startListening()
-            }
-        }
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
     private func startListening() async {

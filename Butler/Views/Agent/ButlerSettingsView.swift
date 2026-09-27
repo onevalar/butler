@@ -53,7 +53,7 @@ struct ButlerSettingsView: View {
                         }
                         DatePicker("提醒时间", selection: reminderTime, displayedComponents: .hourAndMinute)
                     case .denied?:
-                        Text("通知被关掉了，到期前收不到提醒。").foregroundStyle(Theme.vermilion)
+                        Text("通知被关掉了，到期前收不到提醒。").foregroundStyle(.red)
                         Button("去系统设置打开") {
                             if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
                         }
@@ -93,12 +93,12 @@ struct ButlerSettingsView: View {
                     let upcoming = chat.tools?.reminders.upcoming ?? []
                     if upcoming.isEmpty {
                         Text("还没有。对管家说“11 点提醒我热饭”“每天晚上 9 点提醒我吃药”就能设。")
-                            .foregroundStyle(Theme.muted)
+                            .foregroundStyle(.secondary)
                     }
                     ForEach(upcoming) { reminder in
                         VStack(alignment: .leading, spacing: 3) {
                             Text(reminder.text)
-                            Text(reminder.whenLabel).font(Theme.body(13)).foregroundStyle(Theme.muted)
+                            Text(reminder.whenLabel).font(Theme.body(13)).foregroundStyle(.secondary)
                         }
                     }
                     .onDelete { offsets in
@@ -112,7 +112,7 @@ struct ButlerSettingsView: View {
 
                 Section {
                     if chat.connection.isLoggedIn {
-                        Label("已登录 · GPT-6 Sol", systemImage: "checkmark.circle.fill").foregroundStyle(Theme.cobalt)
+                        Label("已登录 · GPT-6 Sol", systemImage: "checkmark.circle.fill").foregroundStyle(.blue)
                         Button("退出登录", role: .destructive) { chat.signOut() }
                     } else if let code = chat.connection.deviceCode {
                         Text("1. 复制登录码")
@@ -130,7 +130,7 @@ struct ButlerSettingsView: View {
                         }
                         .disabled(chat.connection.signingIn)
                     }
-                    if let error = chat.connection.error { Text(error).foregroundStyle(Theme.vermilion) }
+                    if let error = chat.connection.error { Text(error).foregroundStyle(.red) }
                 } header: {
                     Text("对话模型")
                 } footer: {
@@ -139,7 +139,7 @@ struct ButlerSettingsView: View {
 
                 Section {
                     if chat.jev.isConfigured {
-                        Label("已接入 Jev · \(JevClient.model)", systemImage: "checkmark.circle.fill").foregroundStyle(Theme.cobalt)
+                        Label("已接入 Jev · \(JevClient.model)", systemImage: "checkmark.circle.fill").foregroundStyle(.blue)
                         LabeledContent("本次打开后调用", value: "\(chat.jev.callsThisSession) 次")
                         Button("移除密钥", role: .destructive) { chat.jev.removeKey() }
                     } else {
@@ -182,7 +182,7 @@ struct ButlerSettingsView: View {
                 Button("清空", role: .destructive) { chat.clearHistory() }
             }
         }
-        .tint(Theme.cobalt)
+
         .presentationDetents([.large])
     }
 
@@ -218,12 +218,12 @@ private struct MemoriesView: View {
             let records = chat.tools?.notes.records ?? []
             if records.isEmpty {
                 Text("还没有记下的习惯。在对话里告诉管家，比如“饮用水我都放卫生间”“盒马的麻薯我一般买小盒”。")
-                    .foregroundStyle(Theme.muted)
+                    .foregroundStyle(.secondary)
             }
             ForEach(records) { note in
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(note.title).font(Theme.display(16, weight: .semibold))
-                    Text(note.text).font(Theme.body(14)).foregroundStyle(Theme.inkSoft)
+                    Text(note.title).font(.body.weight(.semibold))
+                    Text(note.text).font(.subheadline).foregroundStyle(.secondary)
                 }
                 .padding(.vertical, 4)
             }

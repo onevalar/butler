@@ -81,7 +81,6 @@ struct ContentView: View {
         } message: {
             Text(chosenReminder?.whenLabel ?? "")
         }
-        .tint(Theme.ink)
         .fullScreenCover(item: $chatStart) { start in
             if let chat {
                 ButlerChatView(chat: chat, start: start, onQuickCapture: {
