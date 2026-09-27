@@ -3,9 +3,12 @@ import SwiftUI
 import UniformTypeIdentifiers
 import UserNotifications
 
-/// Everything the owner configures: who they are, the model account, Jev, memories, chat history.
+/// 管家与设置: the butler (who it is, what it knows, its diary) above everything the owner configures.
 struct ButlerSettingsView: View {
     @Bindable var chat: ButlerChat
+    /// Shown as a sheet from the conversation: add a 完成 button.
+    var showsDone = false
+    @FocusState private var editingProfile: Bool
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @State private var jevKey = ""
@@ -22,12 +25,37 @@ struct ButlerSettingsView: View {
     @Query(filter: #Predicate<InventoryLot> { $0.stateRawValue == "active" }) private var activeLots: [InventoryLot]
 
     var body: some View {
-        NavigationStack {
+        ScrollViewReader { proxy in
             Form {
+                Section {
+                    ButlerHero(chat: chat)
+                }
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets())
+
+                Section {
+                    UnderstandingCard(chat: chat) {
+                        withAnimation { proxy.scrollTo("profile", anchor: .center) }
+                        editingProfile = true
+                    }
+                }
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets())
+
+                Section {
+                    DiaryStrip(turns: chat.turns)
+                } header: {
+                    Text("管家日记").font(.title3.bold()).foregroundStyle(.primary).textCase(nil)
+                }
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets())
+
                 Section {
                     TextField("例如：我叫安，家里两个人加一只猫；周末去盒马买菜；不吃香菜。",
                               text: $chat.profile, axis: .vertical)
                         .lineLimit(3...8)
+                        .focused($editingProfile)
+                        .id("profile")
                 } header: {
                     Text("关于我和家里")
                 } footer: {
@@ -52,7 +80,7 @@ struct ButlerSettingsView: View {
                 } header: {
                     Text("管家记住的")
                 } footer: {
-                    Text("买了什么、还剩多少、放在哪，记在“家里”标签里。你的习惯和偏好（常在哪买、习惯放哪、忌口）记在“习惯和偏好”里。")
+                    Text("买了什么、还剩多少、放在哪，记在首页右上角的“家里”。你的习惯和偏好（常在哪买、习惯放哪、忌口）记在“习惯和偏好”里。")
                 }
 
                 Section {
@@ -206,8 +234,13 @@ struct ButlerSettingsView: View {
                     Link("隐私政策", destination: OnboardingView.privacyURL)
                 }
             }
-            .navigationTitle("设置").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
+            .scrollContentBackground(.hidden)
+            .background { ButlerBackground() }
+            .orbScrollTracking()
+            .navigationTitle("管家与设置").navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if showsDone { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
+            }
             .task(id: chat.connection.deviceCode?.id) { await chat.connection.awaitApproval() }
             .onChange(of: chat.connection.isLoggedIn) { _, loggedIn in
                 if loggedIn { chat.didSignIn() }
@@ -246,8 +279,6 @@ struct ButlerSettingsView: View {
                 Button("清空", role: .destructive) { chat.clearHistory() }
             }
         }
-
-        .presentationDetents([.large])
     }
 
     private func restorePending() {

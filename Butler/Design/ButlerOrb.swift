@@ -6,6 +6,8 @@ import SwiftUI
 struct ButlerOrb: View {
     var size: CGFloat = 44
     var active = false
+    /// How far the phone is tilted (-1…1 each way): the light inside and the reflection move against each other.
+    var tilt: CGSize = .zero
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -25,7 +27,7 @@ struct ButlerOrb: View {
     }
 
     private func ball(phase: Double) -> some View {
-        OrbDrawing(palette: colorScheme == .dark ? .night : .day, phase: phase, active: active)
+        OrbDrawing(palette: colorScheme == .dark ? .night : .day, phase: phase, active: active, tilt: tilt)
             .frame(width: 200, height: 200)
             .scaleEffect(size / 200 * 1.13)
             .frame(width: size, height: size)
@@ -60,6 +62,7 @@ private struct OrbDrawing: View {
     let palette: OrbPalette
     let phase: Double
     let active: Bool
+    var tilt: CGSize = .zero
 
     private let ball = Circle().path(in: CGRect(x: 14, y: 14, width: 172, height: 172))
 
@@ -84,8 +87,9 @@ private struct OrbDrawing: View {
                 Ellipse().fill(p.edge.opacity(p.edgeOpacity * 0.35))
                     .frame(width: 140, height: 80).position(x: 100, y: 62).blur(radius: 15)
 
-                // The only colour: a small bloom at the centre.
+                // The only colour: a small bloom at the centre. It sits deep inside, so it moves with the tilt.
                 glow(drift: drift)
+                    .offset(x: tilt.width * 7, y: tilt.height * 7)
 
                 // Light gathered at the bottom of the ball.
                 Caustic().fill(LinearGradient(colors: [.white.opacity(p.caustic), .white.opacity(0)], startPoint: .bottom, endPoint: .top))
@@ -94,10 +98,14 @@ private struct OrbDrawing: View {
                     .frame(width: 52, height: 14).position(x: 100, y: 162).blur(radius: 6)
 
                 // Reflection of the sky across the top, and one bright point.
-                TopReflection().fill(LinearGradient(colors: [.white.opacity(p.spec), .white.opacity(0)], startPoint: .top, endPoint: .bottom))
-                    .blur(radius: 2)
-                Ellipse().fill(.white.opacity(0.9))
-                    .frame(width: 24, height: 12).rotationEffect(.degrees(-38)).position(x: 66, y: 60).blur(radius: 0.9)
+                // The reflection is on the surface, so it slides the other way.
+                Group {
+                    TopReflection().fill(LinearGradient(colors: [.white.opacity(p.spec), .white.opacity(0)], startPoint: .top, endPoint: .bottom))
+                        .blur(radius: 2)
+                    Ellipse().fill(.white.opacity(0.9))
+                        .frame(width: 24, height: 12).rotationEffect(.degrees(-38)).position(x: 66, y: 60).blur(radius: 0.9)
+                }
+                .offset(x: -tilt.width * 6, y: -tilt.height * 4)
 
                 // Inner reflection along the lower rim, and the thickness of the glass.
                 LowerArc().stroke(.white.opacity(0.45), style: StrokeStyle(lineWidth: 1.4, lineCap: .round)).blur(radius: 0.9)

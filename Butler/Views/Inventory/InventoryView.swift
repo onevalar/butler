@@ -60,6 +60,7 @@ struct InventoryView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                if showingSearch { searchField.padding(.horizontal, 16) }
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(Self.quickAsks, id: \.self) { ask in
@@ -108,51 +109,26 @@ struct InventoryView: View {
             .padding(.bottom, 24)
         }
         .scrollDismissesKeyboard(.immediately)
+        .orbScrollTracking()
         .background { ButlerBackground() }
-        .toolbar(.hidden, for: .navigationBar)
-        .safeAreaBar(edge: .top) { header }
-        .safeAreaBar(edge: .bottom) {
-            TabInputBar(placeholder: "买了什么、用了什么…", onChat: onChat)
+        .navigationTitle("家里")
+        .navigationSubtitle(dueThisWeek > 0 ? "\(facts.count) 样在家 · 本周 \(dueThisWeek) 样到期" : "\(facts.count) 样在家")
+        .navigationBarTitleDisplayMode(.large)
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button {
+                    showingSearch.toggle()
+                    if showingSearch { searching = true } else { query = "" }
+                } label: {
+                    Image(systemName: showingSearch ? "xmark" : "magnifyingglass")
+                }
+                .accessibilityLabel(showingSearch ? "关闭搜索" : "搜索")
+                Button { onChat(.typing) } label: { Image(systemName: "plus") }
+                    .accessibilityLabel("跟管家说买了什么")
+            }
         }
         .animation(.snappy, value: scope)
         .animation(.snappy, value: showingSearch)
-    }
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center, spacing: 12) {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text("家里").font(.title.bold()).accessibilityAddTraits(.isHeader)
-                    Text(dueThisWeek > 0 ? "\(facts.count) 样在家 · 本周 \(dueThisWeek) 样到期" : "\(facts.count) 样在家")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 8)
-                GlassEffectContainer(spacing: 8) {
-                    HStack(spacing: 0) {
-                        Button {
-                            showingSearch.toggle()
-                            if showingSearch { searching = true } else { query = "" }
-                        } label: {
-                            Image(systemName: showingSearch ? "xmark" : "magnifyingglass")
-                                .font(.system(size: 18, weight: .medium)).frame(width: 44, height: 44)
-                        }
-                        .accessibilityLabel(showingSearch ? "关闭搜索" : "搜索")
-                        Button { onChat(.typing) } label: {
-                            Image(systemName: "plus").font(.system(size: 18, weight: .medium)).frame(width: 44, height: 44)
-                        }
-                        .accessibilityLabel("跟管家说买了什么")
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.horizontal, 4)
-                    .glassEffect(.regular.interactive(), in: .capsule)
-                }
-            }
-            if showingSearch { searchField }
-        }
-        .foregroundStyle(.primary)
-        .padding(.horizontal, 20)
-        .padding(.top, 2)
-        .padding(.bottom, 8)
     }
 
     private var emptyText: String {

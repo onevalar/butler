@@ -90,6 +90,7 @@ struct LotDetailView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 32)
         }
+        .orbScrollTracking()
         .navigationTitle(facts.name)
         .navigationSubtitle(subtitle(facts))
         .toolbarTitleDisplayMode(.inlineLarge)

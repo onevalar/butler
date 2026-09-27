@@ -17,11 +17,12 @@ struct ButlerChatView: View {
     @Bindable var chat: ButlerChat
     @Binding var request: ChatRequest?
     var onQuickCapture: (() -> Void)? = nil
-    let onSettings: () -> Void
+    let onClose: () -> Void
 
     @Environment(\.butlerAccent) private var accent
     @State private var dictation = LiveDictation()
     @State private var showingCamera = false
+    @State private var showingSettings = false
     @FocusState private var composing: Bool
 
     var body: some View {
@@ -68,11 +69,14 @@ struct ButlerChatView: View {
                     .accessibilityElement(children: .combine)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(action: onSettings) { Image(systemName: "gearshape") }
-                        .accessibilityLabel("设置")
+                    Button { dictation.cancel(); onClose() } label: { Image(systemName: "xmark") }
+                        .accessibilityLabel("关闭")
                 }
             }
             .navigationBarTitleDisplayMode(.inline)
+            .sheet(isPresented: $showingSettings) {
+                NavigationStack { ButlerSettingsView(chat: chat, showsDone: true) }
+            }
             .fullScreenCover(isPresented: $showingCamera) {
                 PhotoCapture(onPhoto: { image in
                     if let data = image.chatJPEG() { chat.photos.append(data) }
@@ -122,7 +126,7 @@ struct ButlerChatView: View {
             }
             .padding(.top, 4)
             if !chat.connection.isLoggedIn {
-                Button("先登录订阅，再开始对话", action: onSettings)
+                Button("先登录订阅，再开始对话") { showingSettings = true }
                     .buttonStyle(AccentButtonStyle())
                     .padding(.top, 8)
                 if let onQuickCapture {

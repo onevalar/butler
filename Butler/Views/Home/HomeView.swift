@@ -34,8 +34,8 @@ struct HomeView: View {
     let onOpenDay: (Date) -> Void
     let onOpenInventory: () -> Void
     let onOpenOverview: () -> Void
+    let onOpenButler: () -> Void
     let brief: DailyBrief
-    let onChat: (ChatStart) -> Void
 
     var body: some View {
         ScrollView {
@@ -60,25 +60,36 @@ struct HomeView: View {
             .padding(.bottom, 24)
         }
         .scrollIndicators(.hidden)
+        .orbScrollTracking()
         .background { ButlerBackground() }
         .toolbar(.hidden, for: .navigationBar)
-        // Title and the glass button share one pinned row; content scrolls under it.
+        // Date and the three entries share one pinned row; content scrolls under it.
         .safeAreaBar(edge: .top) { header }
-        .safeAreaBar(edge: .bottom) {
-            TabInputBar(placeholder: brief.isEvening ? "问问明天要准备什么…" : "问问今天该做什么…", onChat: onChat)
-        }
     }
 
     private var header: some View {
         HStack(alignment: .center, spacing: 12) {
             title
             Spacer(minLength: 8)
-            Button(action: onOpenOverview) {
-                Image(systemName: "calendar").font(.system(size: 18, weight: .medium)).frame(width: 44, height: 44)
+            GlassEffectContainer(spacing: 8) {
+                HStack(spacing: 0) {
+                    Button(action: onOpenOverview) {
+                        Image(systemName: "calendar").font(.system(size: 18, weight: .medium)).frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel("日程总览")
+                    Button(action: onOpenInventory) {
+                        Image(systemName: "house").font(.system(size: 18, weight: .medium)).frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel("家里")
+                    Button(action: onOpenButler) {
+                        ButlerOrb(size: 26).frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel("管家与设置")
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 3)
+                .glassEffect(.regular.interactive(), in: .capsule)
             }
-            .buttonStyle(.plain)
-            .glassEffect(.regular.interactive(), in: .circle)
-            .accessibilityLabel("日程总览")
         }
         .foregroundStyle(.primary)
         .padding(.horizontal, 20)
@@ -94,10 +105,10 @@ struct HomeView: View {
 
     private var title: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(Date.now.formatted(.dateTime.month().day().weekday(.wide).locale(Locale(identifier: "zh_CN"))))
+            Text(Date.now.formatted(.dateTime.weekday(.wide).locale(Locale(identifier: "zh_CN"))))
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(.secondary)
-            Text("今天")
+            Text(Date.now.monthDay)
                 .font(.title.bold())
         }
         .accessibilityElement(children: .combine)
@@ -405,51 +416,6 @@ struct WeekStrip: View {
             }
         }
         .sensoryFeedback(.selection, trigger: selected)
-    }
-}
-
-/// Floating Liquid Glass input above the tab bar: camera island + capsule field with the brand mic.
-/// Each tab passes its own hint; tapping anywhere opens the conversation.
-struct TabInputBar: View {
-    let placeholder: String
-    let onChat: (ChatStart) -> Void
-    @Environment(\.butlerAccent) private var accent
-
-    var body: some View {
-        GlassEffectContainer(spacing: 10) {
-            HStack(spacing: 10) {
-                Button { onChat(.camera) } label: {
-                    Image(systemName: "camera")
-                        .font(.system(size: 19, weight: .medium))
-                        .frame(width: 52, height: 52)
-                }
-                .buttonStyle(.plain)
-                .glassEffect(.regular.interactive(), in: .circle)
-                .accessibilityLabel("拍照告诉管家")
-
-                HStack(spacing: 0) {
-                    Button { onChat(.typing) } label: {
-                        Text(placeholder)
-                            .font(.body)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                            .padding(.leading, 18)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("和管家聊聊")
-                    GlassCircleButton(systemImage: "mic.fill", tint: accent.fill, glyph: accent.onFill) { onChat(.voice) }
-                        .padding(.trailing, 6)
-                        .accessibilityLabel("说给管家听")
-                }
-                .frame(height: 52)
-                .glassEffect(.regular.interactive(), in: .capsule)
-            }
-        }
-        .foregroundStyle(.primary)
-        .padding(.horizontal, 16)
-        .padding(.bottom, 4)
     }
 }
 

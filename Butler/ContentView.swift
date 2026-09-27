@@ -6,10 +6,10 @@ enum Route: Hashable {
     case day(Date)
     case overview
     case memories
-}
-
-enum AppTab: String, Hashable {
-    case today, chat, home, butler
+    /// 家里: everything at home.
+    case items
+    /// 管家与设置.
+    case butler
 }
 
 struct ContentView: View {
@@ -17,31 +17,26 @@ struct ContentView: View {
     @Query private var products: [CatalogProduct]
     @Environment(\.scenePhase) private var scenePhase
 
-    @State private var tab: AppTab = Self.launchTab
-    @State private var todayPath: [Route] = []
-    @State private var homePath: [Route] = []
-    @State private var butlerPath: [Route] = []
+    @State private var path: [Route] = Self.launchPath
     @State private var refreshID = UUID()
     #if DEBUG
     @State private var capturing = ProcessInfo.processInfo.environment["BUTLER_CAPTURE_TEXT"] != nil
     #else
     @State private var capturing = false
     #endif
-    /// Set by other tabs to open the conversation ready to type or listen.
+    /// Opens the conversation ready to type (tap on the orb) or with something already said.
     @State private var chatRequest: ChatRequest?
+    @State private var showingChat = Self.launchesChat
+    @State private var orbDock = OrbDock()
     @AppStorage(AccentChoice.modeKey) private var appearanceMode: AppearanceMode = .system
     @AppStorage(AccentChoice.storageKey) private var accentChoice: AccentChoice = .glass
-    @Environment(\.colorScheme) private var colorScheme
     @State private var chat: ButlerChat?
-    @State private var showingSettings = false
     /// Shared by home (to show reminders) and the chat (to set them).
     @State private var reminders = ReminderStore.openOnDevice()
     @State private var calendarFeed = CalendarFeed()
     @State private var selectedDay = Calendar.current.startOfDay(for: .now)
     @State private var chosenReminder: TimedReminder?
     @AppStorage("onboardingDone") private var onboardingDone = false
-    /// Home's camera button opens the camera straight away; the photo then goes into the chat.
-    @State private var takingPhoto = false
     @Environment(\.openURL) private var openURL
     @Environment(\.modelContext) private var modelContext
 
@@ -66,63 +61,34 @@ struct ContentView: View {
         let agenda = HomeAgenda.build(lots: facts, reminders: reminders.upcoming, events: calendarFeed.events)
         let brief = DailyBrief.compose(agenda: agenda, lotCount: facts.count, reminderCount: reminders.upcoming.count,
                                        usesCalendar: calendarFeed.enabled && calendarFeed.canRead)
-        TabView(selection: $tab) {
-            Tab("今天", systemImage: "sun.horizon", value: AppTab.today) {
-                NavigationStack(path: $todayPath) {
-                    HomeView(
-                        agenda: agenda,
-                        selectedDay: $selectedDay,
-                        onOpen: open,
-                        onOpenDay: { todayPath.append(.day($0)) },
-                        onOpenInventory: { tab = .home },
-                        onOpenOverview: { todayPath.append(.overview) },
-                        brief: brief,
-                        onChat: startChat
-                    )
-                    .navigationDestination(for: Route.self, destination: destination)
-                }
-            }
-            Tab("对话", systemImage: "bubble.left.and.text.bubble.right", value: AppTab.chat) {
-                if let chat {
-                    ButlerChatView(chat: chat, request: $chatRequest, onQuickCapture: { capturing = true },
-                                   onSettings: { showingSettings = true })
-                } else {
-                    ProgressView()
-                }
-            }
-            Tab("家里", systemImage: "house", value: AppTab.home) {
-                NavigationStack(path: $homePath) {
-                    InventoryView(facts: facts, history: history, onOpenLot: { homePath.append(.lot($0)) },
-                                  onChat: startChat, onAsk: ask)
-                        .navigationDestination(for: Route.self, destination: destination)
-                }
-            }
-            Tab(value: AppTab.butler) {
-                NavigationStack(path: $butlerPath) {
-                    if let chat {
-                        ButlerProfileView(chat: chat, onSettings: { showingSettings = true },
-                                          onMemories: { butlerPath.append(.memories) }, onChat: startChat)
-                            .navigationDestination(for: Route.self, destination: destination)
-                    }
-                }
-            } label: {
-                Label {
-                    Text("管家")
-                } icon: {
-                    Image(uiImage: OrbTabIcon.image(dark: colorScheme == .dark))
-                }
-            }
+        NavigationStack(path: $path) {
+            HomeView(
+                agenda: agenda,
+                selectedDay: $selectedDay,
+                onOpen: open,
+                onOpenDay: { path.append(.day($0)) },
+                onOpenInventory: { path.append(.items) },
+                onOpenOverview: { path.append(.overview) },
+                onOpenButler: { path.append(.butler) },
+                brief: brief
+            )
+            .navigationDestination(for: Route.self) { destination($0, facts: facts) }
         }
+        // Every page scrolls clear of the orb.
+        .contentMargins(.bottom, 96, for: .scrollContent)
+        .overlay {
+            OrbDockView(working: chat?.working ?? false, onOpenChat: { openChat(.typing) }, onSend: sendSpoken)
+        }
+        .environment(orbDock)
         .environment(calendarFeed)
-        .fullScreenCover(isPresented: $takingPhoto) {
-            PhotoCapture(onPhoto: { image in
-                if let data = image.chatJPEG() { chat?.photos.append(data) }
-                takingPhoto = false
-                // The photo waits in the conversation, ready to send.
-                tab = .chat
-                chatRequest = ChatRequest(start: .typing)
-            }, onCancel: { takingPhoto = false })
-            .ignoresSafeArea()
+        .sheet(isPresented: $showingChat) {
+            if let chat {
+                ButlerChatView(chat: chat, request: $chatRequest, onQuickCapture: {
+                    showingChat = false
+                    Task { try? await Task.sleep(for: .milliseconds(450)); capturing = true }
+                }, onClose: { showingChat = false })
+                .environment(calendarFeed)
+            }
         }
         .fullScreenCover(isPresented: Binding(get: { showsOnboarding }, set: { if !$0 { onboardingDone = true } })) {
             if let chat {
@@ -138,9 +104,6 @@ struct ContentView: View {
             }
         } message: {
             Text(chosenReminder?.whenLabel ?? "")
-        }
-        .sheet(isPresented: $showingSettings) {
-            if let chat { ButlerSettingsView(chat: chat) }
         }
         .task {
             // One conversation for the whole app, so it survives closing and reopening the chat.
@@ -187,34 +150,41 @@ struct ContentView: View {
         .onChange(of: NotificationManager.shared.pendingLotID, initial: true) { _, id in
             guard let id else { return }
             capturing = false
-            tab = .home
-            homePath = [.lot(id)]
+            showingChat = false
+            path = [.lot(id)]
             NotificationManager.shared.clearPendingRoute()
         }
         .onContinueUserActivity("com.apple.corespotlightitem") { activity in
             if let id = (activity.userInfo?["kCSSearchableItemActivityIdentifier"] as? String).flatMap(UUID.init) {
-                tab = .home
-                homePath = [.lot(id)]
+                showingChat = false
+                path = [.lot(id)]
             }
         }
         .butlerAppearance(mode: appearanceMode, accent: accentChoice)
     }
 
     @ViewBuilder
-    private func destination(_ route: Route) -> some View {
+    private func destination(_ route: Route, facts: [LotFacts]) -> some View {
         switch route {
         case .lot(let id):
             LotDetailView(lotID: id)
         case .day(let day):
             DayScheduleView(agenda: yearAgenda, day: day, onOpen: open)
         case .overview:
-            CalendarOverviewView(agenda: yearAgenda, onOpenDay: { todayPath.append(.day($0)) }, onOpen: open)
+            CalendarOverviewView(agenda: yearAgenda, onOpenDay: { path.append(.day($0)) }, onOpen: open)
                 .task {
                     calendarFeed.horizonDays = 370
                     await calendarFeed.refresh()
                 }
         case .memories:
             if let chat { MemoriesView(chat: chat) }
+        case .items:
+            InventoryView(facts: facts, history: history, onOpenLot: { path.append(.lot($0)) },
+                          onChat: openChat, onAsk: ask)
+        case .butler:
+            if let chat {
+                ButlerSettingsView(chat: chat)
+            }
         }
     }
 
@@ -223,24 +193,30 @@ struct ContentView: View {
         HomeAgenda.build(lots: facts, reminders: reminders.upcoming, events: calendarFeed.events, dayCount: 366)
     }
 
-    private func startChat(_ start: ChatStart) {
-        if start == .camera {
-            takingPhoto = true
-        } else {
-            tab = .chat
-            chatRequest = ChatRequest(start: start)
-        }
+    private func openChat(_ start: ChatStart) {
+        chatRequest = ChatRequest(start: start)
+        showingChat = true
     }
 
     /// Opens the conversation with a sentence already started, e.g. "买了".
     private func ask(_ text: String) {
         chat?.draft = text
-        startChat(.typing)
+        openChat(.typing)
+    }
+
+    /// Held the orb and spoke: send it straight away and show the conversation.
+    private func sendSpoken(_ text: String) {
+        guard let chat else { return }
+        let existing = chat.draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        chat.draft = existing.isEmpty ? text : existing + " " + text
+        if chat.canSend { chat.send() }
+        chatRequest = nil
+        showingChat = true
     }
 
     private func open(_ target: AgendaEntry.Target) {
         switch target {
-        case .lot(let id): todayPath.append(.lot(id))
+        case .lot(let id): path.append(.lot(id))
         case .reminder(let id): chosenReminder = reminders.upcoming.first { $0.id == id }
         case .calendarEvent:
             if let url = URL(string: "calshow:\(selectedDay.timeIntervalSinceReferenceDate)") { openURL(url) }
@@ -256,31 +232,26 @@ struct ContentView: View {
         return true
     }
 
-    /// Debug launches can open a specific tab (`--tab=home`); `--butler-chat` opens the conversation.
-    private static var launchTab: AppTab {
+    /// Debug launches can open a page (`--open=items`, `--open=butler`) or the conversation (`--butler-chat`).
+    private static var launchPath: [Route] {
         #if DEBUG
-        let arguments = ProcessInfo.processInfo.arguments
-        if arguments.contains("--butler-chat") { return .chat }
-        if let value = arguments.first(where: { $0.hasPrefix("--tab=") })?.dropFirst(6), let tab = AppTab(rawValue: String(value)) {
-            return tab
+        switch ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--open=") })?.dropFirst(7) {
+        case "items": return [.items]
+        case "butler": return [.butler]
+        case "overview": return [.overview]
+        default: break
         }
         #endif
-        return .today
+        return []
+    }
+
+    private static var launchesChat: Bool {
+        #if DEBUG
+        return ProcessInfo.processInfo.arguments.contains("--butler-chat")
+        #else
+        return false
+        #endif
     }
 
     private static var isTesting: Bool { ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil }
-}
-
-/// The 管家 tab shows the glass orb itself, in colour, instead of a template symbol.
-enum OrbTabIcon {
-    private static var cache: [Bool: UIImage] = [:]
-
-    static func image(dark: Bool) -> UIImage {
-        if let image = cache[dark] { return image }
-        let renderer = ImageRenderer(content: ButlerOrb(size: 28).environment(\.colorScheme, dark ? .dark : .light))
-        renderer.scale = 3
-        let image = (renderer.uiImage ?? UIImage()).withRenderingMode(.alwaysOriginal)
-        cache[dark] = image
-        return image
-    }
 }
