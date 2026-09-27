@@ -4,6 +4,8 @@ import Security
 
 enum SubscriptionError: LocalizedError {
     case signInRequired, invalidResponse, unavailable(Int), expiredCode, keychain, accountChanged
+    /// chatgpt.com could not be reached at all (no network, or a proxy/VPN that is off).
+    case unreachable
     /// The service refused the request and said why.
     case rejected(Int, String?)
     /// The model started but stopped with an error.
@@ -19,6 +21,7 @@ enum SubscriptionError: LocalizedError {
         case .expiredCode: return "登录码已过期，请重新获取。"
         case .keychain: return "无法访问系统钥匙串，请重新打开 App 后再试。"
         case .accountChanged: return "登录账号发生变化，请重新登录后再继续。"
+        case .unreachable: return "连不上模型服务（chatgpt.com）。如果你平时通过代理或 VPN 使用，请确认它开着。你说的话已放回输入框。"
         case .rejected(let code, let message):
             if code == 429 { return "订阅额度或请求频率受限，请稍后再试。" + (message.map { "（\($0)）" } ?? "") }
             return "模型服务拒绝了请求（\(code)）" + (message.map { "：\($0)" } ?? "。")

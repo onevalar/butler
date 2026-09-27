@@ -6,6 +6,8 @@ import SwiftUI
 struct ButlerOrb: View {
     var size: CGFloat = 44
     var active = false
+    /// Let the light inside wander slowly even when nothing is happening (the floating orb).
+    var drift = false
     /// How far the phone is tilted (-1…1 each way): the light inside and the reflection move against each other.
     var tilt: CGSize = .zero
 
@@ -14,9 +16,10 @@ struct ButlerOrb: View {
 
     var body: some View {
         Group {
-            if active && !reduceMotion {
-                TimelineView(.animation) { context in
-                    ball(phase: context.date.timeIntervalSinceReferenceDate)
+            if (active || drift) && !reduceMotion {
+                TimelineView(.animation(minimumInterval: active ? nil : 1.0 / 30)) { context in
+                    let t = context.date.timeIntervalSinceReferenceDate
+                    ball(phase: active ? t : t * 0.35)
                 }
             } else {
                 ball(phase: 0)
@@ -68,7 +71,7 @@ private struct OrbDrawing: View {
 
     var body: some View {
         let p = palette
-        let drift = active ? phase : 0
+        let drift = phase
         ZStack {
             // A little light escaping the glass (dark only).
             Circle().fill(.white.opacity(p.halo))

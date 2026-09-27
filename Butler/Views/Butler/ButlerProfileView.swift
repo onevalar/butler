@@ -17,10 +17,8 @@ struct ButlerHero: View {
     }
 
     var body: some View {
-        VStack(spacing: 10) {
-            ButlerOrb(size: 112, active: chat.working)
-                .shadow(color: .black.opacity(0.08), radius: 20, y: 12)
-            Text("小当家").font(.title.bold())
+        VStack(spacing: 8) {
+            Text("小当家").font(.largeTitle.bold())
             Text("从 \(since.formatted(.dateTime.year().month().day().locale(Locale(identifier: "zh_CN")))) 起陪你 · 第 \(dayCount) 天")
                 .font(.subheadline).foregroundStyle(.secondary)
         }

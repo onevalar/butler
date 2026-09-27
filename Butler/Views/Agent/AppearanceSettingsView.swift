@@ -66,7 +66,7 @@ struct AppearanceSettingsView: View {
         return ZStack {
             if choice == .glass {
                 Circle().fill(.clear).glassEffect(.regular, in: .circle)
-                ButlerOrb(size: 30)
+                Circle().strokeBorder(Color.primary.opacity(0.25), lineWidth: 1)
             } else {
                 Circle().fill(choice.accent.fill)
             }
@@ -83,7 +83,7 @@ private struct AccentPreview: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 10) {
-                ButlerOrb(size: 32)
+                Spacer(minLength: 0)
                 Text("帮我记一下，买了两盒牛奶")
                     .foregroundStyle(accent.onFill)
                     .padding(.horizontal, 12).padding(.vertical, 8)

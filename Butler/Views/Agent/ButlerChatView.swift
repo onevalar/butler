@@ -59,7 +59,17 @@ struct ButlerChatView: View {
                     .padding(.horizontal, 16).padding(.vertical, 12)
                 }
                 .scrollDismissesKeyboard(.interactively)
+                .defaultScrollAnchor(.bottom)
+                .defaultScrollAnchor(.bottom, for: .sizeChanges)
                 .onAppear { proxy.scrollTo("bottom", anchor: .bottom) }
+                .onChange(of: composing) { _, focused in
+                    guard focused else { return }
+                    // Once the keyboard is up, bring the newest message back above the input.
+                    Task {
+                        try? await Task.sleep(for: .milliseconds(350))
+                        withAnimation { proxy.scrollTo("bottom", anchor: .bottom) }
+                    }
+                }
                 .onChange(of: chat.turns) { _, _ in withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } }
                 .onChange(of: chat.working) { _, _ in withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } }
                 .onChange(of: chat.tools?.pending.count) { _, _ in withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } }
@@ -271,7 +281,8 @@ struct ButlerChatView: View {
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let error = dictation.error ?? (chat.working ? nil : chat.error) {
+            // The model's errors are already shown as the answer; only the microphone's own errors go here.
+            if let error = dictation.error {
                 Text(error).font(.footnote).foregroundStyle(.red)
                     .padding(.horizontal, 12).padding(.vertical, 6)
                     .glassEffect(.regular, in: .capsule)

@@ -85,6 +85,7 @@ final class SubscriptionModelTests: XCTestCase {
         let newAccess = try jwt(["exp": 2_000_000_000])
         var polls = 0
         var refreshed = false
+        var probed = false
         SubscriptionStubProtocol.handler = { request in
             let path = request.url!.path
             var body = request.httpBody ?? Data()
@@ -116,6 +117,11 @@ final class SubscriptionModelTests: XCTestCase {
                 return (200, try JSONSerialization.data(withJSONObject: ["access_token": newAccess, "refresh_token": "rotated-test"]))
             }
             XCTAssertEqual(request.url?.host, "chatgpt.com")
+            // Before the first model call the service is checked with a quick HEAD request.
+            if request.httpMethod == "HEAD" {
+                probed = true
+                return (200, Data())
+            }
             XCTAssertEqual(path, "/backend-api/codex/responses")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer \(newAccess)")
             XCTAssertEqual(request.value(forHTTPHeaderField: "ChatGPT-Account-ID"), "fixture-account")
@@ -131,6 +137,7 @@ final class SubscriptionModelTests: XCTestCase {
         let reply = try await model.reply(to: [.user("虚构测试")])
         XCTAssertEqual(reply.text, "测试回复")
         XCTAssertTrue(refreshed)
+        XCTAssertTrue(probed)
         let reloaded = SubscriptionConnection(network: network, keychainAccount: account)
         let persisted = try await reloaded.authorizedCredentials()
         XCTAssertEqual(persisted.refreshToken, "rotated-test")

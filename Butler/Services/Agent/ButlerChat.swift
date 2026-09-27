@@ -122,6 +122,14 @@ final class ButlerChat {
                 compactIfNeeded()
             } catch {
                 ChatDiagnostics.log("turn failed \(Int(Date.now.timeIntervalSince(started)))s \(ChatDiagnostics.describe(error))")
+                // No connection: a reminder can still be understood and set on the phone.
+                if Self.isConnectivity(error), attached.isEmpty, let local = LocalReminderParser.parse(text) {
+                    let reminder = TimedReminder(text: local.text, fireDate: local.fireDate, repeats: local.repeats)
+                    tools.proposeReminder(reminder)
+                    turns[index].answer = "暂时连不上模型服务，我先在手机上按我的理解设好：\(reminder.whenLabel)提醒你「\(reminder.text)」。请在下面确认；时间不对直接告诉我。"
+                    ChatDiagnostics.log("local reminder \(reminder.whenLabel)")
+                    return
+                }
                 let message = SubscriptionConnection.message(error)
                 turns[index].failed = true
                 turns[index].answer = message
@@ -133,6 +141,12 @@ final class ButlerChat {
     }
 
     func stop() { task?.cancel() }
+
+    static func isConnectivity(_ error: Error) -> Bool {
+        if case SubscriptionError.unreachable = error { return true }
+        if let url = error as? URLError { return SubscriptionModel.isTransient(url) }
+        return false
+    }
 
     private func run(_ message: LocalAgentMessage, tools: ButlerTools) async throws -> String {
         guard let model else { throw SubscriptionError.signInRequired }

@@ -61,6 +61,11 @@ final class ButlerTools {
 
     func clearPending() { pending = [] }
 
+    /// A reminder understood on the phone (when the model couldn't be reached), shown for confirmation like any other.
+    func proposeReminder(_ reminder: TimedReminder) {
+        add(.reminder(reminder), title: "提醒：\(reminder.text)", detail: reminder.whenLabel)
+    }
+
     func beginTurn(request: String, previous: String?, hasPhotos: Bool = false) {
         self.hasPhotos = hasPhotos
         self.request = hasPhotos ? request + "（用户附了照片）" : request

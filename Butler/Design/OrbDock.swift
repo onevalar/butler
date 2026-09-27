@@ -79,6 +79,11 @@ struct OrbDockView: View {
     @State private var moveStart = Date.distantPast
     @State private var moving = false
     @State private var landed = 0
+    /// How far a finger is pulling the ball (rubber-banded); it springs back with a wobble on release.
+    @State private var pull: CGSize = .zero
+    @State private var dragging = false
+    /// 0…1, slowly back and forth: the ball is never quite still.
+    @State private var breath: CGFloat = 0
 
     static let ballSize: CGFloat = 64
     /// Ball centre above the bottom edge of the screen.
@@ -95,7 +100,8 @@ struct OrbDockView: View {
                         let elapsed = context.date.timeIntervalSince(moveStart)
                         OrbStage(pose: reduceMotion ? OrbPose.rest(spread: dock.spread) : OrbPose.at(elapsed, spreading: dock.spread),
                                  width: width, height: Self.areaHeight,
-                                 ballScale: dock.listening ? 1.3 : (pressing ? 0.92 : 1),
+                                 ballScale: dock.listening ? 1.3 : (pressing && !dragging ? 0.92 : 1),
+                                 pull: pull, breath: breath,
                                  active: working || dock.listening, tilt: reduceMotion ? .zero : motion.tilt)
                     }
                     .allowsHitTesting(false)
@@ -151,7 +157,11 @@ struct OrbDockView: View {
             cancelling = false
             if dock.listening { finishListening(cancel: true) }
         }
-        .onAppear { if !reduceMotion { motion.start() } }
+        .onAppear {
+            guard !reduceMotion else { return }
+            motion.start()
+            withAnimation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true)) { breath = 1 }
+        }
         .onDisappear { motion.stop() }
     }
 
@@ -167,23 +177,44 @@ struct OrbDockView: View {
                     pressing = true
                     holdTask = Task {
                         try? await Task.sleep(for: .milliseconds(350))
-                        guard !Task.isCancelled, pressing else { return }
+                        guard !Task.isCancelled, pressing, !dragging else { return }
                         dock.listening = true
                         await dictation.start(after: "")
                     }
                 }
-                cancelling = dock.listening && value.translation.height < -60
+                let moved = hypot(value.translation.width, value.translation.height)
+                if dock.listening {
+                    cancelling = value.translation.height < -60
+                } else if dragging || moved > 10 {
+                    // Playing with it: the ball stretches after the finger like a drop of water.
+                    if !dragging { dragging = true; holdTask?.cancel() }
+                    withAnimation(.interactiveSpring(response: 0.18, dampingFraction: 0.8)) {
+                        pull = Self.rubberBand(value.translation)
+                    }
+                }
             }
             .onEnded { value in
                 holdTask?.cancel()
                 pressing = false
                 if dock.listening {
                     finishListening(cancel: value.translation.height < -60)
-                } else if abs(value.translation.width) < 12, abs(value.translation.height) < 12 {
+                } else if dragging {
+                    // Let go: it snaps back, overshoots and wobbles still.
+                    withAnimation(.interpolatingSpring(stiffness: 190, damping: 7)) { pull = .zero }
+                } else {
                     onOpenChat()
                 }
+                dragging = false
                 cancelling = false
             }
+    }
+
+    /// The further the finger goes, the harder it pulls back; the ball never leaves about 44 points of home.
+    static func rubberBand(_ translation: CGSize) -> CGSize {
+        let distance = hypot(translation.width, translation.height)
+        guard distance > 0 else { return .zero }
+        let eased = 44 * (1 - exp(-distance / 130))
+        return CGSize(width: translation.width / distance * eased, height: translation.height / distance * eased)
     }
 
     private func finishListening(cancel: Bool) {
@@ -327,12 +358,18 @@ private struct OrbStage: View, Animatable {
     let width: CGFloat
     let height: CGFloat
     var ballScale: CGFloat
+    var pull: CGSize
+    var breath: CGFloat
     let active: Bool
     let tilt: CGSize
 
-    var animatableData: CGFloat {
-        get { ballScale }
-        set { ballScale = newValue }
+    var animatableData: AnimatablePair<AnimatablePair<CGFloat, CGFloat>, AnimatablePair<CGFloat, CGFloat>> {
+        get { AnimatablePair(AnimatablePair(ballScale, breath), AnimatablePair(pull.width, pull.height)) }
+        set {
+            ballScale = newValue.first.first
+            breath = newValue.first.second
+            pull = CGSize(width: newValue.second.first, height: newValue.second.second)
+        }
     }
 
     var body: some View {
@@ -343,8 +380,17 @@ private struct OrbStage: View, Animatable {
                     .opacity(pose.waterOpacity)
             }
             if pose.ballOpacity > 0 {
+                // Pulled: stretched along the pull and leaning after it. Resting: a slow, slight breath.
+                let reach = hypot(pull.width, pull.height)
+                let stretch = reach / 44 * 0.34
+                let angle = Angle(radians: reach > 0 ? atan2(pull.height, pull.width) : 0)
+                let wobble = (breath - 0.5) * 0.024
                 GlassBall(size: size, active: active, tilt: tilt)
-                    .scaleEffect(x: pose.scaleX, y: pose.scaleY, anchor: .bottom)
+                    .rotationEffect(-angle)
+                    .scaleEffect(x: 1 + stretch, y: 1 - stretch * 0.38)
+                    .rotationEffect(angle)
+                    .scaleEffect(x: pose.scaleX * (1 + wobble), y: pose.scaleY * (1 - wobble), anchor: .bottom)
+                    .offset(x: pull.width * 0.55, y: pull.height * 0.55)
                     .position(x: width / 2, y: height - OrbDockView.ballLift + pose.ballY)
                     .opacity(pose.ballOpacity)
             }
@@ -364,7 +410,7 @@ private struct GlassBall: View {
             Color.clear
                 .frame(width: size * 0.97, height: size * 0.97)
                 .glassEffect(.clear, in: Circle())
-            ButlerOrb(size: size, active: active, tilt: tilt)
+            ButlerOrb(size: size, active: active, drift: true, tilt: tilt)
         }
         .background {
             if active {
@@ -441,8 +487,13 @@ struct PuddleShape: Shape {
         let start = CGPoint(x: rect.minX + inset, y: rect.maxY - side)
         let end = CGPoint(x: rect.maxX - inset, y: rect.maxY - side)
         // A quadratic curve reaches half-way to its control point, so the control sits twice as high.
-        let control = CGPoint(x: rect.midX, y: rect.maxY - (2 * peak - side))
+        let mid = CGPoint(x: rect.midX, y: rect.maxY - peak)
+        let span = (end.x - start.x) / 2
         if moving { path.move(to: start) } else { path.addLine(to: start) }
-        path.addQuadCurve(to: end, control: control)
+        // Leaves each corner nearly level for a short way, then one broad round crown.
+        path.addCurve(to: mid, control1: CGPoint(x: start.x + span * 0.2, y: start.y),
+                      control2: CGPoint(x: mid.x - span * 0.46, y: mid.y))
+        path.addCurve(to: end, control1: CGPoint(x: mid.x + span * 0.46, y: mid.y),
+                      control2: CGPoint(x: end.x - span * 0.2, y: end.y))
     }
 }

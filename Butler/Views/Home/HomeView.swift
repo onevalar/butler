@@ -78,7 +78,7 @@ struct HomeView: View {
                     }
                     .accessibilityLabel("日程总览")
                     Button(action: onOpenInventory) {
-                        Image(systemName: "house").font(.system(size: 18, weight: .medium)).frame(width: 44, height: 44)
+                        Image(systemName: "cabinet").font(.system(size: 18, weight: .medium)).frame(width: 44, height: 44)
                     }
                     .accessibilityLabel("家里")
                     Button(action: onOpenButler) {

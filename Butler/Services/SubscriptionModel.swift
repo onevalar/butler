@@ -17,13 +17,40 @@ final class SubscriptionModel: LocalAgentModel {
         self.tools = tools
     }
 
+    /// Last time the model answered; after a quiet spell the service is checked quickly before waiting on it.
+    private var lastAnswer: Date?
+
     func reply(to messages: [LocalAgentMessage]) async throws -> LocalModelReply {
+        if lastAnswer.map({ Date.now.timeIntervalSince($0) > 120 }) ?? true {
+            try await ensureReachable()
+        }
         // A dropped or stalled connection is tried once more: nothing has been done on the phone yet.
         do {
-            return try await attempt(messages)
+            let reply = try await attempt(messages)
+            lastAnswer = .now
+            return reply
         } catch let error as URLError where Self.isTransient(error) {
             ChatDiagnostics.log("model retry after \(ChatDiagnostics.describe(error))")
-            return try await attempt(messages)
+            try await ensureReachable()
+            let reply = try await attempt(messages)
+            lastAnswer = .now
+            return reply
+        }
+    }
+
+    /// Any answer at all from chatgpt.com within a few seconds means the service can be reached.
+    /// Without this, an unreachable service only shows up after a full minute of waiting.
+    private func ensureReachable() async throws {
+        var probe = URLRequest(url: URL(string: "https://chatgpt.com/")!)
+        probe.httpMethod = "HEAD"
+        probe.timeoutInterval = 8
+        let started = Date.now
+        do {
+            _ = try await network.data(for: probe)
+            ChatDiagnostics.log("reachable \(String(format: "%.1f", Date.now.timeIntervalSince(started)))s")
+        } catch let error as URLError where error.code != .cancelled {
+            ChatDiagnostics.log("unreachable \(ChatDiagnostics.describe(error))")
+            throw SubscriptionError.unreachable
         }
     }
 
@@ -44,8 +71,10 @@ final class SubscriptionModel: LocalAgentModel {
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.setValue("butler_ios", forHTTPHeaderField: "originator")
         request.httpBody = try Self.requestBody(messages, instructions: instructions(), toolJSON: tools())
+        let sent = Date.now
         let (bytes, response) = try await network.bytes(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        ChatDiagnostics.log("model status \(status) after \(String(format: "%.1f", Date.now.timeIntervalSince(sent)))s")
         if status == 401 {
             try connection.signOut()
             throw SubscriptionError.signInRequired
