@@ -9,11 +9,12 @@ extension Notification.Name {
 /// Pure reminder policy. The recorded fire date also acts as a durable receipt:
 /// an elapsed reminder is never recreated by an inventory resync.
 enum LotReminderPolicy {
+    /// `leadDays` 0 means on the day itself. `minutes` is the time of day (default 9:00).
     static func fireDate(date: Date, isMedicine: Bool, leadDays: Int, now: Date,
-                         calendar: Calendar, recordedFireDate: Date?) -> Date? {
+                         calendar: Calendar, recordedFireDate: Date?, minutes: Int = 9 * 60) -> Date? {
         if let recordedFireDate, recordedFireDate <= now { return nil }
-        guard let day = calendar.date(byAdding: .day, value: -(max(1, leadDays) + (isMedicine ? 4 : 0)), to: date),
-              let scheduled = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: day) else { return nil }
+        guard let day = calendar.date(byAdding: .day, value: -(max(0, leadDays) + (isMedicine ? 4 : 0)), to: date),
+              let scheduled = calendar.date(bySettingHour: minutes / 60, minute: minutes % 60, second: 0, of: day) else { return nil }
         // A newly added due-soon/today/overdue lot gets one catch-up, not one per sync.
         if scheduled > now { return scheduled }
         let catchup = now.addingTimeInterval(60)
@@ -49,6 +50,12 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
             Task { @MainActor in self.pendingLotID = id }
         }
         completionHandler()
+    }
+
+    /// Asks once, the first time there is something worth reminding about.
+    func requestAuthorizationIfUndecided() async {
+        let status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+        if status == .notDetermined { await requestAuthorization() }
     }
 
     @discardableResult
@@ -87,13 +94,16 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
                       let fire = LotReminderPolicy.fireDate(
                         date: date, isMedicine: lot.isMedicine, leadDays: defaults.integer(forKey: "expiryWarningDays"),
                         now: now, calendar: calendar,
-                        recordedFireDate: receipts[key].map { Date(timeIntervalSince1970: $0) }
+                        recordedFireDate: receipts[key].map { Date(timeIntervalSince1970: $0) },
+                        minutes: defaults.integer(forKey: "reminderMinutes")
                       ) else { continue }
                 let identifier = identifierPrefix + key
                 desired.insert(identifier)
                 let content = UNMutableNotificationContent()
-                content.title = lot.dateKindLabel + "提醒"
-                content.body = "\(lot.name)：\(lot.dateKindLabel) \(date.formatted(date: .numeric, time: .omitted))。请核对包装和实际状态。"
+                let days = LotFacts.days(from: fire, to: date, calendar: calendar)
+                let when = days <= 0 ? "今天" : days == 1 ? "明天" : "还有 \(days) 天"
+                content.title = lot.governingDateKind == .plannedUseBy ? "\(lot.name) 该吃掉了" : "\(lot.name) 快到期了"
+                content.body = "\(lot.dateKindLabel) \(date.monthDay)，\(when)。家里还有 \(lot.quantity) \(lot.unit)。"
                 content.sound = .default
                 content.userInfo = ["lotID": lot.id.uuidString]
                 let trigger = UNCalendarNotificationTrigger(

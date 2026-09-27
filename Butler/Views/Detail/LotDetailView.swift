@@ -8,7 +8,6 @@ struct LotDetailView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var lots: [InventoryLot]
     @Query private var products: [CatalogProduct]
-    @Query private var evidence: [FieldEvidence]
     @Query private var events: [InventoryEvent]
 
     @State private var capturingDate = false
@@ -21,12 +20,12 @@ struct LotDetailView: View {
     @State private var errorMessage: String?
     @State private var editingQuantity = false
     @State private var quantityText = ""
+    @State private var typingPlace = false
+    @State private var placeText = ""
 
     init(lotID: UUID) {
         self.lotID = lotID
         _lots = Query(filter: #Predicate<InventoryLot> { $0.id == lotID })
-        _evidence = Query(filter: #Predicate<FieldEvidence> { $0.subjectID == lotID },
-                          sort: \FieldEvidence.createdAt, order: .reverse)
         _events = Query(filter: #Predicate<InventoryEvent> { $0.subjectID == lotID },
                         sort: \InventoryEvent.occurredAt, order: .reverse)
     }
@@ -71,22 +70,20 @@ struct LotDetailView: View {
     // MARK: Content
 
     private func content(lot: InventoryLot, facts: LotFacts) -> some View {
-        ZStack(alignment: .bottom) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    identity(facts)
-                        .padding(.top, 8)
-                    countdown(facts)
-                        .padding(.top, 30)
-                    ledger(lot: lot, facts: facts)
-                        .padding(.top, 30)
-                }
-                .padding(.horizontal, 24)
-                .padding(.bottom, 150)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                identity(facts)
+                    .padding(.top, 8)
+                hero(facts)
+                    .padding(.top, 30)
+                details(lot: lot, facts: facts)
+                    .padding(.top, 34)
             }
-            .scrollIndicators(.hidden)
-            actions(facts)
+            .padding(.horizontal, 24)
+            .padding(.bottom, 24)
         }
+        .scrollIndicators(.hidden)
+        .safeAreaInset(edge: .bottom, spacing: 0) { actions(facts) }
         .fullScreenCover(isPresented: $capturingDate) { DateCaptureView(lot: facts) }
         .sheet(isPresented: $planningDate) {
             PlanDateSheet(name: facts.name, initialDate: lot.plannedUseByDate) { date in
@@ -100,11 +97,11 @@ struct LotDetailView: View {
             }
             .presentationDetents([.medium])
         }
-        .confirmationDialog("清除此日期？原记录仍保留在历史中。", isPresented: Binding(
+        .confirmationDialog("清除这个日期？原记录仍保留在变动记录里。", isPresented: Binding(
             get: { clearingDate != nil }, set: { if !$0 { clearingDate = nil } }
         ), titleVisibility: .visible) {
             if let kind = clearingDate {
-                Button("确认清除", role: .destructive) {
+                Button("清除", role: .destructive) {
                     perform { try $0.setDate(nil, kind: kind, for: facts) }
                     clearingDate = nil
                 }
@@ -129,9 +126,18 @@ struct LotDetailView: View {
             .presentationDetents([.medium])
         }
         .confirmationDialog("放在哪？", isPresented: $choosingPlace, titleVisibility: .visible) {
-            ForEach(["冷藏", "冷冻", "常温", "零食柜", "药箱"], id: \.self) { place in
+            ForEach(["冷藏", "冷冻", "常温", "零食柜", "药箱", "卫生间", "储物柜"], id: \.self) { place in
                 Button(place) { perform { try $0.move(facts, to: place) } }
             }
+            Button("其他地方…") { placeText = ""; typingPlace = true }
+        }
+        .alert("放在哪？", isPresented: $typingPlace) {
+            TextField("例如：阳台柜子", text: $placeText)
+            Button("好") {
+                let place = placeText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !place.isEmpty { perform { try $0.move(facts, to: place) } }
+            }
+            Button("取消", role: .cancel) {}
         }
         .confirmationDialog(closeTitle(facts), isPresented: .constant(pendingClose != nil), titleVisibility: .visible) {
             if let state = pendingClose {
@@ -151,9 +157,9 @@ struct LotDetailView: View {
                 Text(facts.name)
                     .font(Theme.display(24))
                     .foregroundStyle(Theme.ink)
-                Text([facts.brand, "\(facts.quantity) \(facts.unit)"].compactMap { $0 }.joined(separator: " · "))
-                    .font(Theme.body(13))
-                    .foregroundStyle(Theme.muted)
+                if let brand = facts.brand {
+                    Text(brand).font(Theme.body(13)).foregroundStyle(Theme.muted)
+                }
                 if facts.isMedicine {
                     HStack(spacing: 5) {
                         Circle().fill(Theme.vermilion).frame(width: 5, height: 5)
@@ -166,11 +172,39 @@ struct LotDetailView: View {
         }
     }
 
-    // MARK: Countdown
+    // MARK: Hero
 
     @ViewBuilder
-    private func countdown(_ facts: LotFacts) -> some View {
-        if let days = facts.daysLeft, let end = facts.governingDate {
+    private func hero(_ facts: LotFacts) -> some View {
+        if facts.quantityOnly {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .lastTextBaseline, spacing: 10) {
+                    Text("还剩")
+                        .font(Theme.display(18, weight: .regular))
+                        .foregroundStyle(Theme.inkSoft)
+                    Text("\(facts.quantity)")
+                        .font(Theme.numeral(96))
+                        .foregroundStyle(facts.isRunningLow ? Theme.vermilion : Theme.ink)
+                    Text(facts.unit)
+                        .font(Theme.display(18, weight: .regular))
+                        .foregroundStyle(Theme.inkSoft)
+                }
+                if facts.isRunningLow {
+                    Text("快没了，记得补货").font(Theme.body(14, weight: .semibold)).foregroundStyle(Theme.vermilion)
+                }
+                HStack(spacing: 10) {
+                    Button("用掉 1 \(facts.unit)") {
+                        perform { try $0.adjustQuantity(facts, to: max(facts.quantity - 1, 0)) }
+                    }
+                    .buttonStyle(PillButtonStyle(kind: .quiet, height: 44))
+                    .disabled(facts.quantity == 0)
+                    Button("又买了 1 \(facts.unit)") {
+                        perform { try $0.adjustQuantity(facts, to: facts.quantity + 1) }
+                    }
+                    .buttonStyle(PillButtonStyle(kind: .quiet, height: 44))
+                }
+            }
+        } else if let days = facts.daysLeft, let end = facts.governingDate {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .lastTextBaseline, spacing: 10) {
                     Text(days < 0 ? "已超过" : "还有")
@@ -183,11 +217,11 @@ struct LotDetailView: View {
                         .font(Theme.display(18, weight: .regular))
                         .foregroundStyle(Theme.inkSoft)
                 }
-                Text(facts.dateStatusLabel).font(Theme.body(14)).foregroundStyle(Theme.muted)
+                Text("按\(facts.dateKindLabel) \(end.monthDay) 算").font(Theme.body(14)).foregroundStyle(Theme.muted)
                 LifeBar(start: facts.startedAt, end: end, urgent: days <= 0)
             }
         } else {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 14) {
                 Text("还不知道\n它哪天到期")
                     .font(Theme.display(30))
                     .foregroundStyle(Theme.ink)
@@ -196,158 +230,132 @@ struct LotDetailView: View {
                         .font(Theme.body(15, weight: .semibold))
                         .foregroundStyle(Theme.cobalt)
                 }
-            }
-        }
-    }
-
-    // MARK: Ledger
-
-    private func ledger(lot: InventoryLot, facts: LotFacts) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Eyebrow("三个日期，各管各的")
-                .padding(.bottom, 6)
-            ledgerRow("包装有效期") {
-                if let date = lot.packageExpiryDate {
-                    Button(date.packageStyle + " · 修改") { capturingDate = true }
-                        .font(Theme.numeral(20, italic: false))
-                        .foregroundStyle(Theme.ink)
-                    Spacer()
-                    sourceBadge(for: .packageExpiryDate)
-                } else {
-                    Button("+ 拍一下") { capturingDate = true }
+                Button { setQuantityOnly(true, facts) } label: {
+                    Text("不在乎过期？改成只记数量")
                         .font(Theme.body(14))
-                        .foregroundStyle(Theme.cobalt)
-                    Spacer()
-                    Text("不会替你猜")
-                        .font(Theme.body(12))
                         .foregroundStyle(Theme.muted)
                 }
             }
-            ledgerRow("我的估算") {
-                if let date = lot.estimatedExpiryDate {
-                    Button { estimatingDate = true } label: {
-                        InferredText(text: date.monthDay + " · 修改", inferred: true, font: Theme.body(14))
-                    }
-                } else {
-                    Text(lot.packageExpiryDate == nil ? "没有估算" : "不需要，已有包装日期")
-                        .font(Theme.body(14))
-                        .foregroundStyle(Theme.faint)
-                }
-                Spacer()
-            }
-            ledgerRow("计划用完") {
-                if let date = lot.plannedUseByDate {
-                    let source = latest(.plannedUseByDate)
-                    Button { planningDate = true } label: {
-                        InferredText(text: date.monthDay + "前 · 修改",
-                                     inferred: source?.isInferred ?? false, font: Theme.body(14))
-                    }
-                    Spacer()
-                    sourceBadge(for: .plannedUseByDate)
-                } else {
-                    Button("+ 设一个") { planningDate = true }
-                        .font(Theme.body(14))
-                        .foregroundStyle(Theme.cobalt)
-                    Spacer()
-                }
-            }
-            ledgerRow("放在", divider: false) {
-                Button { choosingPlace = true } label: {
-                    InferredText(text: facts.storageLocation ?? "还没说",
-                                 inferred: latest(.storageLocation)?.isInferred ?? (facts.storageLocation == nil),
-                                 font: Theme.body(14))
-                }
-                .buttonStyle(.plain)
-                Spacer()
-                sourceBadge(for: .storageLocation)
-            }
-            Menu("清除填错的日期") {
-                if lot.packageExpiryDate != nil { Button("包装有效期") { clearingDate = .packageExpiry } }
-                if lot.estimatedExpiryDate != nil { Button("估算日期") { clearingDate = .estimatedExpiry } }
-                if lot.plannedUseByDate != nil { Button("计划日期") { clearingDate = .plannedUseBy } }
-            }
-            .font(Theme.body(13))
-            .padding(.top, 12)
         }
     }
 
-    private func ledgerRow<Content: View>(_ title: String, divider: Bool = true, @ViewBuilder content: () -> Content) -> some View {
+    // MARK: Details
+
+    private func details(lot: InventoryLot, facts: LotFacts) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Eyebrow("详情")
+                .padding(.bottom, 6)
+            detailRow("数量") {
+                Button("\(facts.quantity) \(facts.unit)") {
+                    quantityText = String(facts.quantity)
+                    editingQuantity = true
+                }
+                .foregroundStyle(Theme.ink)
+            }
+            if !facts.quantityOnly {
+                detailRow("包装上的日期") {
+                    if let date = lot.packageExpiryDate {
+                        Menu(date.packageStyle) {
+                            Button("修改") { capturingDate = true }
+                            Button("清除", role: .destructive) { clearingDate = .packageExpiry }
+                        }
+                        .foregroundStyle(Theme.ink)
+                    } else {
+                        Button("+ 添加") { capturingDate = true }.foregroundStyle(Theme.cobalt)
+                    }
+                }
+                if let date = lot.estimatedExpiryDate {
+                    detailRow("预计到期") {
+                        Menu(date.monthDay) {
+                            Button("修改") { estimatingDate = true }
+                            Button("清除", role: .destructive) { clearingDate = .estimatedExpiry }
+                        }
+                        .foregroundStyle(Theme.ink)
+                    }
+                }
+                detailRow("打算吃完") {
+                    if let date = lot.plannedUseByDate {
+                        Menu(date.monthDay + " 前") {
+                            Button("修改") { planningDate = true }
+                            Button("清除", role: .destructive) { clearingDate = .plannedUseBy }
+                        }
+                        .foregroundStyle(Theme.ink)
+                    } else {
+                        Button("+ 设一个") { planningDate = true }.foregroundStyle(Theme.cobalt)
+                    }
+                }
+            }
+            detailRow("放在") {
+                Button(facts.storageLocation ?? "+ 说一下") { choosingPlace = true }
+                    .foregroundStyle(facts.storageLocation == nil ? Theme.cobalt : Theme.ink)
+            }
+            detailRow("只记数量") {
+                Toggle("", isOn: Binding(get: { facts.quantityOnly }, set: { setQuantityOnly($0, facts) }))
+                    .labelsHidden()
+                    .tint(Theme.cobalt)
+            }
+            detailRow("变动记录", divider: false) {
+                Button("查看") { showingHistory = true }.foregroundStyle(Theme.cobalt)
+            }
+            if !facts.quantityOnly {
+                Text("打开“只记数量”后，不再问过期日期，也不发到期提醒，适合饮用水、纸巾这类东西。")
+                    .font(Theme.body(12))
+                    .foregroundStyle(Theme.faint)
+                    .padding(.top, 10)
+            }
+        }
+        .font(Theme.body(15))
+    }
+
+    private func detailRow<Content: View>(_ title: String, divider: Bool = true, @ViewBuilder content: () -> Content) -> some View {
         VStack(spacing: 0) {
-            HStack(spacing: 0) {
+            HStack(spacing: 12) {
                 Text(title)
-                    .font(Theme.body(13))
+                    .font(Theme.body(14))
                     .foregroundStyle(Theme.muted)
-                    .frame(width: 92, alignment: .leading)
+                Spacer(minLength: 12)
                 content()
             }
-            .frame(minHeight: 46)
+            .frame(minHeight: 50)
             if divider { Divider().overlay(Theme.hairline) }
         }
     }
 
-    @ViewBuilder
-    private func sourceBadge(for field: InventoryFieldKey) -> some View {
-        if let record = latest(field) {
-            HStack(spacing: 4) {
-                if record.isConfirmed {
-                    Image(systemName: "checkmark").font(.system(size: 10, weight: .bold))
-                }
-                Text(record.label)
-                    .font(Theme.body(12, weight: .medium))
-            }
-            .foregroundStyle(record.isConfirmed ? Theme.cobalt : Theme.muted)
-            .padding(.horizontal, record.isConfirmed ? 8 : 0)
-            .padding(.vertical, 3)
-            .background(RoundedRectangle(cornerRadius: 6).fill(record.isConfirmed ? Theme.surface : .clear))
+    private func setQuantityOnly(_ quantityOnly: Bool, _ facts: LotFacts) {
+        do {
+            try InventoryActions(modelContainer: modelContext.container).setQuantityOnly(quantityOnly, productID: facts.productID)
+            UISelectionFeedbackGenerator().selectionChanged()
+        } catch {
+            errorMessage = error.localizedDescription
         }
-    }
-
-    private struct SourceRecord {
-        let source: EvidenceSourceKind
-        let isConfirmed: Bool
-        var isInferred: Bool { source.isInference && !isConfirmed }
-        var label: String { isConfirmed ? "\(source.label) · 你确认过" : source.label }
-    }
-
-    private func latest(_ field: InventoryFieldKey) -> SourceRecord? {
-        guard let record = evidence.first(where: { $0.fieldKey == field.rawValue }),
-              let source = EvidenceSourceKind(rawValue: record.sourceKindRawValue) else { return nil }
-        return SourceRecord(source: source,
-                            isConfirmed: record.verificationStateRawValue == EvidenceVerificationState.userConfirmed.rawValue)
     }
 
     // MARK: Actions
 
     private func actions(_ facts: LotFacts) -> some View {
-        VStack(spacing: 14) {
-            HStack(spacing: 10) {
-                Button("丢掉") { pendingClose = .discarded }
-                    .buttonStyle(PillButtonStyle(kind: .outlineDanger))
-                    .frame(maxWidth: 120)
-                Button("已经用完了") {
-                    pendingClose = .depleted
-                }
-                .buttonStyle(PillButtonStyle(kind: .primary))
-            }
-            HStack(spacing: 22) {
-                Button("用掉一部分 / 改数量") {
-                    quantityText = String(facts.quantity)
-                    editingQuantity = true
-                }
-                Button("来龙去脉") { showingHistory = true }
-                Button("送给别人") { pendingClose = .gifted }
-            }
-            .font(Theme.body(13))
-            .foregroundStyle(Theme.muted)
+        VStack(spacing: 10) {
             undoButton(facts)
+            HStack(spacing: 10) {
+                Menu {
+                    Button("送给别人") { pendingClose = .gifted }
+                    Button("丢掉", role: .destructive) { pendingClose = .discarded }
+                } label: {
+                    Text("丢掉 / 送人")
+                        .font(Theme.body(16, weight: .semibold))
+                        .foregroundStyle(Theme.ink)
+                        .frame(maxWidth: .infinity, minHeight: 54)
+                        .background(Capsule().fill(Theme.surface))
+                }
+                .frame(maxWidth: 140)
+                Button("已经用完了") { pendingClose = .depleted }
+                    .buttonStyle(PillButtonStyle(kind: .primary))
+            }
         }
         .padding(.horizontal, 20)
-        .padding(.top, 18)
+        .padding(.top, 12)
         .padding(.bottom, 8)
-        .background(alignment: .top) {
-            LinearGradient(colors: [Theme.ground.opacity(0), Theme.ground], startPoint: .top, endPoint: .init(x: 0.5, y: 0.26))
-                .ignoresSafeArea()
-        }
+        .background(Theme.ground.ignoresSafeArea(edges: .bottom))
+        .overlay(alignment: .top) { Divider().overlay(Theme.hairline) }
     }
 
     private func closeTitle(_ facts: LotFacts) -> String {

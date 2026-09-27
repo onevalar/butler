@@ -1,4 +1,6 @@
+import SwiftData
 import SwiftUI
+import UserNotifications
 
 /// Everything the owner configures: who they are, the model account, Jev, memories, chat history.
 struct ButlerSettingsView: View {
@@ -7,6 +9,10 @@ struct ButlerSettingsView: View {
     @Environment(\.openURL) private var openURL
     @State private var jevKey = ""
     @State private var confirmClear = false
+    @State private var notificationStatus: UNAuthorizationStatus?
+    @AppStorage("expiryWarningDays") private var leadDays = 2
+    @AppStorage("reminderMinutes") private var reminderMinutes = 9 * 60
+    @Query(filter: #Predicate<InventoryLot> { $0.stateRawValue == "active" }) private var activeLots: [InventoryLot]
 
     var body: some View {
         NavigationStack {
@@ -22,13 +28,46 @@ struct ButlerSettingsView: View {
                 }
 
                 Section {
+                    LabeledContent("家里的东西", value: "\(activeLots.count) 件")
                     NavigationLink {
                         MemoriesView(chat: chat)
                     } label: {
-                        LabeledContent("管家记住的事", value: "\(chat.tools?.notes.records.count ?? 0) 条")
+                        LabeledContent("习惯和偏好", value: "\(chat.tools?.notes.records.count ?? 0) 条")
                     }
+                } header: {
+                    Text("管家记住的")
                 } footer: {
-                    Text("对话里你告诉管家的习惯和偏好，确认后保存在这里。")
+                    Text("买了什么、还剩多少、放在哪，记在“家里的东西”里，在首页冰箱图标里查看。你的习惯和偏好（常在哪买、习惯放哪、忌口）记在“习惯和偏好”里。")
+                }
+
+                Section {
+                    switch notificationStatus {
+                    case .authorized?, .provisional?, .ephemeral?:
+                        Picker("提前多久提醒", selection: $leadDays) {
+                            Text("当天").tag(0)
+                            Text("提前 1 天").tag(1)
+                            Text("提前 2 天").tag(2)
+                            Text("提前 3 天").tag(3)
+                            Text("提前 1 周").tag(7)
+                        }
+                        DatePicker("提醒时间", selection: reminderTime, displayedComponents: .hourAndMinute)
+                    case .denied?:
+                        Text("通知被关掉了，到期前收不到提醒。").foregroundStyle(Theme.vermilion)
+                        Button("去系统设置打开") {
+                            if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                        }
+                    default:
+                        Button("开启到期提醒") {
+                            Task {
+                                await NotificationManager.shared.requestAuthorization()
+                                await refreshNotificationStatus()
+                            }
+                        }
+                    }
+                } header: {
+                    Text("到期提醒")
+                } footer: {
+                    Text("有日期的东西会在到期前按这里的时间提醒一次；药品会再多提前 4 天。“只记数量”的东西不提醒到期。")
                 }
 
                 Section {
@@ -96,12 +135,33 @@ struct ButlerSettingsView: View {
                 if loggedIn { chat.didSignIn() }
             }
             .onDisappear { chat.connection.cancelLogin() }
+            .task { await refreshNotificationStatus() }
+            .onChange(of: leadDays) { _, _ in rescheduleReminders() }
+            .onChange(of: reminderMinutes) { _, _ in rescheduleReminders() }
             .confirmationDialog("清空全部对话记录？", isPresented: $confirmClear, titleVisibility: .visible) {
                 Button("清空", role: .destructive) { chat.clearHistory() }
             }
         }
         .tint(Theme.cobalt)
         .presentationDetents([.large])
+    }
+
+    private var reminderTime: Binding<Date> {
+        Binding(get: {
+            Calendar.current.date(bySettingHour: reminderMinutes / 60, minute: reminderMinutes % 60, second: 0, of: .now) ?? .now
+        }, set: { date in
+            let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
+            reminderMinutes = (parts.hour ?? 9) * 60 + (parts.minute ?? 0)
+        })
+    }
+
+    private func refreshNotificationStatus() async {
+        notificationStatus = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+    }
+
+    /// The home screen rebuilds reminders when it hears this.
+    private func rescheduleReminders() {
+        NotificationCenter.default.post(name: .butlerNotificationAuthorizationChanged, object: nil)
     }
 
     private static var version: String {
@@ -117,7 +177,7 @@ private struct MemoriesView: View {
         List {
             let records = chat.tools?.notes.records ?? []
             if records.isEmpty {
-                Text("还没有记住的事。在对话里告诉管家你的习惯，比如“盒马的麻薯我一般买小盒，放冰箱上层”。")
+                Text("还没有记下的习惯。在对话里告诉管家，比如“饮用水我都放卫生间”“盒马的麻薯我一般买小盒”。")
                     .foregroundStyle(Theme.muted)
             }
             ForEach(records) { note in
@@ -131,6 +191,6 @@ private struct MemoriesView: View {
                 for index in offsets { try? chat.tools?.notes.delete(records[index].id) }
             }
         }
-        .navigationTitle("管家记住的事").navigationBarTitleDisplayMode(.inline)
+        .navigationTitle("习惯和偏好").navigationBarTitleDisplayMode(.inline)
     }
 }

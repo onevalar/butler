@@ -10,6 +10,7 @@ struct PendingChange: Identifiable {
         case close(LotFacts, InventoryLotState)
         case setDate(LotFacts, LotDateKind, Date?)
         case move(LotFacts, String)
+        case tracking(LotFacts, quantityOnly: Bool)
         case note(LocalMemory)
     }
 
@@ -74,11 +75,12 @@ final class ButlerTools {
 
     static let inventoryTools = #"""
     {"type":"function","name":"search_inventory","description":"查询家里现有物品（真实库存）。query为空字符串时返回全部；按名称、品牌或存放位置的关键词匹配。include_finished=true 时额外返回最近30天已用完/丢掉/送人的记录。返回每件的 lot_id、数量、单位、位置、三种日期和剩余天数。","strict":true,"parameters":{"type":"object","properties":{"query":{"type":"string"},"include_finished":{"type":"boolean"}},"required":["query","include_finished"],"additionalProperties":false}},
-    {"type":"function","name":"propose_add_items","description":"提出新增购买的物品，等用户确认后才入库。每件一条。package_expiry 只能填用户明确说出或包装上的日期(YYYY-MM-DD)，否则 null；planned_use_by 是用户想在哪天前吃完/用完的计划，没说就 null。storage 如 冷藏/冷冻/常温/零食柜/药箱，没说就 null。","strict":true,"parameters":{"type":"object","properties":{"items":{"type":"array","minItems":1,"maxItems":20,"items":{"type":"object","properties":{"name":{"type":"string"},"quantity":{"type":"integer","minimum":1,"maximum":999},"unit":{"type":"string"},"storage":{"type":["string","null"]},"package_expiry":{"type":["string","null"]},"planned_use_by":{"type":["string","null"]}},"required":["name","quantity","unit","storage","package_expiry","planned_use_by"],"additionalProperties":false}}},"required":["items"],"additionalProperties":false}},
+    {"type":"function","name":"propose_add_items","description":"提出新增购买的物品，等用户确认后才入库。每件一条。package_expiry 只能填用户明确说出或包装上的日期(YYYY-MM-DD)，否则 null；planned_use_by 是用户想在哪天前吃完/用完的计划，没说就 null。storage 是用户说的存放位置（冷藏/冷冻/常温/卫生间/储物柜等），没说就 null。track：quantity 表示只记数量、不管过期（饮用水、纸巾、洗护清洁用品等用户不在乎过期的东西），expiry 表示要跟踪到期（食物、药等）。","strict":true,"parameters":{"type":"object","properties":{"items":{"type":"array","minItems":1,"maxItems":20,"items":{"type":"object","properties":{"name":{"type":"string"},"quantity":{"type":"integer","minimum":1,"maximum":999},"unit":{"type":"string"},"storage":{"type":["string","null"]},"package_expiry":{"type":["string","null"]},"planned_use_by":{"type":["string","null"]},"track":{"type":"string","enum":["expiry","quantity"]}},"required":["name","quantity","unit","storage","package_expiry","planned_use_by","track"],"additionalProperties":false}}},"required":["items"],"additionalProperties":false}},
     {"type":"function","name":"propose_set_quantity","description":"把某件物品的剩余数量设置为指定值（不是扣减）。设为0等于用完。lot_id 必须来自 search_inventory。","strict":true,"parameters":{"type":"object","properties":{"lot_id":{"type":"string"},"quantity":{"type":"integer","minimum":0,"maximum":999}},"required":["lot_id","quantity"],"additionalProperties":false}},
     {"type":"function","name":"propose_close","description":"把某件物品标记为处理掉：used_up 用完/吃完，discarded 丢掉，gifted 送人。","strict":true,"parameters":{"type":"object","properties":{"lot_id":{"type":"string"},"reason":{"type":"string","enum":["used_up","discarded","gifted"]}},"required":["lot_id","reason"],"additionalProperties":false}},
     {"type":"function","name":"propose_set_date","description":"设置或清除某件物品的日期。kind=package_expiry 包装有效期（只能用用户明确给出的日期），kind=planned_use_by 计划吃完/用完的日期。date 为 YYYY-MM-DD，null 表示清除。","strict":true,"parameters":{"type":"object","properties":{"lot_id":{"type":"string"},"kind":{"type":"string","enum":["package_expiry","planned_use_by"]},"date":{"type":["string","null"]}},"required":["lot_id","kind","date"],"additionalProperties":false}},
     {"type":"function","name":"propose_move","description":"更改某件物品的存放位置。","strict":true,"parameters":{"type":"object","properties":{"lot_id":{"type":"string"},"location":{"type":"string"}},"required":["lot_id","location"],"additionalProperties":false}},
+    {"type":"function","name":"propose_set_tracking","description":"切换某样东西的记录方式：quantity 只记数量、不再追问和提醒过期；expiry 恢复跟踪到期日期。对同一种东西的所有批次生效。","strict":true,"parameters":{"type":"object","properties":{"lot_id":{"type":"string"},"track":{"type":"string","enum":["expiry","quantity"]}},"required":["lot_id","track"],"additionalProperties":false}},
     {"type":"function","name":"search_notes","description":"查询用户告诉过你的习惯、偏好和其他需要记住的事（例如常去哪家店买、放在哪里、家里的布局）。query 为空返回全部。","strict":true,"parameters":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}},
     {"type":"function","name":"propose_note","description":"新增或更正一条需要长期记住的事（习惯、偏好、布局、提醒自己的话）。id=null 新建；更正时传原 id，保留没被纠正的内容。库存物品本身不要写成笔记。","strict":true,"parameters":{"type":"object","properties":{"id":{"type":["string","null"]},"title":{"type":"string"},"text":{"type":"string"}},"required":["id","title","text"],"additionalProperties":false}}
     """#
@@ -103,13 +105,17 @@ final class ButlerTools {
                 struct Item: Decodable {
                     var name: String; var quantity: Int; var unit: String
                     var storage: String?; var package_expiry: String?; var planned_use_by: String?
+                    var track: String?
                 }
                 struct Args: Decodable { var items: [Item] }
                 let args = try JSONDecoder().decode(Args.self, from: data)
                 let items = try args.items.map { item in
-                    try newItem(name: item.name, quantity: item.quantity, unit: item.unit, storage: item.storage,
-                                packageExpiry: try Self.date(item.package_expiry),
-                                plannedUseBy: try Self.date(item.planned_use_by))
+                    var new = try newItem(name: item.name, quantity: item.quantity, unit: item.unit, storage: item.storage,
+                                          packageExpiry: try Self.date(item.package_expiry),
+                                          plannedUseBy: try Self.date(item.planned_use_by))
+                    new.quantityOnly = item.track == "quantity"
+                    if new.quantityOnly { new.packageExpiry = nil; new.plannedUseBy = nil }
+                    return new
                 }
                 let review = await reviewAdd(items)
                 if let rejected = gate("add|" + call.arguments, review) { return rejected }
@@ -179,6 +185,15 @@ final class ButlerTools {
                 if let rejected = gate("move|\(lot.id)|\(location)", review) { return rejected }
                 add(.move(lot, location), title: "\(lot.name) 放到 \(location)",
                     detail: lot.storageLocation.map { "原来在 \($0)" }, check: review.check)
+            case "propose_set_tracking":
+                struct Args: Decodable { var lot_id: String; var track: String }
+                let args = try JSONDecoder().decode(Args.self, from: data)
+                let lot = try activeLot(args.lot_id)
+                let quantityOnly = args.track == "quantity"
+                guard quantityOnly != lot.quantityOnly else { throw ToolError("已经是这种记录方式了") }
+                add(.tracking(lot, quantityOnly: quantityOnly),
+                    title: quantityOnly ? "\(lot.name) 只记数量" : "\(lot.name) 开始跟踪到期",
+                    detail: quantityOnly ? "不再问过期日期，也不发到期提醒" : "之后会问日期并按日期提醒")
             case "search_notes":
                 struct Args: Decodable { var query: String }
                 let query = try JSONDecoder().decode(Args.self, from: data).query
@@ -246,6 +261,7 @@ final class ButlerTools {
                 case .close(let lot, let state): try actions.close(try fresh(lot), as: state)
                 case .setDate(let lot, let kind, let date): try actions.setDate(date, kind: kind, for: try fresh(lot))
                 case .move(let lot, let location): try actions.move(try fresh(lot), to: location)
+                case .tracking(let lot, let quantityOnly): try actions.setQuantityOnly(quantityOnly, productID: lot.productID)
                 case .note(let memory): try notes.upsert(memory)
                 }
                 results.append("✓ \(change.title)")
@@ -288,6 +304,7 @@ final class ButlerTools {
     private func proposeAdd(_ item: InventoryActions.NewItem, check: JevCheck?) {
         var parts: [String] = []
         if let storage = item.storage { parts.append(storage) }
+        if item.quantityOnly { parts.append("只记数量") }
         if let date = item.packageExpiry { parts.append("包装有效期 \(date.monthDay)") }
         if let date = item.plannedUseBy { parts.append("\(date.monthDay)前吃完") }
         if item.existingProductID != nil { parts.append("家里已有同款") }
@@ -504,6 +521,7 @@ final class ButlerTools {
         if let kind = lot.governingDateKind { item["governing_date_kind"] = kind.rawValue }
         if let date = lot.governingDate { item["governing_date"] = date.isoDay }
         if lot.isMedicine { item["is_medicine"] = true }
+        item["track"] = lot.quantityOnly ? "quantity" : "expiry"
         item["bought"] = lot.startedAt.isoDay
         return item
     }

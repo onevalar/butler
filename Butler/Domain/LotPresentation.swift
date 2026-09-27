@@ -38,8 +38,14 @@ struct LotFacts: Identifiable, Sendable {
     let revision: Int
     let state: InventoryLotState
 
+    /// Things like drinking water or tissues: only how many are left matters, dates are ignored.
+    let quantityOnly: Bool
+    static let quantityOnlyCategory = "household"
+
     /// No date of any kind: Butler must ask instead of guessing.
-    var needsDate: Bool { governingDate == nil }
+    var needsDate: Bool { governingDate == nil && !quantityOnly }
+    /// A quantity-only item that is about to run out.
+    var isRunningLow: Bool { quantityOnly && quantity <= 1 }
     /// The user said "冰箱" without saying which compartment.
     var needsCompartment: Bool { storageLocation == StorageLocation.ambiguousFridge }
 
@@ -50,6 +56,7 @@ struct LotFacts: Identifiable, Sendable {
         self.name = name
         brand = product?.brand
         isMedicine = LotGlyph.isMedicine(name: name, category: product?.categoryRawValue)
+        quantityOnly = product?.categoryRawValue == LotFacts.quantityOnlyCategory
         glyph = LotGlyph.glyph(for: name, isMedicine: isMedicine)
         quantity = lot.quantity
         unit = lot.unit
@@ -59,7 +66,7 @@ struct LotFacts: Identifiable, Sendable {
         state = lot.state
         packageDaysLeft = lot.packageExpiryDate.map { LotFacts.days(from: now, to: $0, calendar: calendar) }
 
-        let dated: [(LotDateKind, Date)] = [
+        let dated: [(LotDateKind, Date)] = quantityOnly ? [] : [
             lot.packageExpiryDate.map { (.packageExpiry, $0) },
             lot.estimatedExpiryDate.map { (.estimatedExpiry, $0) },
             lot.plannedUseByDate.map { (.plannedUseBy, $0) },
@@ -116,6 +123,7 @@ struct LotFacts: Identifiable, Sendable {
     }
 
     var dateStatusLabel: String {
+        if quantityOnly { return isRunningLow ? "只剩 \(quantity) \(unit)" : "剩 \(quantity) \(unit)" }
         guard let daysLeft else { return "待补日期" }
         if daysLeft < 0 {
             switch governingDateKind {
@@ -130,6 +138,7 @@ struct LotFacts: Identifiable, Sendable {
 
     /// Short human phrase for the time left, e.g. "今天", "2 天", "4 个月".
     var timeLeftLabel: String {
+        if quantityOnly { return dateStatusLabel }
         guard let daysLeft else { return "待补日期" }
         switch daysLeft {
         case ..<0: return dateStatusLabel
@@ -155,6 +164,7 @@ enum LotGlyph {
         ("咖啡", "咖"), ("茶", "茶"), ("果汁", "汁"), ("啤酒", "酒"),
         ("苹果", "果"), ("香蕉", "蕉"), ("水果", "果"), ("蔬菜", "菜"), ("青菜", "菜"),
         ("虾", "虾"), ("鱼", "鱼"), ("牛肉", "肉"), ("猪肉", "肉"), ("鸡肉", "肉"), ("肉", "肉"),
+        ("纯净水", "水"), ("饮用水", "水"), ("矿泉水", "水"), ("苏打水", "水"), ("水", "水"),
         ("纸巾", "纸"), ("卫生纸", "纸"), ("抽纸", "纸"), ("洗衣", "洗"), ("洗发", "洗"),
         ("牙膏", "牙"), ("创可贴", "贴"), ("感冒", "感"),
     ]

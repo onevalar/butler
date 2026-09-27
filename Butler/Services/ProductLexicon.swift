@@ -30,7 +30,7 @@ enum ProductKind: Equatable, Sendable {
     case freezable
     /// Shelf-stable: a plan date is suggested so it doesn't sit forever.
     case pantry(PlanHorizon)
-    /// Consumables without a meaningful expiry.
+    /// Consumables without a meaningful expiry: only the quantity is tracked.
     case household
     /// Strict mode: nothing is guessed, dates must come from the package.
     case medicine
@@ -47,7 +47,6 @@ enum ProductKind: Equatable, Sendable {
     var suggestedPlan: PlanHorizon? {
         switch self {
         case .pantry(let horizon), .produce(let horizon): horizon
-        case .household: .months(12)
         default: nil
         }
     }
@@ -110,10 +109,11 @@ enum ProductLexicon {
         + pantry(.months(6), [
             ("挂面", "包"), ("面条", "包"), ("大米", "袋"), ("米", "袋"), ("面粉", "袋"),
             ("食用油", "桶"), ("油", "瓶"), ("酱油", "瓶"), ("醋", "瓶"), ("蚝油", "瓶"), ("调料", "份"),
-            ("咖啡", "包"), ("茶叶", "包"), ("矿泉水", "瓶"),
+            ("咖啡", "包"), ("茶叶", "包"),
         ])
         + pantry(.months(12), [("罐头", "罐"), ("盐", "包"), ("糖", "包")])
         + household([
+            ("矿泉水", "瓶"), ("纯净水", "瓶"), ("饮用水", "瓶"), ("苏打水", "瓶"), ("桶装水", "桶"), ("瓶装水", "瓶"),
             ("纸巾", "包"), ("抽纸", "包"), ("卫生纸", "卷"), ("湿巾", "包"), ("洗衣液", "瓶"), ("洗衣粉", "袋"),
             ("洗洁精", "瓶"), ("洗发水", "瓶"), ("沐浴露", "瓶"), ("牙膏", "支"), ("牙刷", "支"),
             ("垃圾袋", "卷"), ("保鲜膜", "卷"), ("电池", "节"), ("肥皂", "块"), ("香皂", "块"),

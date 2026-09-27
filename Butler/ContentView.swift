@@ -75,6 +75,10 @@ struct ContentView: View {
         .task {
             // One conversation for the whole app, so it survives closing and reopening the chat.
             if chat == nil { chat = ButlerChat(container: modelContext.container) }
+            // Items with dates already exist but reminders were never allowed: ask once.
+            if !Self.isTesting, facts.contains(where: { $0.governingDate != nil }) {
+                await NotificationManager.shared.requestAuthorizationIfUndecided()
+            }
         }
         .fullScreenCover(isPresented: $capturing) {
             CaptureView()
@@ -102,4 +106,6 @@ struct ContentView: View {
             }
         }
     }
+
+    private static var isTesting: Bool { ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil }
 }

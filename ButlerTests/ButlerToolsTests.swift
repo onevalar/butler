@@ -91,6 +91,27 @@ final class ButlerToolsTests: XCTestCase {
         XCTAssertFalse(tools.toolJSON.contains("judge_with_jev"))
     }
 
+    func testWaterIsQuantityOnlyAndCanBeSwitched() async throws {
+        let (tools, container) = try makeTools()
+        _ = await call(tools, "propose_add_items", #"""
+        {"items":[{"name":"七鲜饮用纯净水","quantity":6,"unit":"瓶","storage":"卫生间","package_expiry":null,"planned_use_by":null,"track":"quantity"},
+                  {"name":"红枣酸奶","quantity":2,"unit":"瓶","storage":null,"package_expiry":"2026-09-30","planned_use_by":null,"track":"expiry"}]}
+        """#)
+        XCTAssertEqual(tools.confirmAll().filter { $0.hasPrefix("✓") }.count, 2)
+        let found = await call(tools, "search_inventory", #"{"query":"水","include_finished":false}"#)
+        let water = try XCTUnwrap((found["items"] as? [[String: Any]])?.first { ($0["name"] as? String)?.contains("水") == true })
+        XCTAssertEqual(water["track"] as? String, "quantity")
+        XCTAssertEqual(water["time_left"] as? String, "剩 6 瓶")
+
+        let yoghurt = try XCTUnwrap(try ModelContext(container).fetch(FetchDescriptor<CatalogProduct>()).first { $0.canonicalName == "红枣酸奶" })
+        let lot = try XCTUnwrap(try ModelContext(container).fetch(FetchDescriptor<InventoryLot>()).first { $0.productID == yoghurt.id })
+        _ = await call(tools, "propose_set_tracking", #"{"lot_id":"\#(lot.id.uuidString)","track":"quantity"}"#)
+        XCTAssertEqual(tools.confirmAll().first?.hasPrefix("✓"), true)
+        let facts = LotFacts(lot: lot, product: try ModelContext(container).fetch(FetchDescriptor<CatalogProduct>()).first { $0.id == yoghurt.id })
+        XCTAssertTrue(facts.quantityOnly)
+        XCTAssertNil(facts.governingDate)
+    }
+
     // MARK: - Jev as the layer between the model and the data
 
     func testWithoutJevNothingIsCheckedAndEverythingStillWorks() async throws {

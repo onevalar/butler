@@ -222,11 +222,20 @@ final class ChineseInventoryParserTests: XCTestCase {
         XCTAssertNil(item.packageInDays)
     }
 
-    func testHouseholdGoodsGetALongPlanSoHomeDoesNotAskForADate() throws {
-        let item = try XCTUnwrap(try hear("三包纸巾").first)
-        XCTAssertEqual(item.category, "household")
-        XCTAssertNotNil(item.plannedInDays)
-        XCTAssertTrue(item.plannedGuessed)
+    func testHouseholdGoodsOnlyCountQuantityAndGetNoInventedDate() throws {
+        for text in ["三包纸巾", "买了一箱矿泉水"] {
+            let item = try XCTUnwrap(try hear(text).first)
+            XCTAssertEqual(item.category, "household", text)
+            XCTAssertNil(item.plannedInDays, text)
+        }
+        let product = CatalogProduct(canonicalName: "纸巾", categoryRawValue: "household")
+        let lot = InventoryLot(productID: product.id, quantity: 1, unit: "包")
+        lot.plannedUseByDate = .now
+        let facts = LotFacts(lot: lot, product: product)
+        XCTAssertFalse(facts.needsDate)
+        XCTAssertNil(facts.governingDate, "quantity-only items never drive date reminders")
+        XCTAssertTrue(facts.isRunningLow)
+        XCTAssertEqual(facts.dateStatusLabel, "只剩 1 包")
     }
 
     func testPackagedFreshFoodIsNeverGivenAGuessedDate() throws {

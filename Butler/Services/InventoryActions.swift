@@ -18,9 +18,24 @@ enum InventoryActionError: LocalizedError {
 @MainActor
 struct InventoryActions {
     let repository: InventoryRepository
+    private let container: ModelContainer
 
     init(modelContainer: ModelContainer) {
         repository = InventoryRepository(modelContainer: modelContainer)
+        container = modelContainer
+    }
+
+    /// Switches a product between "track dates" and "only count how many are left" (water, tissues).
+    /// A product preference, not an inventory fact, so it doesn't go through the lot ledger.
+    func setQuantityOnly(_ quantityOnly: Bool, productID: UUID) throws {
+        let context = ModelContext(container)
+        guard let product = try context.fetch(FetchDescriptor<CatalogProduct>(
+            predicate: #Predicate { $0.id == productID })).first else { return }
+        let medicine = product.categoryRawValue == "medicine"
+        product.categoryRawValue = quantityOnly ? LotFacts.quantityOnlyCategory : (medicine ? "medicine" : nil)
+        product.revision += 1
+        product.updatedAt = .now
+        try context.save()
     }
 
     func close(_ lot: LotFacts, as state: InventoryLotState) throws {
@@ -80,6 +95,8 @@ struct InventoryActions {
         var plannedUseBy: Date?
         /// Link to this existing product instead of creating a new one.
         var existingProductID: UUID?
+        /// Only count how many are left; no expiry questions or reminders.
+        var quantityOnly = false
     }
 
     /// Adds several purchases in one transaction (all or nothing).
@@ -88,15 +105,17 @@ struct InventoryActions {
         var operations: [PlannedInventoryOperation] = []
         for item in items {
             let kind = ProductLexicon.lookup(item.name)?.kind ?? .unknown
+            let quantityOnly = item.quantityOnly || kind == .household
+            let category = quantityOnly ? LotFacts.quantityOnlyCategory : kind.categoryRawValue
             let productID = item.existingProductID ?? UUID()
             if item.existingProductID == nil {
                 var evidence = [ProposedFieldEvidence(fieldKey: .canonicalName, source: .modelInference, confidence: 0.9, rawText: sourceText)]
-                if kind.categoryRawValue != nil {
+                if category != nil {
                     evidence.append(.init(fieldKey: .category, source: .modelInference, confidence: 0.8, rawText: item.name))
                 }
                 operations.append(.init(operationID: UUID(), operation: .createProduct(.init(
                     productID: productID, canonicalName: item.name, brand: nil,
-                    categoryRawValue: kind.categoryRawValue, defaultUnit: nil, evidence: evidence))))
+                    categoryRawValue: category, defaultUnit: nil, evidence: evidence))))
             }
             var evidence: [ProposedFieldEvidence] = [
                 .init(fieldKey: .quantity, source: .modelInference, confidence: 0.9, rawText: sourceText),
@@ -112,7 +131,7 @@ struct InventoryActions {
             var planned = item.plannedUseBy
             if planned != nil {
                 evidence.append(.init(fieldKey: .plannedUseByDate, source: .modelInference, confidence: 0.8, rawText: sourceText))
-            } else if item.packageExpiry == nil, let horizon = kind.suggestedPlan,
+            } else if item.packageExpiry == nil, !quantityOnly, let horizon = kind.suggestedPlan,
                       let date = horizon.date(from: .now, calendar: .current) {
                 planned = date
                 evidence.append(.init(fieldKey: .plannedUseByDate, source: .systemEstimate, confidence: 0.7,

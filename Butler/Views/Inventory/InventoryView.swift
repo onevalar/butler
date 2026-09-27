@@ -29,7 +29,8 @@ struct InventoryView: View {
                 ("今天以前", { $0.tier <= .today }),
                 ("这周", { $0.tier == .soon || $0.tier == .week }),
                 ("以后", { $0.tier == .calm }),
-                ("还没日期", { $0.tier == .undated }),
+                ("还没日期", { $0.tier == .undated && !$0.quantityOnly }),
+                ("只记数量", { $0.quantityOnly }),
             ]
             return buckets.compactMap { title, test in
                 let hit = lots.filter(test).sorted(by: Self.urgencyOrder)
@@ -145,7 +146,7 @@ struct InventoryView: View {
                                     .foregroundStyle(Theme.inkSoft)
                                 Text(showingHistory ? lot.stateLabel : lot.dateStatusLabel)
                                     .font(Theme.body(11, weight: lot.tier <= .soon ? .semibold : .regular))
-                                    .foregroundStyle(labelColor(lot.tier))
+                                    .foregroundStyle(lot.isRunningLow ? Theme.vermilion : labelColor(lot.tier))
                             }
                             .lineLimit(2)
                         }

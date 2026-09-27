@@ -9,6 +9,7 @@ struct ButlerApp: App {
         UserDefaults.standard.register(defaults: [
             "notificationsEnabled": true,
             "expiryWarningDays": 2,
+            "reminderMinutes": 9 * 60,
         ])
         FontRegistry.registerBundledFonts()
         if !Self.isRunningTests { NotificationManager.shared.installDelegate() }
