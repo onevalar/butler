@@ -12,6 +12,8 @@ struct PendingChange: Identifiable {
         case move(LotFacts, String)
         case tracking(LotFacts, quantityOnly: Bool)
         case note(LocalMemory)
+        case reminder(TimedReminder)
+        case cancelReminder(TimedReminder)
     }
 
     let id = UUID()
@@ -34,6 +36,7 @@ enum JevCheck: Equatable {
 final class ButlerTools {
     let container: ModelContainer
     let notes: LocalMemoryStore
+    let reminders: ReminderStore
     let jev: any ConditionJudge
     private(set) var pending: [PendingChange] = []
     /// What the owner said this turn (and just before), given to Jev as the request.
@@ -45,9 +48,10 @@ final class ButlerTools {
     /// model kept it; it then goes to the card with Jev's concern shown.
     private var raisedConcerns: Set<String> = []
 
-    init(container: ModelContainer, notes: LocalMemoryStore, jev: any ConditionJudge) {
+    init(container: ModelContainer, notes: LocalMemoryStore, reminders: ReminderStore, jev: any ConditionJudge) {
         self.container = container
         self.notes = notes
+        self.reminders = reminders
         self.jev = jev
     }
 
@@ -81,6 +85,9 @@ final class ButlerTools {
     {"type":"function","name":"propose_set_date","description":"设置或清除某件物品的日期。kind=package_expiry 包装有效期（只能用用户明确给出的日期），kind=planned_use_by 计划吃完/用完的日期。date 为 YYYY-MM-DD，null 表示清除。","strict":true,"parameters":{"type":"object","properties":{"lot_id":{"type":"string"},"kind":{"type":"string","enum":["package_expiry","planned_use_by"]},"date":{"type":["string","null"]}},"required":["lot_id","kind","date"],"additionalProperties":false}},
     {"type":"function","name":"propose_move","description":"更改某件物品的存放位置。","strict":true,"parameters":{"type":"object","properties":{"lot_id":{"type":"string"},"location":{"type":"string"}},"required":["lot_id","location"],"additionalProperties":false}},
     {"type":"function","name":"propose_set_tracking","description":"切换某样东西的记录方式：quantity 只记数量、不再追问和提醒过期；expiry 恢复跟踪到期日期。对同一种东西的所有批次生效。","strict":true,"parameters":{"type":"object","properties":{"lot_id":{"type":"string"},"track":{"type":"string","enum":["expiry","quantity"]}},"required":["lot_id","track"],"additionalProperties":false}},
+    {"type":"function","name":"propose_reminder","description":"设一个定时提醒：到点时手机弹出通知。用于“11点提醒我热饭”“每天晚上9点提醒我吃药”“周六早上提醒我买菜”。time 为本地时间 YYYY-MM-DD HH:mm；repeat：none 只提醒一次，daily 每天这个时间，weekly 每周这一天这个时间。text 是通知里显示的话，简短具体。","strict":true,"parameters":{"type":"object","properties":{"text":{"type":"string"},"time":{"type":"string"},"repeat":{"type":"string","enum":["none","daily","weekly"]}},"required":["text","time","repeat"],"additionalProperties":false}},
+    {"type":"function","name":"list_reminders","description":"查看已经设好、还没到点（或重复）的定时提醒。","strict":true,"parameters":{"type":"object","properties":{},"additionalProperties":false}},
+    {"type":"function","name":"propose_cancel_reminder","description":"取消一个定时提醒，id 来自 list_reminders。","strict":true,"parameters":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":false}},
     {"type":"function","name":"search_notes","description":"查询用户告诉过你的习惯、偏好和其他需要记住的事（例如常去哪家店买、放在哪里、家里的布局）。query 为空返回全部。","strict":true,"parameters":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}},
     {"type":"function","name":"propose_note","description":"新增或更正一条需要长期记住的事（习惯、偏好、布局、提醒自己的话）。id=null 新建；更正时传原 id，保留没被纠正的内容。库存物品本身不要写成笔记。","strict":true,"parameters":{"type":"object","properties":{"id":{"type":["string","null"]},"title":{"type":"string"},"text":{"type":"string"}},"required":["id","title","text"],"additionalProperties":false}}
     """#
@@ -194,6 +201,29 @@ final class ButlerTools {
                 add(.tracking(lot, quantityOnly: quantityOnly),
                     title: quantityOnly ? "\(lot.name) 只记数量" : "\(lot.name) 开始跟踪到期",
                     detail: quantityOnly ? "不再问过期日期，也不发到期提醒" : "之后会问日期并按日期提醒")
+            case "propose_reminder":
+                struct Args: Decodable { var text: String; var time: String; var `repeat`: String }
+                let args = try JSONDecoder().decode(Args.self, from: data)
+                let text = args.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty, text.count <= 200 else { throw ToolError("提醒内容不能为空") }
+                guard let date = Self.dateTime(args.time) else { throw ToolError("时间格式需要是 YYYY-MM-DD HH:mm") }
+                let repeats = TimedReminder.Repeat(rawValue: args.`repeat`) ?? .none
+                guard repeats != .none || date > Date.now.addingTimeInterval(30) else {
+                    throw ToolError("这个时间已经过了（现在是 \(Self.nowLabel)），请和用户确认时间")
+                }
+                let reminder = TimedReminder(text: text, fireDate: date, repeats: repeats)
+                add(.reminder(reminder), title: "提醒：\(text)", detail: reminder.whenLabel)
+            case "list_reminders":
+                return try encode(["now": Self.nowLabel, "reminders": reminders.upcoming.map {
+                    ["id": $0.id.uuidString, "text": $0.text, "when": $0.whenLabel] as [String: Any]
+                }] as [String: Any])
+            case "propose_cancel_reminder":
+                struct Args: Decodable { var id: String }
+                let raw = try JSONDecoder().decode(Args.self, from: data).id
+                guard let reminder = reminders.upcoming.first(where: { $0.id.uuidString == raw }) else {
+                    throw ToolError("找不到这个提醒，请先 list_reminders")
+                }
+                add(.cancelReminder(reminder), title: "取消提醒：\(reminder.text)", detail: reminder.whenLabel)
             case "search_notes":
                 struct Args: Decodable { var query: String }
                 let query = try JSONDecoder().decode(Args.self, from: data).query
@@ -263,6 +293,8 @@ final class ButlerTools {
                 case .move(let lot, let location): try actions.move(try fresh(lot), to: location)
                 case .tracking(let lot, let quantityOnly): try actions.setQuantityOnly(quantityOnly, productID: lot.productID)
                 case .note(let memory): try notes.upsert(memory)
+                case .reminder(let reminder): try reminders.add(reminder)
+                case .cancelReminder(let reminder): try reminders.remove(reminder.id)
                 }
                 results.append("✓ \(change.title)")
             } catch {
@@ -524,6 +556,20 @@ final class ButlerTools {
         item["track"] = lot.quantityOnly ? "quantity" : "expiry"
         item["bought"] = lot.startedAt.isoDay
         return item
+    }
+
+    static var nowLabel: String {
+        Date.now.isoDay + " " + Date.now.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
+    }
+
+    /// "2026-09-27 11:00" (also accepts a "T" separator) in the phone's time zone.
+    static func dateTime(_ raw: String) -> Date? {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return formatter.date(from: raw.replacingOccurrences(of: "T", with: " ").prefix(16).description)
     }
 
     private static func date(_ raw: String?) throws -> Date? {

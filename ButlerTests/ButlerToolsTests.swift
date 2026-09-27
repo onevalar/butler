@@ -9,7 +9,9 @@ final class ButlerToolsTests: XCTestCase {
         let configuration = ModelConfiguration(schema: ButlerStore.schema, isStoredInMemoryOnly: true)
         let container = try ModelContainer(for: ButlerStore.schema, configurations: [configuration])
         let notesFile = FileManager.default.temporaryDirectory.appendingPathComponent("notes-\(UUID()).json")
-        let tools = ButlerTools(container: container, notes: try LocalMemoryStore(file: notesFile), jev: jev ?? NoJudge())
+        let remindersFile = FileManager.default.temporaryDirectory.appendingPathComponent("reminders-\(UUID()).json")
+        let tools = ButlerTools(container: container, notes: try LocalMemoryStore(file: notesFile),
+                                reminders: ReminderStore(file: remindersFile, schedules: false), jev: jev ?? NoJudge())
         return (tools, container)
     }
 
@@ -110,6 +112,30 @@ final class ButlerToolsTests: XCTestCase {
         let facts = LotFacts(lot: lot, product: try ModelContext(container).fetch(FetchDescriptor<CatalogProduct>()).first { $0.id == yoghurt.id })
         XCTAssertTrue(facts.quantityOnly)
         XCTAssertNil(facts.governingDate)
+    }
+
+    func testTimedRemindersAreSetListedAndCancelledAfterConfirmation() async throws {
+        let (tools, _) = try makeTools()
+        let later = Date.now.addingTimeInterval(3600)
+        let time = ButlerTools.nowLabel.prefix(10) + " " + later.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
+        let proposal = await call(tools, "propose_reminder", #"{"text":"热一下剩饭","time":"\#(time)","repeat":"none"}"#)
+        if Calendar.current.isDateInToday(later) {
+            XCTAssertEqual(proposal["status"] as? String, "waiting_for_user_confirmation")
+            XCTAssertTrue(tools.reminders.upcoming.isEmpty, "nothing is set before confirmation")
+            _ = tools.confirmAll()
+            XCTAssertEqual(tools.reminders.upcoming.first?.text, "热一下剩饭")
+        }
+        let past = await call(tools, "propose_reminder", #"{"text":"晚了","time":"2020-01-01 11:00","repeat":"none"}"#)
+        XCTAssertNotNil(past["error"])
+
+        _ = await call(tools, "propose_reminder", #"{"text":"吃药","time":"2020-01-01 21:00","repeat":"daily"}"#)
+        _ = tools.confirmAll()
+        let listed = await call(tools, "list_reminders", "{}")
+        let daily = try XCTUnwrap((listed["reminders"] as? [[String: Any]])?.first { $0["text"] as? String == "吃药" })
+        XCTAssertEqual(daily["when"] as? String, "每天 21:00")
+        _ = await call(tools, "propose_cancel_reminder", #"{"id":"\#(daily["id"] as? String ?? "")"}"#)
+        _ = tools.confirmAll()
+        XCTAssertFalse(tools.reminders.upcoming.contains { $0.text == "吃药" })
     }
 
     // MARK: - Jev as the layer between the model and the data

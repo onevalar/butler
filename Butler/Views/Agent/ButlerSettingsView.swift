@@ -71,6 +71,27 @@ struct ButlerSettingsView: View {
                 }
 
                 Section {
+                    let upcoming = chat.tools?.reminders.upcoming ?? []
+                    if upcoming.isEmpty {
+                        Text("还没有。对管家说“11 点提醒我热饭”“每天晚上 9 点提醒我吃药”就能设。")
+                            .foregroundStyle(Theme.muted)
+                    }
+                    ForEach(upcoming) { reminder in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(reminder.text)
+                            Text(reminder.whenLabel).font(Theme.body(13)).foregroundStyle(Theme.muted)
+                        }
+                    }
+                    .onDelete { offsets in
+                        for index in offsets { try? chat.tools?.reminders.remove(upcoming[index].id) }
+                    }
+                } header: {
+                    Text("定时提醒")
+                } footer: {
+                    Text("左滑可以删除。")
+                }
+
+                Section {
                     if chat.connection.isLoggedIn {
                         Label("已登录 · GPT-6 Sol", systemImage: "checkmark.circle.fill").foregroundStyle(Theme.cobalt)
                         Button("退出登录", role: .destructive) { chat.signOut() }
