@@ -181,7 +181,12 @@ struct ButlerSettingsView: View {
 
                 Section {
                     if chat.jev.isConfigured {
-                        Label("已接入 Jev · \(JevClient.model)", systemImage: "checkmark.circle.fill").foregroundStyle(.blue)
+                        Toggle("启用 Jev 核对", isOn: Binding(
+                            get: { chat.jev.isEnabled }, set: { chat.jev.isEnabled = $0 }
+                        ))
+                        Label(chat.jev.isEnabled ? "已启用 · \(JevClient.model)" : "已关闭 · 密钥已保留",
+                              systemImage: chat.jev.isEnabled ? "checkmark.circle.fill" : "pause.circle")
+                            .foregroundStyle(chat.jev.isEnabled ? Color.blue : Color.secondary)
                         LabeledContent("本次打开后调用", value: "\(chat.jev.callsThisSession) 次")
                         Button("移除密钥", role: .destructive) { chat.jev.removeKey() }
                     } else {
@@ -196,7 +201,7 @@ struct ButlerSettingsView: View {
                 } header: {
                     Text("Jev 条件判断")
                 } footer: {
-                    Text("接入后，管家每次查家里的东西、每次提出修改，都会先请 Jev 核对：说的是哪一件、数字是剩余还是用掉、是新买还是纠正、日期是不是你说的。不填也能完整使用，只是少这一道核对。密钥保存在系统钥匙串。")
+                    Text("启用后，管家查询物品和提出修改时会请 Jev 核对。关闭后不再发起新的 Jev 请求，已发出的请求仍可能完成；管家可继续使用。密钥保存在系统钥匙串，重新开启无需填写。")
                 }
 
                 Section {

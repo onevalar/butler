@@ -8,7 +8,13 @@ import Security
 @MainActor
 protocol ConditionJudge: AnyObject {
     var isConfigured: Bool { get }
+    var isEnabled: Bool { get }
     func judge(request: String, questions: [JevClient.Question]) async throws -> [String: Double]
+}
+
+extension ConditionJudge {
+    var isEnabled: Bool { true }
+    var isAvailable: Bool { isConfigured && isEnabled }
 }
 
 @MainActor @Observable
@@ -17,12 +23,21 @@ final class JevClient: ConditionJudge {
     static let model = "jev-1.13.0"
 
     private let network: URLSession
+    private let defaults: UserDefaults
+    private let keychainAccount: String
+    var isEnabled: Bool {
+        didSet { defaults.set(isEnabled, forKey: "jevEnabled") }
+    }
     private(set) var isConfigured = false
     /// Calls made since launch, shown in settings so spending is visible.
     private(set) var callsThisSession = 0
 
-    init(network: URLSession = .shared) {
+    init(network: URLSession = .shared, defaults: UserDefaults = .standard, keychainAccount: String = "api-key") {
         self.network = network
+        self.defaults = defaults
+        self.keychainAccount = keychainAccount
+        // Existing installations keep their behavior until the owner explicitly switches Jev off.
+        isEnabled = defaults.object(forKey: "jevEnabled") as? Bool ?? true
         isConfigured = readKey() != nil
     }
 
@@ -39,10 +54,11 @@ final class JevClient: ConditionJudge {
     }
 
     enum JevError: LocalizedError {
-        case notConfigured, http(Int), invalidResponse, timeout
+        case disabled, notConfigured, http(Int), invalidResponse, timeout
 
         var errorDescription: String? {
             switch self {
+            case .disabled: "Jev 已关闭，密钥仍保留"
             case .notConfigured: "还没有填写 Jev 密钥"
             case .http(let code): "Jev 服务返回 \(code)"
             case .invalidResponse: "Jev 返回的格式无法识别"
@@ -70,6 +86,9 @@ final class JevClient: ConditionJudge {
 
     /// Several independent questions in one request. Returns probability by question id.
     func judge(request: String, questions: [Question]) async throws -> [String: Double] {
+        // Applies to every entry point, including tool calls from an already-running conversation.
+        // Requests already sent may finish; switching off prevents subsequent requests.
+        guard isEnabled else { throw JevError.disabled }
         guard let key = readKey() else { throw JevError.notConfigured }
         guard !questions.isEmpty else { return [:] }
         let payload = Dictionary(questions.map { item in
@@ -129,7 +148,7 @@ final class JevClient: ConditionJudge {
 
     private var query: [String: Any] {
         [kSecClass as String: kSecClassGenericPassword,
-         kSecAttrService as String: "butler.jev", kSecAttrAccount as String: "api-key"]
+         kSecAttrService as String: "butler.jev", kSecAttrAccount as String: keychainAccount]
     }
 
     private func readKey() -> String? {

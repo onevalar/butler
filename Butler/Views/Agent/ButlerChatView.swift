@@ -146,7 +146,8 @@ struct ButlerChatView: View {
 
     private var statusLine: String {
         guard chat.connection.isLoggedIn else { return "未登录" }
-        return chat.jev.isConfigured ? "GPT-6 Sol · Jev 已接入" : "GPT-6 Sol"
+        if chat.jev.isAvailable { return "GPT-6 Sol · Jev 已启用" }
+        return chat.jev.isConfigured ? "GPT-6 Sol · Jev 已关闭" : "GPT-6 Sol"
     }
 
     // MARK: - Conversation

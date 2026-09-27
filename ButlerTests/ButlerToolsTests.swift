@@ -93,6 +93,27 @@ final class ButlerToolsTests: XCTestCase {
         XCTAssertFalse(tools.toolJSON.contains("judge_with_jev"))
     }
 
+    func testSwitchOffDuringConversationSkipsAutomaticAndExplicitJudgments() async throws {
+        let judge = FakeJudge()
+        let (tools, container) = try makeTools(jev: judge)
+        let milks = try seedTwoMilks(container)
+        tools.beginTurn(request: "冷藏牛奶还剩一瓶", previous: nil)
+        XCTAssertTrue(tools.toolJSON.contains("judge_with_jev"))
+        judge.isEnabled = false
+        XCTAssertFalse(tools.toolJSON.contains("judge_with_jev"))
+        let search = await call(tools, "search_inventory", #"{"query":"牛奶","include_finished":false}"#)
+        XCTAssertEqual((search["items"] as? [[String: Any]])?.count, 2)
+        let proposal = await call(tools, "propose_set_quantity", #"{"lot_id":"\#(milks.fridge.id.uuidString)","quantity":1}"#)
+        XCTAssertEqual(proposal["status"] as? String, "waiting_for_user_confirmation")
+        let explicit = await call(tools, "judge_with_jev", #"{"request":"牛奶","question":"是牛奶吗","candidates":[{"id":"q","text":"牛奶"}]}"#)
+        XCTAssertNotNil(explicit["error"])
+        XCTAssertTrue(judge.requests.isEmpty)
+        judge.isEnabled = true
+        XCTAssertTrue(tools.toolJSON.contains("judge_with_jev"))
+        _ = await call(tools, "search_inventory", #"{"query":"牛奶","include_finished":false}"#)
+        XCTAssertFalse(judge.requests.isEmpty)
+    }
+
     func testWaterIsQuantityOnlyAndCanBeSwitched() async throws {
         let (tools, container) = try makeTools()
         _ = await call(tools, "propose_add_items", #"""
@@ -314,6 +335,7 @@ private final class NoJudge: ConditionJudge {
 @MainActor
 private final class FakeJudge: ConditionJudge {
     var isConfigured: Bool { true }
+    var isEnabled = true
     var fails = false
     var answer: (String, JevClient.Question) -> Double = { _, _ in 0.9 }
     private(set) var requests: [String] = []

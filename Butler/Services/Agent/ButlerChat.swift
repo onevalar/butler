@@ -267,7 +267,7 @@ final class ButlerChat {
         let jev = self.jev
         model = SubscriptionModel(connection: connection,
                                   instructions: { [weak self] in
-                                      ButlerChat.instructions(jev: jev.isConfigured, profile: self?.profile ?? "")
+                                      ButlerChat.instructions(jev: jev.isAvailable, profile: self?.profile ?? "")
                                   },
                                   tools: { tools?.toolJSON ?? "[]" })
     }

@@ -81,7 +81,7 @@ final class ButlerTools {
     var toolJSON: String {
         var tools = Self.inventoryTools
         if conversation != nil { tools += "," + Self.conversationTools }
-        if jev.isConfigured { tools += "," + Self.jevTool }
+        if jev.isAvailable { tools += "," + Self.jevTool }
         return "[" + tools + "]"
     }
 
@@ -275,6 +275,7 @@ final class ButlerTools {
                                          quantity: existing?.quantity, revision: (existing?.revision ?? 0) + 1)
                 add(.note(memory), title: (existing == nil ? "记住：" : "更正：") + args.title, detail: args.text)
             case "judge_with_jev":
+                guard jev.isAvailable else { throw ToolError("Jev 未启用或未配置，请继续处理，不要调用 Jev") }
                 struct Args: Decodable { var request: String; var question: String; var candidates: [JevClient.Candidate] }
                 let args = try JSONDecoder().decode(Args.self, from: data)
                 let answers = try await jev.judge(request: args.request, questions: args.candidates.map {
@@ -396,9 +397,9 @@ final class ButlerTools {
         return "上一句：\(previous)\n这一句：\(request)"
     }
 
-    /// nil when there is no Jev key or Jev failed; callers then proceed exactly as without Jev.
+    /// nil when Jev is off, unconfigured or failed; callers proceed exactly as without Jev.
     private func ask(_ questions: [JevClient.Question]) async -> [String: Double]? {
-        guard jev.isConfigured, !request.isEmpty, !questions.isEmpty else { return nil }
+        guard jev.isAvailable, !request.isEmpty, !questions.isEmpty else { return nil }
         do {
             let answers = try await jev.judge(request: jevRequest, questions: questions)
             jevFailure = nil
