@@ -385,11 +385,9 @@ private struct OrbStage: View, Animatable {
                 let stretch = reach / 44 * 0.34
                 let angle = Angle(radians: reach > 0 ? atan2(pull.height, pull.width) : 0)
                 let wobble = (breath - 0.5) * 0.024
-                GlassBall(size: size, active: active, tilt: tilt)
-                    .rotationEffect(-angle)
-                    .scaleEffect(x: 1 + stretch, y: 1 - stretch * 0.38)
-                    .rotationEffect(angle)
-                    .scaleEffect(x: pose.scaleX * (1 + wobble), y: pose.scaleY * (1 - wobble), anchor: .bottom)
+                let shape = BallDeformation(scaleX: pose.scaleX * (1 + wobble), scaleY: pose.scaleY * (1 - wobble),
+                                            stretch: stretch, angle: angle)
+                GlassBall(size: size, deformation: shape, active: active, tilt: tilt)
                     .offset(x: pull.width * 0.55, y: pull.height * 0.55)
                     .position(x: width / 2, y: height - OrbDockView.ballLift + pose.ballY)
                     .opacity(pose.ballOpacity)
@@ -399,20 +397,57 @@ private struct OrbStage: View, Animatable {
     }
 }
 
+/// How the ball is bent at this moment: squashed against the floor (about its bottom point) and
+/// stretched along a finger's pull (about its centre).
+struct BallDeformation: Equatable {
+    var scaleX: CGFloat = 1
+    var scaleY: CGFloat = 1
+    var stretch: CGFloat = 0
+    var angle: Angle = .zero
+
+    /// The same bend as a transform, for shapes drawn around `center` with the given radius.
+    func transform(center c: CGPoint, radius: CGFloat) -> CGAffineTransform {
+        let theta = CGFloat(angle.radians)
+        let pulled = CGAffineTransform(translationX: -c.x, y: -c.y)
+            .concatenating(CGAffineTransform(rotationAngle: -theta))
+            .concatenating(CGAffineTransform(scaleX: 1 + stretch, y: 1 - stretch * 0.38))
+            .concatenating(CGAffineTransform(rotationAngle: theta))
+            .concatenating(CGAffineTransform(translationX: c.x, y: c.y))
+        let bottom = CGPoint(x: c.x, y: c.y + radius)
+        let squashed = CGAffineTransform(translationX: -bottom.x, y: -bottom.y)
+            .concatenating(CGAffineTransform(scaleX: scaleX, y: scaleY))
+            .concatenating(CGAffineTransform(translationX: bottom.x, y: bottom.y))
+        return pulled.concatenating(squashed)
+    }
+}
+
+/// The glass outline of the ball, already bent. Liquid Glass follows a shape it is given,
+/// but not transforms applied to it afterwards, so the bend lives in the shape.
+private struct BentCircle: Shape {
+    let radius: CGFloat
+    let deformation: BallDeformation
+
+    func path(in rect: CGRect) -> Path {
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let circle = Path(ellipseIn: CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2))
+        return circle.applying(deformation.transform(center: center, radius: radius))
+    }
+}
+
 /// The ball: real Liquid Glass underneath bends whatever scrolls behind it; the drawn orb adds the light.
+/// Both are bent the same way, so they always stay one ball.
 private struct GlassBall: View {
     let size: CGFloat
+    var deformation = BallDeformation()
     let active: Bool
     let tilt: CGSize
 
     var body: some View {
+        // Room around the ball for it to stretch into.
+        let room = size * 1.9
+        let radius = size * 0.485
+        let bottomAnchor = UnitPoint(x: 0.5, y: 0.5 + radius / room)
         ZStack {
-            Color.clear
-                .frame(width: size * 0.97, height: size * 0.97)
-                .glassEffect(.clear, in: Circle())
-            ButlerOrb(size: size, active: active, drift: true, tilt: tilt)
-        }
-        .background {
             if active {
                 Circle()
                     .fill(RadialGradient(colors: [Color(red: 1, green: 0.6, blue: 0.8).opacity(0.35),
@@ -420,8 +455,18 @@ private struct GlassBall: View {
                                          center: .center, startRadius: 0, endRadius: size))
                     .frame(width: size * 2, height: size * 2)
             }
+            Color.clear
+                .frame(width: room, height: room)
+                .glassEffect(.clear, in: BentCircle(radius: radius, deformation: deformation))
+            ButlerOrb(size: size, active: active, drift: true, tilt: tilt)
+                .rotationEffect(-deformation.angle)
+                .scaleEffect(x: 1 + deformation.stretch, y: 1 - deformation.stretch * 0.38)
+                .rotationEffect(deformation.angle)
+                .frame(width: room, height: room)
+                .scaleEffect(x: deformation.scaleX, y: deformation.scaleY, anchor: bottomAnchor)
+                .shadow(color: .black.opacity(0.14), radius: 12, y: 8)
         }
-        .shadow(color: .black.opacity(0.14), radius: 12, y: 8)
+        .frame(width: room, height: room)
     }
 }
 
