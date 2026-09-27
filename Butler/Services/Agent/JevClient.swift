@@ -29,7 +29,7 @@ final class JevClient: ConditionJudge {
         didSet { defaults.set(isEnabled, forKey: "jevEnabled") }
     }
     private(set) var isConfigured = false
-    /// Calls made since launch, shown in settings so spending is visible.
+    /// Transport attempts by this client instance, including failures; not a billing total.
     private(set) var callsThisSession = 0
 
     init(network: URLSession = .shared, defaults: UserDefaults = .standard, keychainAccount: String = "api-key") {
@@ -104,7 +104,7 @@ final class JevClient: ConditionJudge {
         urlRequest.httpBody = try JSONSerialization.data(withJSONObject: [
             "model": Self.model, "state": ["request": request], "questions": payload,
         ])
-        callsThisSession += 1 // Billable even when it fails; never retried automatically.
+        callsThisSession += 1 // Counts attempts, not confirmed server receipt; no automatic retries.
         let data: Data
         let response: URLResponse
         do {

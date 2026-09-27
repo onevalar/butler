@@ -187,7 +187,7 @@ struct ButlerSettingsView: View {
                         Label(chat.jev.isEnabled ? "已启用 · \(JevClient.model)" : "已关闭 · 密钥已保留",
                               systemImage: chat.jev.isEnabled ? "checkmark.circle.fill" : "pause.circle")
                             .foregroundStyle(chat.jev.isEnabled ? Color.blue : Color.secondary)
-                        LabeledContent("本次打开后调用", value: "\(chat.jev.callsThisSession) 次")
+                        LabeledContent("Jev 请求尝试次数", value: "\(chat.jev.callsThisSession) 次")
                         Button("移除密钥", role: .destructive) { chat.jev.removeKey() }
                     } else {
                         SecureField("粘贴 Jev API 密钥", text: $jevKey)
@@ -201,7 +201,7 @@ struct ButlerSettingsView: View {
                 } header: {
                     Text("Jev 条件判断")
                 } footer: {
-                    Text("启用后，管家查询物品和提出修改时会请 Jev 核对。关闭后不再发起新的 Jev 请求，已发出的请求仍可能完成；管家可继续使用。密钥保存在系统钥匙串，重新开启无需填写。")
+                    Text("启用后，管家查询物品和提出修改时会请 Jev 核对。关闭后不再发起新的 Jev 请求，已发出的请求仍可能完成；管家可继续使用。密钥保存在系统钥匙串，重新开启无需填写。\n请求数从这次管家载入时开始统计，重新载入会归零；失败也计入，不代表实际扣费。开关不会清零。")
                 }
 
                 Section {

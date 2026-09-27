@@ -4,6 +4,54 @@ import XCTest
 
 @MainActor
 final class JevClientTests: XCTestCase {
+    func testNonzeroCountSurvivesTogglesAndIncludesFailedAttempts() async throws {
+        let suite = "jev-count-test-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [JevStubProtocol.self]
+        let network = URLSession(configuration: config)
+        let client = JevClient(network: network, defaults: defaults, keychainAccount: suite)
+        defer {
+            client.removeKey()
+            defaults.removePersistentDomain(forName: suite)
+            network.invalidateAndCancel()
+            JevStubProtocol.handler = nil
+        }
+        try client.saveKey("fictional-count-test")
+        let questions = [JevClient.Question(id: "q", question: "是牛奶吗", candidate: "牛奶")]
+        var requests = 0
+        JevStubProtocol.handler = { _ in
+            requests += 1
+            if requests == 2 { throw URLError(.notConnectedToInternet) }
+            return Data(#"{"answers":{"q":{"noul":0.73}}}"#.utf8)
+        }
+        _ = try await client.judge(request: "牛奶", questions: questions)
+        do {
+            _ = try await client.judge(request: "牛奶", questions: questions)
+            XCTFail("the second attempt should fail")
+        } catch let error as URLError {
+            XCTAssertEqual(error.code, .notConnectedToInternet)
+        }
+        XCTAssertEqual(client.callsThisSession, 2, "failed attempts are counted, not just successful responses")
+        client.isEnabled = false
+        XCTAssertEqual(client.callsThisSession, 2, "switching off must not clear a nonzero count")
+        do {
+            _ = try await client.judge(request: "牛奶", questions: questions)
+            XCTFail("disabled requests must be rejected")
+        } catch JevClient.JevError.disabled { }
+        XCTAssertEqual(requests, 2)
+        XCTAssertEqual(client.callsThisSession, 2)
+        client.isEnabled = true
+        XCTAssertEqual(client.callsThisSession, 2, "switching on must not clear the count either")
+        _ = try await client.judge(request: "牛奶", questions: questions)
+        XCTAssertEqual(client.callsThisSession, 3)
+        XCTAssertEqual(requests, 3)
+        let fresh = JevClient(network: network, defaults: defaults, keychainAccount: suite)
+        XCTAssertTrue(fresh.isConfigured)
+        XCTAssertEqual(fresh.callsThisSession, 0, "the counter belongs to one client instance, not persistent history")
+        XCTAssertEqual(client.callsThisSession, 3)
+    }
+
     func testDisabledRequestsKeepKeyAndPreferenceAcrossRestart() async throws {
         let suite = "jev-test-" + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
