@@ -134,7 +134,7 @@ struct ButlerSettingsView: View {
                 } header: {
                     Text("对话模型")
                 } footer: {
-                    Text("你说的话、拍的照片和相关的库存、笔记会发给模型来理解；库存和笔记保存在这台 iPhone。")
+                    Text("登录即表示同意：你说的话、拍的照片和回答需要的相关库存、笔记会发给你登录的 OpenAI 账号处理；库存、笔记和对话记录保存在这台 iPhone。退出登录后不再发送。")
                 }
 
                 Section {
@@ -166,6 +166,7 @@ struct ButlerSettingsView: View {
 
                 Section {
                     LabeledContent("版本", value: Self.version)
+                    Link("隐私政策", destination: OnboardingView.privacyURL)
                 }
             }
             .navigationTitle("设置").navigationBarTitleDisplayMode(.inline)

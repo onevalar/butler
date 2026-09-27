@@ -28,6 +28,7 @@ struct ContentView: View {
     @State private var calendarFeed = CalendarFeed()
     @State private var selectedDay = Calendar.current.startOfDay(for: .now)
     @State private var chosenReminder: TimedReminder?
+    @AppStorage("onboardingDone") private var onboardingDone = false
     @Environment(\.openURL) private var openURL
     @Environment(\.modelContext) private var modelContext
 
@@ -72,6 +73,12 @@ struct ContentView: View {
             }
         }
         .environment(calendarFeed)
+        .fullScreenCover(isPresented: Binding(get: { showsOnboarding }, set: { if !$0 { onboardingDone = true } })) {
+            if let chat {
+                OnboardingView(chat: chat, calendarFeed: calendarFeed) { onboardingDone = true }
+                    .interactiveDismissDisabled()
+            }
+        }
         .confirmationDialog(chosenReminder?.text ?? "", isPresented: Binding(
             get: { chosenReminder != nil }, set: { if !$0 { chosenReminder = nil } }
         ), titleVisibility: .visible) {
@@ -107,8 +114,8 @@ struct ContentView: View {
             }
             #endif
             await calendarFeed.refresh()
-            // Items with dates already exist but reminders were never allowed: ask once.
-            if !Self.isTesting, facts.contains(where: { $0.governingDate != nil }) {
+            // Items with dates already exist but reminders were never allowed: ask once (the guide asks new users).
+            if !Self.isTesting, onboardingDone, facts.contains(where: { $0.governingDate != nil }) {
                 await NotificationManager.shared.requestAuthorizationIfUndecided()
             }
         }
@@ -151,6 +158,15 @@ struct ContentView: View {
         case .calendarEvent:
             if let url = URL(string: "calshow:\(selectedDay.timeIntervalSinceReferenceDate)") { openURL(url) }
         }
+    }
+
+    private var showsOnboarding: Bool {
+        guard !onboardingDone, chat != nil, !Self.isTesting else { return false }
+        #if DEBUG
+        // Screenshot and seed runs go straight to the screen they test.
+        if ProcessInfo.processInfo.arguments.contains(where: { $0.hasPrefix("--seed-") || $0 == "--butler-chat" }) { return false }
+        #endif
+        return true
     }
 
     private static var isTesting: Bool { ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil }
