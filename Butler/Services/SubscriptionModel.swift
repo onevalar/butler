@@ -7,14 +7,23 @@ final class SubscriptionModel: LocalAgentModel {
     private let network: URLSession
     private let instructions: () -> String
     private let tools: () -> String
+    private let beforeRequest: () throws -> Void
+    private let diagnostics: (String) -> Void
+    private let preserveCredentials: Bool
 
     init(connection: SubscriptionConnection, network: URLSession = .shared,
          instructions: @escaping () -> String = { SubscriptionModel.instructions },
-         tools: @escaping () -> String = { SubscriptionModel.toolJSON }) {
+         tools: @escaping () -> String = { SubscriptionModel.toolJSON },
+         beforeRequest: @escaping () throws -> Void = {},
+         diagnostics: @escaping (String) -> Void = ChatDiagnostics.log,
+         preserveCredentials: Bool = false) {
         self.connection = connection
         self.network = network
         self.instructions = instructions
         self.tools = tools
+        self.beforeRequest = beforeRequest
+        self.diagnostics = diagnostics
+        self.preserveCredentials = preserveCredentials
     }
 
     /// Last time the model answered; after a quiet spell the service is checked quickly before waiting on it.
@@ -30,7 +39,7 @@ final class SubscriptionModel: LocalAgentModel {
             lastAnswer = .now
             return reply
         } catch let error as URLError where Self.isTransient(error) {
-            ChatDiagnostics.log("model retry after \(ChatDiagnostics.describe(error))")
+            diagnostics("model retry after \(ChatDiagnostics.describe(error))")
             try await ensureReachable()
             let reply = try await attempt(messages)
             lastAnswer = .now
@@ -47,9 +56,9 @@ final class SubscriptionModel: LocalAgentModel {
         let started = Date.now
         do {
             _ = try await network.data(for: probe)
-            ChatDiagnostics.log("reachable \(String(format: "%.1f", Date.now.timeIntervalSince(started)))s")
+            diagnostics("reachable \(String(format: "%.1f", Date.now.timeIntervalSince(started)))s")
         } catch let error as URLError where error.code != .cancelled {
-            ChatDiagnostics.log("unreachable \(ChatDiagnostics.describe(error))")
+            diagnostics("unreachable \(ChatDiagnostics.describe(error))")
             throw SubscriptionError.unreachable
         }
     }
@@ -60,7 +69,8 @@ final class SubscriptionModel: LocalAgentModel {
     }
 
     private func attempt(_ messages: [LocalAgentMessage]) async throws -> LocalModelReply {
-        let credentials = try await connection.authorizedCredentials()
+        try Task.checkCancellation()
+        let credentials = try await connection.authorizedCredentials(preserveOnFailure: preserveCredentials)
         var request = URLRequest(url: URL(string: "https://chatgpt.com/backend-api/codex/responses")!)
         request.httpMethod = "POST"
         // Longest silence allowed between two pieces of the streamed answer.
@@ -71,12 +81,14 @@ final class SubscriptionModel: LocalAgentModel {
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.setValue("butler_ios", forHTTPHeaderField: "originator")
         request.httpBody = try Self.requestBody(messages, instructions: instructions(), toolJSON: tools())
+        try Task.checkCancellation()
+        try beforeRequest() // Every POST, including retries, must pass the caller's budget.
         let sent = Date.now
         let (bytes, response) = try await network.bytes(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        ChatDiagnostics.log("model status \(status) after \(String(format: "%.1f", Date.now.timeIntervalSince(sent)))s")
+        diagnostics("model status \(status) after \(String(format: "%.1f", Date.now.timeIntervalSince(sent)))s")
         if status == 401 {
-            try connection.signOut()
+            if !preserveCredentials { try connection.signOut() }
             throw SubscriptionError.signInRequired
         }
         guard (200..<300).contains(status) else {

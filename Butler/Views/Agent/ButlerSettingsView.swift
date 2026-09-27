@@ -204,6 +204,15 @@ struct ButlerSettingsView: View {
                     Text("启用后，管家查询物品和提出修改时会请 Jev 核对。关闭后不再发起新的 Jev 请求，已发出的请求仍可能完成；管家可继续使用。密钥保存在系统钥匙串，重新开启无需填写。\n请求数从这次管家载入时开始统计，重新载入会归零；失败也计入，不代表实际扣费。开关不会清零。")
                 }
 
+                #if DEBUG
+                Section {
+                    NavigationLink("Jev 自动对照测试") { JevEvaluationView(connection: chat.connection) }
+                        .disabled(chat.working)
+                } footer: {
+                    Text("使用虚构库存自动完成 32 个测试对话；消耗现有模型额度，不修改家里的真实数据。")
+                }
+                #endif
+
                 Section {
                     Button {
                         do {

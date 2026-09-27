@@ -25,19 +25,27 @@ final class JevClient: ConditionJudge {
     private let network: URLSession
     private let defaults: UserDefaults
     private let keychainAccount: String
+    private let enabledOverride: Bool?
+    private let beforeRequest: () throws -> Void
+    private let observeAttempt: (Bool, TimeInterval) -> Void
     var isEnabled: Bool {
-        didSet { defaults.set(isEnabled, forKey: "jevEnabled") }
+        didSet { if enabledOverride == nil { defaults.set(isEnabled, forKey: "jevEnabled") } }
     }
     private(set) var isConfigured = false
     /// Transport attempts by this client instance, including failures; not a billing total.
     private(set) var callsThisSession = 0
 
-    init(network: URLSession = .shared, defaults: UserDefaults = .standard, keychainAccount: String = "api-key") {
+    init(network: URLSession = .shared, defaults: UserDefaults = .standard, keychainAccount: String = "api-key",
+         enabledOverride: Bool? = nil, beforeRequest: @escaping () throws -> Void = {},
+         observeAttempt: @escaping (Bool, TimeInterval) -> Void = { _, _ in }) {
         self.network = network
         self.defaults = defaults
         self.keychainAccount = keychainAccount
+        self.enabledOverride = enabledOverride
+        self.beforeRequest = beforeRequest
+        self.observeAttempt = observeAttempt
         // Existing installations keep their behavior until the owner explicitly switches Jev off.
-        isEnabled = defaults.object(forKey: "jevEnabled") as? Bool ?? true
+        isEnabled = enabledOverride ?? (defaults.object(forKey: "jevEnabled") as? Bool ?? true)
         isConfigured = readKey() != nil
     }
 
@@ -104,7 +112,12 @@ final class JevClient: ConditionJudge {
         urlRequest.httpBody = try JSONSerialization.data(withJSONObject: [
             "model": Self.model, "state": ["request": request], "questions": payload,
         ])
+        try Task.checkCancellation()
+        try beforeRequest()
         callsThisSession += 1 // Counts attempts, not confirmed server receipt; no automatic retries.
+        let started = Date.now
+        var succeeded = false
+        defer { observeAttempt(succeeded, Date.now.timeIntervalSince(started)) }
         let data: Data
         let response: URLResponse
         do {
@@ -123,6 +136,7 @@ final class JevClient: ConditionJudge {
                   value.isFinite, (0...1).contains(value) else { throw JevError.invalidResponse }
             result[item.id] = value
         }
+        succeeded = true
         return result
     }
 

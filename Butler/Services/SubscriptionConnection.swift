@@ -58,6 +58,9 @@ final class SubscriptionConnection {
     var error: String?
     var isLoggedIn: Bool { credentials != nil }
 
+    // Match other observable services: avoid iOS 26's isolated-deinit runtime crash.
+    nonisolated deinit {}
+
     init(network: URLSession = .shared, keychainAccount: String = "personal") {
         self.network = network
         self.keychainAccount = keychainAccount
@@ -154,7 +157,7 @@ final class SubscriptionConnection {
         }
     }
 
-    func authorizedCredentials() async throws -> SubscriptionCredentials {
+    func authorizedCredentials(preserveOnFailure: Bool = false) async throws -> SubscriptionCredentials {
         guard let current = credentials else { throw SubscriptionError.signInRequired }
         if current.expiresAt.timeIntervalSinceNow > 300 { return current }
         do {
@@ -166,7 +169,7 @@ final class SubscriptionConnection {
             try save(updated)
             return updated
         } catch SubscriptionError.unavailable(let status) where status == 400 || status == 401 {
-            try signOut()
+            if !preserveOnFailure { try signOut() }
             throw SubscriptionError.signInRequired
         }
     }

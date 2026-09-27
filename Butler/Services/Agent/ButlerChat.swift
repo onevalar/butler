@@ -152,30 +152,12 @@ final class ButlerChat {
         guard let model else { throw SubscriptionError.signInRequired }
         let start = messages.count
         messages.append(message)
-        var completed: [String: String] = [:]
         do {
-            for round in 0..<30 {
-                try Task.checkCancellation()
-                let asked = Date.now
-                let reply = try await model.reply(to: messages)
-                ChatDiagnostics.log("round \(round) \(String(format: "%.1f", Date.now.timeIntervalSince(asked)))s calls=\(reply.calls.map(\.name).joined(separator: ","))")
-                try Task.checkCancellation()
-                messages.append(.assistant(reply))
-                if reply.calls.isEmpty { return reply.text.isEmpty ? "好的。" : reply.text }
-                for call in reply.calls.prefix(12) {
-                    let output: String
-                    if let previous = completed[call.id] {
-                        output = previous
-                    } else {
-                        let began = Date.now
-                        output = await tools.execute(call)
-                        ChatDiagnostics.log("tool \(call.name) \(String(format: "%.1f", Date.now.timeIntervalSince(began)))s")
-                        completed[call.id] = output
-                    }
-                    messages.append(.tool(id: call.id, result: output))
-                }
-            }
-            return "这件事步骤有点多，我先停在这里。你可以换个说法再试一次。"
+            var conversation = messages
+            let answer = try await ToolConversationLoop.run(model: model, messages: &conversation,
+                execute: { await tools.execute($0) })
+            messages = conversation
+            return answer ?? "这件事步骤有点多，我先停在这里。你可以换个说法再试一次。"
         } catch {
             tools.clearPending()
             messages.removeSubrange(start...)
