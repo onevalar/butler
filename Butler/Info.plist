@@ -5,10 +5,10 @@
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSCameraUsageDescription</key>
-	<string>Butler 需要使用相机来扫描物品上的保质期</string>
+	<string>拍下买回来的东西、购物小票或包装上的日期，让管家帮你记下来。</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Butler 需要访问麦克风来识别你说的物品信息。所有语音数据都在设备本地处理。</string>
+	<string>用说话代替打字，和管家对话。</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Butler 使用语音识别来理解你添加的物品。识别过程完全在本地进行，保护你的隐私。</string>
+	<string>把你说的话转成文字，方便你和管家对话。</string>
 </dict>
 </plist>

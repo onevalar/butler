@@ -81,6 +81,11 @@ final class SubscriptionModel: LocalAgentModel {
             switch message {
             case .user(let text):
                 input.append(["role": "user", "content": [["type": "input_text", "text": text]]])
+            case .userPhotos(let text, let photos):
+                let images: [[String: Any]] = photos.map {
+                    ["type": "input_image", "image_url": "data:image/jpeg;base64," + $0.base64EncodedString()]
+                }
+                input.append(["role": "user", "content": [["type": "input_text", "text": text]] + images])
             case .assistant(let reply):
                 if let wire = reply.wireOutput,
                    let items = try JSONSerialization.jsonObject(with: wire) as? [[String: Any]] {

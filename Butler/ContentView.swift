@@ -15,11 +15,13 @@ struct ContentView: View {
     @State private var refreshID = UUID()
     #if DEBUG
     @State private var capturing = ProcessInfo.processInfo.environment["BUTLER_CAPTURE_TEXT"] != nil
-    @State private var chatting = ProcessInfo.processInfo.arguments.contains("--butler-chat")
+    @State private var chatStart: ChatStart? = ProcessInfo.processInfo.arguments.contains("--butler-chat") ? .typing : nil
     #else
     @State private var capturing = false
-    @State private var chatting = false
+    @State private var chatStart: ChatStart?
     #endif
+    @State private var chat: ButlerChat?
+    @State private var showingSettings = false
     @Environment(\.modelContext) private var modelContext
 
     private var facts: [LotFacts] {
@@ -45,22 +47,34 @@ struct ContentView: View {
                 facts: facts,
                 onOpenLot: { path.append(.lot($0)) },
                 onOpenShelf: { path.append(.inventory) },
-                onSpeak: { chatting = true },
-                onCapture: { capturing = true }
+                onChat: { chatStart = $0 },
+                onSettings: { showingSettings = true }
             )
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: Route.self) { route in
                 switch route {
                 case .inventory:
-                    InventoryView(facts: facts, history: history, onOpenLot: { path.append(.lot($0)) }, onSpeak: { chatting = true }, onCapture: { capturing = true })
+                    InventoryView(facts: facts, history: history, onOpenLot: { path.append(.lot($0)) }, onChat: { chatStart = $0 })
                 case .lot(let id):
                     LotDetailView(lotID: id)
                 }
             }
         }
         .tint(Theme.ink)
-        .fullScreenCover(isPresented: $chatting) {
-            ButlerChatView(container: modelContext.container)
+        .fullScreenCover(item: $chatStart) { start in
+            if let chat {
+                ButlerChatView(chat: chat, start: start, onQuickCapture: {
+                    chatStart = nil
+                    Task { try? await Task.sleep(for: .milliseconds(450)); capturing = true }
+                })
+            }
+        }
+        .sheet(isPresented: $showingSettings) {
+            if let chat { ButlerSettingsView(chat: chat) }
+        }
+        .task {
+            // One conversation for the whole app, so it survives closing and reopening the chat.
+            if chat == nil { chat = ButlerChat(container: modelContext.container) }
         }
         .fullScreenCover(isPresented: $capturing) {
             CaptureView()
@@ -78,7 +92,7 @@ struct ContentView: View {
         .onChange(of: NotificationManager.shared.pendingLotID, initial: true) { _, id in
             guard let id else { return }
             capturing = false
-            chatting = false
+            chatStart = nil
             path = [.lot(id)]
             NotificationManager.shared.clearPendingRoute()
         }

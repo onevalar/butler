@@ -158,4 +158,12 @@ private final class SubscriptionStubProtocol: URLProtocol, @unchecked Sendable {
         }
     }
     nonisolated override func stopLoading() { }
+
+    func testPhotosAreSentAsImagesWithTheText() throws {
+        let body = try JSONSerialization.jsonObject(with: SubscriptionModel.requestBody([.userPhotos("看看这是什么", [Data([1, 2, 3])])])) as? [String: Any]
+        let content = try XCTUnwrap(((body?["input"] as? [[String: Any]])?.first?["content"]) as? [[String: Any]])
+        XCTAssertEqual(content.first?["text"] as? String, "看看这是什么")
+        XCTAssertEqual(content.last?["type"] as? String, "input_image")
+        XCTAssertEqual(content.last?["image_url"] as? String, "data:image/jpeg;base64,AQID")
+    }
 }

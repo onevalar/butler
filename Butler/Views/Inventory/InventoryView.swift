@@ -4,8 +4,7 @@ struct InventoryView: View {
     let facts: [LotFacts]
     var history: [LotFacts] = []
     let onOpenLot: (UUID) -> Void
-    let onSpeak: () -> Void
-    var onCapture: (() -> Void)? = nil
+    let onChat: (ChatStart) -> Void
 
     enum Arrangement: String, CaseIterable { case place = "按位置", expiry = "按到期", kind = "按类别" }
 
@@ -69,7 +68,7 @@ struct InventoryView: View {
             .scrollIndicators(.hidden)
             .scrollDismissesKeyboard(.immediately)
 
-            Dock(onShelf: nil, onSpeak: onSpeak, onCapture: onCapture)
+            Dock(onShelf: nil, onChat: onChat)
         }
         .background(Theme.ground.ignoresSafeArea())
         .toolbarBackground(.hidden, for: .navigationBar)

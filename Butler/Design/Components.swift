@@ -178,52 +178,40 @@ struct ChoiceChip: View {
 /// The always-present bottom bar: shelf on the left, "说给管家听" capsule on the right.
 struct Dock: View {
     var onShelf: (() -> Void)?
-    let onSpeak: () -> Void
-    var onCapture: (() -> Void)? = nil
+    /// Opens the chat: typing, talking, or with the camera.
+    let onChat: (ChatStart) -> Void
 
     var body: some View {
         HStack(spacing: 10) {
             if let onShelf {
-                Button(action: onShelf) {
-                    Image(systemName: "refrigerator")
-                        .font(.system(size: 20, weight: .regular))
-                        .foregroundStyle(Theme.ink)
-                        .frame(width: 56, height: 56)
-                        .background(Circle().fill(Theme.surface))
+                circle("refrigerator", label: "家里的东西", action: onShelf)
+            }
+            HStack(spacing: 6) {
+                Button { onChat(.typing) } label: {
+                    Text("和管家说…")
+                        .font(Theme.display(16, weight: .regular))
+                        .foregroundStyle(Theme.muted)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("家里的东西")
-            }
-            Button(action: onSpeak) {
-                HStack(spacing: 10) {
-                    Text("说给管家听…")
-                        .font(Theme.display(16, weight: .regular))
-                        .foregroundStyle(Theme.capsuleText)
-                    Spacer(minLength: 0)
+                .accessibilityLabel("和管家聊聊")
+                Button { onChat(.voice) } label: {
                     Image(systemName: "mic.fill")
                         .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(.white)
                         .frame(width: 44, height: 44)
                         .background(Circle().fill(Theme.cobaltFill))
                 }
-                .padding(.leading, 20)
-                .padding(.trailing, 6)
-                .frame(height: 56)
-                .background(Capsule().fill(Theme.capsule))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("和管家聊聊")
-            if let onCapture {
-                Button(action: onCapture) {
-                    Image(systemName: "camera.viewfinder")
-                        .font(.system(size: 20, weight: .regular))
-                        .foregroundStyle(Theme.ink)
-                        .frame(width: 56, height: 56)
-                        .background(Circle().fill(Theme.surface))
-                }
                 .buttonStyle(.plain)
-                .accessibilityLabel("拍照或快速记一笔")
+                .accessibilityLabel("说给管家听")
             }
+            .padding(.leading, 20)
+            .padding(.trailing, 6)
+            .frame(height: 56)
+            .background(Capsule().fill(Theme.surface))
+            .overlay(Capsule().stroke(Theme.hairline, lineWidth: 1))
+            circle("camera", label: "拍照告诉管家") { onChat(.camera) }
         }
         .padding(.horizontal, 20)
         .padding(.top, 28)
@@ -232,5 +220,17 @@ struct Dock: View {
             LinearGradient(colors: [Theme.ground.opacity(0), Theme.ground], startPoint: .top, endPoint: .init(x: 0.5, y: 0.4))
                 .ignoresSafeArea()
         }
+    }
+
+    private func circle(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 20, weight: .regular))
+                .foregroundStyle(Theme.ink)
+                .frame(width: 56, height: 56)
+                .background(Circle().fill(Theme.surface))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
     }
 }

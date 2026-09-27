@@ -5,8 +5,8 @@ struct HomeView: View {
     let facts: [LotFacts]
     let onOpenLot: (UUID) -> Void
     let onOpenShelf: () -> Void
-    let onSpeak: () -> Void
-    var onCapture: (() -> Void)? = nil
+    let onChat: (ChatStart) -> Void
+    let onSettings: () -> Void
 
     @Environment(\.modelContext) private var modelContext
     @State private var datingLot: LotFacts?
@@ -18,7 +18,7 @@ struct HomeView: View {
         ZStack(alignment: .bottom) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    Masthead()
+                    Masthead(onSettings: onSettings)
                         .padding(.top, 6)
                     greeting
                         .padding(.top, 30)
@@ -41,7 +41,7 @@ struct HomeView: View {
             }
             .scrollIndicators(.hidden)
 
-            Dock(onShelf: facts.isEmpty ? nil : onOpenShelf, onSpeak: onSpeak, onCapture: onCapture)
+            Dock(onShelf: facts.isEmpty ? nil : onOpenShelf, onChat: onChat)
         }
         .background(Theme.ground.ignoresSafeArea())
         .fullScreenCover(item: $datingLot) { lot in
@@ -157,6 +157,8 @@ struct HomeView: View {
 // MARK: - Masthead
 
 private struct Masthead: View {
+    let onSettings: () -> Void
+
     var body: some View {
         HStack(alignment: .lastTextBaseline) {
             HStack(spacing: 8) {
@@ -179,6 +181,17 @@ private struct Masthead: View {
                     .font(Theme.body(12))
                     .foregroundStyle(Theme.muted)
             }
+            Button(action: onSettings) {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 18, weight: .regular))
+                    .foregroundStyle(Theme.ink)
+                    .frame(width: 36, height: 36)
+                    .background(Circle().fill(Theme.surface))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("设置")
+            .padding(.leading, 10)
+            .alignmentGuide(.lastTextBaseline) { $0[VerticalAlignment.center] + 6 }
         }
     }
 }

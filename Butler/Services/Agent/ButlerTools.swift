@@ -38,6 +38,8 @@ final class ButlerTools {
     /// What the owner said this turn (and just before), given to Jev as the request.
     private var request = ""
     private var previous: String?
+    /// Jev can't see photos, so it can't judge whether a date came from a package in the picture.
+    private var hasPhotos = false
     /// Proposals Jev already pushed back on this turn. Proposing the same thing again means the
     /// model kept it; it then goes to the card with Jev's concern shown.
     private var raisedConcerns: Set<String> = []
@@ -52,8 +54,9 @@ final class ButlerTools {
 
     func clearPending() { pending = [] }
 
-    func beginTurn(request: String, previous: String?) {
-        self.request = request
+    func beginTurn(request: String, previous: String?, hasPhotos: Bool = false) {
+        self.hasPhotos = hasPhotos
+        self.request = hasPhotos ? request + "（用户附了照片）" : request
         self.previous = previous
         raisedConcerns = []
         pending = []
@@ -155,7 +158,7 @@ final class ButlerTools {
                 let date = try Self.date(args.date)
                 let label = kind == .packageExpiry ? "包装有效期" : "计划吃完"
                 var extra: [JevClient.Question] = []
-                if kind == .packageExpiry, let date {
+                if kind == .packageExpiry, let date, !hasPhotos {
                     extra = [.init(id: "d.stated", question: Self.statedDateQuestion,
                                    candidate: "\(lot.name) 包装有效期 \(date.isoDay)")]
                 }
@@ -359,7 +362,7 @@ final class ButlerTools {
                 .init(id: "n.\(index).\($0.id.uuidString)", question: Self.newPurchaseQuestion,
                       candidate: Self.jevText($0) + "；用户这次提到：\(item.name) ×\(item.quantity) \(item.unit)")
             }
-            if let date = item.packageExpiry {
+            if let date = item.packageExpiry, !hasPhotos {
                 questions.append(.init(id: "d.\(index)", question: Self.statedDateQuestion,
                                        candidate: "\(item.name) 包装有效期 \(date.isoDay)"))
             }

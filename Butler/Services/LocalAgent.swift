@@ -98,6 +98,13 @@ final class LocalMemoryStore {
         snapshot = next
     }
 
+    func delete(_ id: UUID) throws {
+        var next = snapshot
+        next.records.removeAll { $0.id == id }
+        try JSONEncoder().encode(next).write(to: file, options: .atomic)
+        snapshot = next
+    }
+
     /// The owner's real notes and habits (the file name is historical).
     static func openNotes() throws -> LocalMemoryStore { try openOnDevice() }
 
@@ -135,6 +142,8 @@ struct LocalModelReply {
 
 enum LocalAgentMessage {
     case user(String)
+    /// A message with photos (JPEG), e.g. groceries, a receipt or a package label.
+    case userPhotos(String, [Data])
     case assistant(LocalModelReply)
     case tool(id: String, result: String)
     case receipt(preview: UUID, saved: Bool)
