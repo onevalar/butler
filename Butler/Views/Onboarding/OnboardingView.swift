@@ -46,7 +46,7 @@ struct OnboardingView: View {
             }
             .scrollBounceBehavior(.basedOnSize)
         }
-        .background(Color(.systemGroupedBackground))
+        .background { ButlerBackground() }
         .safeAreaBar(edge: .bottom) { buttons }
         .animation(.snappy, value: step)
         .onChange(of: chat.connection.isLoggedIn) { _, loggedIn in
@@ -58,7 +58,7 @@ struct OnboardingView: View {
 
     private var welcome: some View {
         VStack(alignment: .leading, spacing: 20) {
-            StepIcon(systemImage: "house.fill", color: .blue)
+            ButlerOrb(size: 72)
             Text("小当家帮你\n管家里的事").font(.largeTitle.bold())
             VStack(alignment: .leading, spacing: 18) {
                 Feature(systemImage: "mic.fill", color: .blue, title: "说一句就记下",
@@ -85,7 +85,7 @@ struct OnboardingView: View {
             }
             .font(.subheadline)
             .padding(16)
-            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .glassCard(radius: 22)
             Button("阅读隐私政策") { openURL(Self.privacyURL) }
                 .font(.subheadline)
             SubscriptionLoginPanel(connection: chat.connection)
@@ -118,7 +118,7 @@ struct OnboardingView: View {
             }))
             .padding(.horizontal, 16)
             .frame(minHeight: 52)
-            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .glassCard(radius: 22)
             Text("以后也可以在设置里打开或关闭。").font(.footnote).foregroundStyle(.secondary)
         }
     }
@@ -157,12 +157,8 @@ struct OnboardingView: View {
     }
 
     private func primary(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title).font(.headline).frame(maxWidth: .infinity, minHeight: 34)
-        }
-        .buttonStyle(.glassProminent)
-        .buttonBorderShape(.capsule)
-        .controlSize(.large)
+        Button(title, action: action)
+            .buttonStyle(AccentButtonStyle(height: 50))
     }
 
     private func secondary(_ title: String, action: @escaping () -> Void) -> some View {
@@ -193,18 +189,14 @@ struct SubscriptionLoginPanel: View {
                         .buttonStyle(.bordered).buttonBorderShape(.capsule)
                 }
                 Button("2. 打开 OpenAI 官方页面授权") { openURL(SubscriptionConnection.verificationURL) }
-                    .buttonStyle(.borderedProminent).buttonBorderShape(.capsule)
+                    .buttonStyle(AccentButtonStyle())
                 HStack(spacing: 8) { ProgressView(); Text("授权后回到这里，会自动完成登录").font(.footnote).foregroundStyle(.secondary) }
                 Button("取消", role: .cancel) { connection.cancelLogin() }.font(.footnote)
             } else {
-                Button {
+                Button(connection.signingIn ? "正在获取登录码…" : "同意并登录") {
                     Task { await connection.beginLogin() }
-                } label: {
-                    Text(connection.signingIn ? "正在获取登录码…" : "同意并登录").font(.headline).frame(maxWidth: .infinity, minHeight: 34)
                 }
-                .buttonStyle(.borderedProminent)
-                .buttonBorderShape(.capsule)
-                .controlSize(.large)
+                .buttonStyle(AccentButtonStyle(height: 50))
                 .disabled(connection.signingIn)
             }
             if let error = connection.error { Text(error).font(.footnote).foregroundStyle(.red) }

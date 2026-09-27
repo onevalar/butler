@@ -57,7 +57,7 @@ struct CalendarOverviewView: View {
                 }
             }
         }
-        .background(Color(.systemGroupedBackground))
+        .background { ButlerBackground() }
         .navigationTitle("日程总览")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -108,7 +108,7 @@ private struct MonthCard: View {
                 }
             }
             .padding(12)
-            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+            .glassCard(radius: 26)
         }
     }
 
@@ -169,7 +169,7 @@ private struct MiniMonth: View {
             Text(summary).font(.caption2).foregroundStyle(.secondary)
         }
         .padding(10)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .glassCard(radius: 20)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
     }

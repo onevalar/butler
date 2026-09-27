@@ -6,17 +6,22 @@ enum ChatStart: Hashable, Identifiable {
     var id: Self { self }
 }
 
+/// Another tab asked the conversation to open ready to type or listen.
+struct ChatRequest: Equatable {
+    let id = UUID()
+    let start: ChatStart
+}
+
 /// 和管家聊聊: the main way to tell Butler things, ask about home, and change inventory.
 struct ButlerChatView: View {
     @Bindable var chat: ButlerChat
-    var start: ChatStart = .typing
+    @Binding var request: ChatRequest?
     var onQuickCapture: (() -> Void)? = nil
+    let onSettings: () -> Void
 
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.butlerAccent) private var accent
     @State private var dictation = LiveDictation()
-    @State private var showingSettings = false
     @State private var showingCamera = false
-    @State private var started = false
     @FocusState private var composing: Bool
 
     var body: some View {
@@ -47,27 +52,27 @@ struct ButlerChatView: View {
                 .onChange(of: chat.working) { _, _ in withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } }
                 .onChange(of: chat.tools?.pending.count) { _, _ in withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } }
             }
-            .background(Color(.systemBackground))
+            .background { ButlerBackground() }
             .safeAreaBar(edge: .bottom) { composer }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button { close() } label: { Image(systemName: "xmark") }
-                        .accessibilityLabel("关闭")
-                }
-                ToolbarItem(placement: .principal) {
-                    VStack(spacing: 0) {
-                        Text("小当家").font(.headline)
-                        Text(statusLine).font(.caption2).foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        ButlerOrb(size: 30, active: chat.working || dictation.listening)
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text("小当家").font(.subheadline.weight(.semibold))
+                            Text(statusLine).font(.caption2).foregroundStyle(.secondary)
+                        }
                     }
+                    .padding(.trailing, 8)
+                    .fixedSize()
                     .accessibilityElement(children: .combine)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { showingSettings = true } label: { Image(systemName: "gearshape") }
+                    Button(action: onSettings) { Image(systemName: "gearshape") }
                         .accessibilityLabel("设置")
                 }
             }
             .navigationBarTitleDisplayMode(.inline)
-            .sheet(isPresented: $showingSettings) { ButlerSettingsView(chat: chat) }
             .fullScreenCover(isPresented: $showingCamera) {
                 PhotoCapture(onPhoto: { image in
                     if let data = image.chatJPEG() { chat.photos.append(data) }
@@ -75,13 +80,17 @@ struct ButlerChatView: View {
                 }, onCancel: { showingCamera = false })
                 .ignoresSafeArea()
             }
-            .task {
-                guard !started else { return }
-                started = true
-                switch start {
-                case .camera: showingCamera = true
-                case .voice: await startListening()
-                case .typing: composing = true
+            .onChange(of: request, initial: true) { _, new in
+                guard let start = new?.start else { return }
+                request = nil
+                Task {
+                    // Let the tab switch finish before the keyboard or the mic comes up.
+                    try? await Task.sleep(for: .milliseconds(250))
+                    switch start {
+                    case .camera: showingCamera = true
+                    case .voice: await startListening()
+                    case .typing: composing = true
+                    }
                 }
             }
             .onDisappear { dictation.cancel() }
@@ -91,11 +100,6 @@ struct ButlerChatView: View {
     private var statusLine: String {
         guard chat.connection.isLoggedIn else { return "未登录" }
         return chat.jev.isConfigured ? "GPT-6 Sol · Jev 已接入" : "GPT-6 Sol"
-    }
-
-    private func close() {
-        dictation.cancel()
-        dismiss()
     }
 
     // MARK: - Conversation
@@ -111,19 +115,16 @@ struct ButlerChatView: View {
                         Text(example)
                             .font(.subheadline)
                             .padding(.horizontal, 14).padding(.vertical, 8)
-                            .background(Color(.secondarySystemBackground), in: Capsule())
+                            .glassEffect(.regular.interactive(), in: .capsule)
                     }
                     .buttonStyle(.plain)
                 }
             }
             .padding(.top, 4)
             if !chat.connection.isLoggedIn {
-                Button { showingSettings = true } label: {
-                    Text("先登录订阅，再开始对话").frame(maxWidth: .infinity, minHeight: 44)
-                }
-                .buttonStyle(.borderedProminent)
-                .buttonBorderShape(.capsule)
-                .padding(.top, 8)
+                Button("先登录订阅，再开始对话", action: onSettings)
+                    .buttonStyle(AccentButtonStyle())
+                    .padding(.top, 8)
                 if let onQuickCapture {
                     Button("不登录，先用本机快速记一笔") { dictation.cancel(); onQuickCapture() }
                         .font(.subheadline)
@@ -151,9 +152,9 @@ struct ButlerChatView: View {
             HStack {
                 Spacer(minLength: 56)
                 Text(turn.question)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(accent.onFill)
                     .padding(.horizontal, 14).padding(.vertical, 9)
-                    .background(Color.blue, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .background(accent.fill, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                     .textSelection(.enabled)
             }
             if !turn.answer.isEmpty {
@@ -161,7 +162,7 @@ struct ButlerChatView: View {
                     Text(turn.answer)
                         .foregroundStyle(turn.failed ? Color.red : .primary)
                         .padding(.horizontal, 14).padding(.vertical, 9)
-                        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .glassCard(radius: 18)
                         .textSelection(.enabled)
                     Spacer(minLength: 40)
                 }
@@ -217,19 +218,14 @@ struct ButlerChatView: View {
                 if index < pending.count - 1 { RowDivider(inset: 30) }
             }
             HStack(spacing: 10) {
-                Button { chat.discard() } label: { Text("取消").frame(maxWidth: .infinity, minHeight: 36) }
-                    .buttonStyle(.bordered)
-                    .tint(.primary)
-                Button { chat.confirm() } label: {
-                    Text(pending.count == 1 ? "确认" : "确认 \(pending.count) 项").fontWeight(.semibold).frame(maxWidth: .infinity, minHeight: 36)
-                }
-                .buttonStyle(.borderedProminent)
+                Button("取消") { chat.discard() }
+                    .buttonStyle(QuietButtonStyle())
+                Button(pending.count == 1 ? "确认" : "确认 \(pending.count) 项") { chat.confirm() }
+                    .buttonStyle(AccentButtonStyle())
             }
-            .buttonBorderShape(.capsule)
             .padding(12)
         }
-        .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).strokeBorder(Color(.separator), lineWidth: 0.5))
+        .glassCard()
         .padding(.trailing, 32)
         .sensoryFeedback(.success, trigger: chat.turns.last?.receipts.count ?? 0)
     }
@@ -289,13 +285,13 @@ struct ButlerChatView: View {
             GlassCircleButton(systemImage: "stop.fill", tint: .red) { Task { chat.draft = await dictation.stop() } }
                 .accessibilityLabel("停止听写")
         } else if chat.canSend {
-            GlassCircleButton(systemImage: "arrow.up", tint: .blue) {
+            GlassCircleButton(systemImage: "arrow.up", tint: accent.fill, glyph: accent.onFill) {
                 composing = false
                 chat.send()
             }
             .accessibilityLabel("发送")
         } else {
-            GlassCircleButton(systemImage: "mic.fill", tint: .blue) { Task { await startListening() } }
+            GlassCircleButton(systemImage: "mic.fill", tint: accent.fill, glyph: accent.onFill) { Task { await startListening() } }
                 .disabled(dictation.preparing)
                 .accessibilityLabel("说话")
         }

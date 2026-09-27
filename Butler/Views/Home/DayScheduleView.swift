@@ -25,12 +25,11 @@ struct DayScheduleView: View {
             ScrollView {
                 TimelineHourGrid(items: items, day: day, hours: 0...23, onTap: tap)
                     .padding(.top, 20).padding(.leading, 8).padding(.trailing, 12).padding(.bottom, 12)
-                    .background(Color(.secondarySystemGroupedBackground),
-                                in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+                    .glassCard(radius: 26)
                     .padding(.horizontal, 16)
                     .padding(.bottom, 24)
             }
-            .background(Color(.systemGroupedBackground))
+            .background { ButlerBackground() }
             .safeAreaBar(edge: .top) {
                 VStack(spacing: 12) {
                     WeekStrip(agenda: agenda, selected: $day, days: week)
@@ -39,8 +38,7 @@ struct DayScheduleView: View {
                         TimelineAllDaySection(items: allDay, onTap: tap)
                             .padding(.vertical, 12).padding(.trailing, 16).padding(.leading, 8)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color(.secondarySystemGroupedBackground),
-                                        in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+                            .glassCard(radius: 26)
                             .padding(.horizontal, 16)
                     }
                 }

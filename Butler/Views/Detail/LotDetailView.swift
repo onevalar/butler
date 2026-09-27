@@ -43,7 +43,7 @@ struct LotDetailView: View {
                 closedState
             }
         }
-        .background(Color(.systemGroupedBackground))
+        .background { ButlerBackground() }
         .sheet(isPresented: $showingHistory) {
             HistorySheet(events: events).presentationDetents([.medium, .large])
         }
@@ -85,7 +85,7 @@ struct LotDetailView: View {
                     }
                 }
                 .padding(.vertical, 4)
-                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+                .glassCard(radius: 26)
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 32)
@@ -202,7 +202,8 @@ struct LotDetailView: View {
                 Text("还不知道它哪天到期").font(.title3.weight(.semibold))
                 HStack(spacing: 10) {
                     Button { capturingDate = true } label: { Label("拍包装上的日期", systemImage: "camera") }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(AccentButtonStyle())
+                        .fixedSize()
                     Button("只记数量") { setQuantityOnly(true, facts) }
                         .buttonStyle(.bordered)
                 }
@@ -216,7 +217,7 @@ struct LotDetailView: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .glassCard(radius: 26)
     }
 
     private func progress(from start: Date, to end: Date) -> Double {
@@ -278,7 +279,7 @@ struct LotDetailView: View {
                     .frame(minHeight: 52)
             }
             .padding(.vertical, 4)
-            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+            .glassCard(radius: 26)
             Text("打开后不再提醒到期，只记还剩多少。适合饮用水、纸巾这类东西。")
                 .font(.footnote).foregroundStyle(.secondary).padding(.horizontal, 16)
         }
@@ -392,7 +393,7 @@ private struct ActionTile: View {
                 Text(title).font(.footnote).foregroundStyle(.primary).lineLimit(1).minimumScaleFactor(0.8)
             }
             .frame(maxWidth: .infinity, minHeight: 72)
-            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .glassCard(radius: 22)
             .contentShape(RoundedRectangle(cornerRadius: 22))
         }
         .buttonStyle(.plain)

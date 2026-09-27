@@ -34,12 +34,15 @@ struct HomeView: View {
     let onOpenDay: (Date) -> Void
     let onOpenInventory: () -> Void
     let onOpenOverview: () -> Void
-    let onSettings: () -> Void
+    let brief: DailyBrief
     let onChat: (ChatStart) -> Void
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
+                BriefCard(brief: brief)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 16)
                 WeekStrip(agenda: agenda, selected: $selectedDay)
                     .padding(.horizontal, 12)
                     .padding(.top, 4)
@@ -57,12 +60,12 @@ struct HomeView: View {
             .padding(.bottom, 24)
         }
         .scrollIndicators(.hidden)
-        .background(Color(.systemGroupedBackground))
+        .background { ButlerBackground() }
         .toolbar(.hidden, for: .navigationBar)
-        // Title and the two glass buttons share one pinned row; content scrolls under it.
+        // Title and the glass button share one pinned row; content scrolls under it.
         .safeAreaBar(edge: .top) { header }
         .safeAreaBar(edge: .bottom) {
-            HomeInputBar(onChat: onChat)
+            TabInputBar(placeholder: brief.isEvening ? "问问明天要准备什么…" : "问问今天该做什么…", onChat: onChat)
         }
     }
 
@@ -70,25 +73,12 @@ struct HomeView: View {
         HStack(alignment: .center, spacing: 12) {
             title
             Spacer(minLength: 8)
-            GlassEffectContainer(spacing: 8) {
-                HStack(spacing: 0) {
-                    Button(action: onOpenOverview) {
-                        Image(systemName: "calendar").font(.system(size: 18, weight: .medium)).frame(width: 44, height: 44)
-                    }
-                    .accessibilityLabel("日程总览")
-                    Button(action: onOpenInventory) {
-                        Image(systemName: "refrigerator").font(.system(size: 18, weight: .medium)).frame(width: 44, height: 44)
-                    }
-                    .accessibilityLabel("家里的东西")
-                    Button(action: onSettings) {
-                        Image(systemName: "gearshape").font(.system(size: 18, weight: .medium)).frame(width: 44, height: 44)
-                    }
-                    .accessibilityLabel("设置")
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 4)
-                .glassEffect(.regular.interactive(), in: .capsule)
+            Button(action: onOpenOverview) {
+                Image(systemName: "calendar").font(.system(size: 18, weight: .medium)).frame(width: 44, height: 44)
             }
+            .buttonStyle(.plain)
+            .glassEffect(.regular.interactive(), in: .circle)
+            .accessibilityLabel("日程总览")
         }
         .foregroundStyle(.primary)
         .padding(.horizontal, 20)
@@ -106,7 +96,7 @@ struct HomeView: View {
         VStack(alignment: .leading, spacing: 0) {
             Text(Date.now.formatted(.dateTime.month().day().weekday(.wide).locale(Locale(identifier: "zh_CN"))))
                 .font(.footnote.weight(.semibold))
-                .foregroundStyle(.red)
+                .foregroundStyle(.secondary)
             Text("今天")
                 .font(.title.bold())
         }
@@ -175,11 +165,11 @@ struct HomeView: View {
                 SectionTitle("\(selectedDay.relativeDayName)的安排")
                 Spacer()
                 Button("全天") { onOpenDay(selectedDay) }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.glass)
                     .buttonBorderShape(.capsule)
                     .controlSize(.small)
                     .fontWeight(.semibold)
-                    .tint(.blue)
+                    .foregroundStyle(.primary)
                     .padding(.bottom, 8)
             }
             GroupCard {
@@ -248,7 +238,29 @@ struct HomeView: View {
         }
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .glassCard()
+    }
+}
+
+/// The butler's few sentences about today, with what they're based on.
+struct BriefCard: View {
+    let brief: DailyBrief
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                ButlerOrb(size: 28)
+                Text(brief.greeting).font(.headline)
+                Spacer()
+                Text(brief.isEvening ? "晚间简报" : "今日简报").font(.caption).foregroundStyle(.secondary)
+            }
+            Text(brief.text).font(.body).fixedSize(horizontal: false, vertical: true)
+            Text(brief.basis).font(.caption).foregroundStyle(.tertiary)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassCard()
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -267,7 +279,7 @@ struct GroupCard<Content: View>: View {
     var body: some View {
         VStack(spacing: 0) { content }
             .padding(.vertical, 4)
-            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+            .glassCard()
     }
 }
 
@@ -301,7 +313,7 @@ struct CapsuleLabel: View {
     let text: String
     init(_ text: String) { self.text = text }
     var body: some View {
-        Text(text).font(.subheadline.weight(.semibold)).foregroundStyle(.blue)
+        Text(text).font(.subheadline.weight(.semibold)).foregroundStyle(.tint)
             .padding(.horizontal, 14).padding(.vertical, 7)
             .background(Color(.tertiarySystemFill), in: Capsule())
     }
@@ -356,13 +368,14 @@ struct WeekStrip: View {
     @Binding var selected: Date
     /// Defaults to the agenda's first seven days (home); the day view passes the week it shows.
     var days: [Date]? = nil
+    @Environment(\.butlerAccent) private var accent
 
     var body: some View {
         HStack(spacing: 0) {
             ForEach(days ?? Array(agenda.days.prefix(7)), id: \.self) { day in
                 let isSelected = day == selected
                 let isToday = day == agenda.today
-                let fill: Color = isSelected ? (isToday ? .red : .primary) : .clear
+                let fill: Color = isSelected ? accent.fill : .clear
                 Button {
                     withAnimation(.snappy) { selected = day }
                 } label: {
@@ -374,12 +387,12 @@ struct WeekStrip: View {
                             .monospacedDigit()
                         HStack(spacing: 3) {
                             ForEach(agenda.dots(on: day), id: \.self) { kind in
-                                Circle().fill(isSelected ? Color(.systemBackground) : kind.color).frame(width: 5, height: 5)
+                                Circle().fill(isSelected ? accent.onFill : kind.color).frame(width: 5, height: 5)
                             }
                         }
                         .frame(height: 5)
                     }
-                    .foregroundStyle(isSelected ? Color(.systemBackground) : (isToday ? .red : .primary))
+                    .foregroundStyle(isSelected ? accent.onFill : (isToday ? .red : .primary))
                     .frame(width: 46)
                     .padding(.vertical, 8)
                     .background(fill, in: Capsule())
@@ -395,9 +408,12 @@ struct WeekStrip: View {
     }
 }
 
-/// Floating Liquid Glass input: camera island + capsule field with a prominent mic.
-struct HomeInputBar: View {
+/// Floating Liquid Glass input above the tab bar: camera island + capsule field with the brand mic.
+/// Each tab passes its own hint; tapping anywhere opens the conversation.
+struct TabInputBar: View {
+    let placeholder: String
     let onChat: (ChatStart) -> Void
+    @Environment(\.butlerAccent) private var accent
 
     var body: some View {
         GlassEffectContainer(spacing: 10) {
@@ -413,16 +429,17 @@ struct HomeInputBar: View {
 
                 HStack(spacing: 0) {
                     Button { onChat(.typing) } label: {
-                        Text("和管家说…")
+                        Text(placeholder)
                             .font(.body)
                             .foregroundStyle(.secondary)
+                            .lineLimit(1)
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                             .padding(.leading, 18)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("和管家聊聊")
-                    GlassCircleButton(systemImage: "mic.fill", tint: .blue) { onChat(.voice) }
+                    GlassCircleButton(systemImage: "mic.fill", tint: accent.fill, glyph: accent.onFill) { onChat(.voice) }
                         .padding(.trailing, 6)
                         .accessibilityLabel("说给管家听")
                 }
@@ -440,13 +457,14 @@ struct HomeInputBar: View {
 struct GlassCircleButton: View {
     let systemImage: String
     var tint: Color? = nil
+    var glyph: Color = .white
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Image(systemName: systemImage)
                 .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(tint == nil ? Color.primary : Color.white)
+                .foregroundStyle(tint == nil ? Color.primary : glyph)
                 .frame(width: 40, height: 40)
                 .contentShape(Circle())
         }

@@ -1,17 +1,26 @@
 import SwiftUI
 
-/// 家里的东西: every item grouped by place or by expiry, with search floating at the bottom.
+/// 家里: every item grouped by place or by expiry, quick questions, and search in the header.
 struct InventoryView: View {
     let facts: [LotFacts]
     var history: [LotFacts] = []
     let onOpenLot: (UUID) -> Void
     let onChat: (ChatStart) -> Void
+    /// Opens the conversation with a sentence already started.
+    let onAsk: (String) -> Void
 
     enum Scope: String, CaseIterable { case place = "按位置", expiry = "按到期", history = "已处理" }
 
     @State private var scope: Scope = .place
     @State private var query = ""
+    @State private var showingSearch = false
     @FocusState private var searching: Bool
+
+    private static let quickAsks = ["买了", "用完了", "放哪了？", "什么快过期了？", "还剩多少"]
+
+    private var dueThisWeek: Int {
+        facts.filter { !$0.quantityOnly && (0...7).contains($0.daysLeft ?? -1) }.count
+    }
 
     private var filtered: [LotFacts] {
         (scope == .history ? history : facts).filter { $0.matchesSearch(query) }
@@ -51,6 +60,19 @@ struct InventoryView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(Self.quickAsks, id: \.self) { ask in
+                            Button { onAsk(ask) } label: {
+                                Text(ask.hasSuffix("？") ? "“\(ask)”" : "“\(ask)…”").font(.subheadline)
+                                    .padding(.horizontal, 14).padding(.vertical, 8)
+                            }
+                            .buttonStyle(.plain)
+                            .glassEffect(.regular.interactive(), in: .capsule)
+                        }
+                    }
+                    .padding(.horizontal, 16).padding(.vertical, 2)
+                }
                 Picker("显示方式", selection: $scope) {
                     ForEach(Scope.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                 }
@@ -86,12 +108,51 @@ struct InventoryView: View {
             .padding(.bottom, 24)
         }
         .scrollDismissesKeyboard(.immediately)
-        .background(Color(.systemGroupedBackground))
-        .navigationTitle("家里的东西")
-        .navigationSubtitle("\(facts.count) 样在家")
-        .navigationBarTitleDisplayMode(.large)
-        .safeAreaBar(edge: .bottom) { searchBar }
+        .background { ButlerBackground() }
+        .toolbar(.hidden, for: .navigationBar)
+        .safeAreaBar(edge: .top) { header }
+        .safeAreaBar(edge: .bottom) {
+            TabInputBar(placeholder: "买了什么、用了什么…", onChat: onChat)
+        }
         .animation(.snappy, value: scope)
+        .animation(.snappy, value: showingSearch)
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("家里").font(.title.bold()).accessibilityAddTraits(.isHeader)
+                    Text(dueThisWeek > 0 ? "\(facts.count) 样在家 · 本周 \(dueThisWeek) 样到期" : "\(facts.count) 样在家")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                GlassEffectContainer(spacing: 8) {
+                    HStack(spacing: 0) {
+                        Button {
+                            showingSearch.toggle()
+                            if showingSearch { searching = true } else { query = "" }
+                        } label: {
+                            Image(systemName: showingSearch ? "xmark" : "magnifyingglass")
+                                .font(.system(size: 18, weight: .medium)).frame(width: 44, height: 44)
+                        }
+                        .accessibilityLabel(showingSearch ? "关闭搜索" : "搜索")
+                        Button { onChat(.typing) } label: {
+                            Image(systemName: "plus").font(.system(size: 18, weight: .medium)).frame(width: 44, height: 44)
+                        }
+                        .accessibilityLabel("跟管家说买了什么")
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 4)
+                    .glassEffect(.regular.interactive(), in: .capsule)
+                }
+            }
+            if showingSearch { searchField }
+        }
+        .foregroundStyle(.primary)
+        .padding(.horizontal, 20)
+        .padding(.top, 2)
+        .padding(.bottom, 8)
     }
 
     private var emptyText: String {
@@ -99,37 +160,24 @@ struct InventoryView: View {
         return scope == .history ? "还没有处理过的东西" : "家里还空着，跟管家说一句买了什么"
     }
 
-    /// iOS 26 puts search at the bottom, in reach of the thumb.
-    private var searchBar: some View {
-        GlassEffectContainer(spacing: 10) {
-            HStack(spacing: 10) {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                    TextField("搜索名称、品牌或位置", text: $query)
-                        .focused($searching)
-                        .submitLabel(.search)
-                    if !query.isEmpty {
-                        Button { query = "" } label: {
-                            Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("清除搜索")
-                    }
-                }
-                .padding(.horizontal, 18)
-                .frame(height: 52)
-                .glassEffect(.regular.interactive(), in: .capsule)
-
-                Button { onChat(.typing) } label: {
-                    Image(systemName: "plus").font(.system(size: 19, weight: .medium)).frame(width: 52, height: 52)
+    private var searchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField("搜索名称、品牌或位置", text: $query)
+                .focused($searching)
+                .submitLabel(.search)
+            if !query.isEmpty {
+                Button { query = "" } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-                .glassEffect(.regular.interactive(), in: .circle)
-                .accessibilityLabel("跟管家说买了什么")
+                .accessibilityLabel("清除搜索")
             }
         }
         .padding(.horizontal, 16)
-        .padding(.bottom, 4)
+        .frame(height: 44)
+        .glassEffect(.regular.interactive(), in: .capsule)
+        .transition(.move(edge: .top).combined(with: .opacity))
     }
 }
 

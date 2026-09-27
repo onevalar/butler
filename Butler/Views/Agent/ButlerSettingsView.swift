@@ -35,6 +35,14 @@ struct ButlerSettingsView: View {
                 }
 
                 Section {
+                    NavigationLink {
+                        AppearanceSettingsView()
+                    } label: {
+                        LabeledContent("外观", value: AccentChoice(rawValue: UserDefaults.standard.string(forKey: AccentChoice.storageKey) ?? "")?.title ?? "玻璃")
+                    }
+                }
+
+                Section {
                     LabeledContent("家里的东西", value: "\(activeLots.count) 件")
                     NavigationLink {
                         MemoriesView(chat: chat)
@@ -44,7 +52,7 @@ struct ButlerSettingsView: View {
                 } header: {
                     Text("管家记住的")
                 } footer: {
-                    Text("买了什么、还剩多少、放在哪，记在“家里的东西”里，在首页冰箱图标里查看。你的习惯和偏好（常在哪买、习惯放哪、忌口）记在“习惯和偏好”里。")
+                    Text("买了什么、还剩多少、放在哪，记在“家里”标签里。你的习惯和偏好（常在哪买、习惯放哪、忌口）记在“习惯和偏好”里。")
                 }
 
                 Section {
@@ -280,7 +288,7 @@ struct ButlerSettingsView: View {
     }
 }
 
-private struct MemoriesView: View {
+struct MemoriesView: View {
     let chat: ButlerChat
 
     var body: some View {
