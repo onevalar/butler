@@ -31,6 +31,10 @@ final class JevClient: ConditionJudge {
     var isEnabled: Bool {
         didSet { if enabledOverride == nil { defaults.set(isEnabled, forKey: "jevEnabled") } }
     }
+    /// Independent switch so the owner can compare prefetch with the original tool flow.
+    var prefetchEnabled: Bool {
+        didSet { defaults.set(prefetchEnabled, forKey: "jevPrefetchEnabled") }
+    }
     private(set) var isConfigured = false
     /// Transport attempts by this client instance, including failures; not a billing total.
     private(set) var callsThisSession = 0
@@ -46,6 +50,7 @@ final class JevClient: ConditionJudge {
         self.observeAttempt = observeAttempt
         // Existing installations keep their behavior until the owner explicitly switches Jev off.
         isEnabled = enabledOverride ?? (defaults.object(forKey: "jevEnabled") as? Bool ?? true)
+        prefetchEnabled = defaults.object(forKey: "jevPrefetchEnabled") as? Bool ?? true
         isConfigured = readKey() != nil
     }
 

@@ -4,6 +4,22 @@ import XCTest
 
 @MainActor
 final class JevClientTests: XCTestCase {
+    func testPrefetchPreferenceIsIndependentAndPersists() throws {
+        let suite = "jev-prefetch-setting-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let client = JevClient(defaults: defaults, keychainAccount: suite)
+        XCTAssertTrue(client.prefetchEnabled)
+        client.prefetchEnabled = false
+        client.isEnabled = false
+        client.isEnabled = true
+        XCTAssertFalse(client.prefetchEnabled, "the main switch must not overwrite the independent preference")
+        let reloaded = JevClient(defaults: defaults, keychainAccount: suite)
+        XCTAssertFalse(reloaded.prefetchEnabled)
+        XCTAssertTrue(reloaded.isEnabled)
+        XCTAssertEqual(reloaded.callsThisSession, 0)
+    }
+
     func testNonzeroCountSurvivesTogglesAndIncludesFailedAttempts() async throws {
         let suite = "jev-count-test-" + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))

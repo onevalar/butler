@@ -4,8 +4,16 @@ import Foundation
 @MainActor
 enum ToolConversationLoop {
     static func run(model: any LocalAgentModel, messages: inout [LocalAgentMessage],
+                    prefetched: [PrefetchedToolResult] = [],
                     rounds: Int = 30, execute: (LocalToolCall) async throws -> String,
                     log: (String) -> Void = ChatDiagnostics.log) async throws -> String? {
+        try Task.checkCancellation()
+        // These reads were executed by the phone, before the first model request. Keep their
+        // contents at tool-data priority, never splice a user's note into developer instructions.
+        if !prefetched.isEmpty {
+            messages.append(.assistant(LocalModelReply(text: "", calls: prefetched.map(\.call))))
+            for item in prefetched { messages.append(.tool(id: item.call.id, result: item.output)) }
+        }
         var completed: [String: String] = [:]
         for round in 0..<rounds {
             try Task.checkCancellation()

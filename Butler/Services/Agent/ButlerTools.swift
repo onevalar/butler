@@ -86,9 +86,9 @@ final class ButlerTools {
     }
 
     static let inventoryTools = #"""
-    {"type":"function","name":"search_inventory","description":"查询家里现有物品（真实库存）。query为空字符串时返回全部；按名称、品牌或存放位置的关键词匹配。include_finished=true 时额外返回最近30天已用完/丢掉/送人的记录。返回每件的 lot_id、数量、单位、位置、三种日期和剩余天数。","strict":true,"parameters":{"type":"object","properties":{"query":{"type":"string"},"include_finished":{"type":"boolean"}},"required":["query","include_finished"],"additionalProperties":false}},
+    {"type":"function","name":"search_inventory","description":"查询家里现有物品（真实库存）。query为空字符串时查询全部在库批次，但最多返回80条；按名称、品牌或存放位置的关键词匹配。include_finished=true 时额外查询最近30天已处理记录，最多返回30条。count是匹配的在库批次数，returned_count是实际返回数；complete/truncated说明查询范围内是否返回完整，有截断时应缩小关键词补查。返回每件的 lot_id、剩余数量、单位、位置、日期和剩余天数；不同单位的数量不可直接相加。","strict":true,"parameters":{"type":"object","properties":{"query":{"type":"string"},"include_finished":{"type":"boolean"}},"required":["query","include_finished"],"additionalProperties":false}},
     {"type":"function","name":"propose_add_items","description":"提出新增购买的物品，等用户确认后才入库。每件一条。package_expiry 只能填用户明确说出或包装上的日期(YYYY-MM-DD)，否则 null；planned_use_by 是用户想在哪天前吃完/用完的计划，没说就 null。storage 是用户说的存放位置（冷藏/冷冻/常温/卫生间/储物柜等），没说就 null。track：quantity 表示只记数量、不管过期（饮用水、纸巾、洗护清洁用品等用户不在乎过期的东西），expiry 表示要跟踪到期（食物、药等）。","strict":true,"parameters":{"type":"object","properties":{"items":{"type":"array","minItems":1,"maxItems":20,"items":{"type":"object","properties":{"name":{"type":"string"},"quantity":{"type":"integer","minimum":1,"maximum":999},"unit":{"type":"string"},"storage":{"type":["string","null"]},"package_expiry":{"type":["string","null"]},"planned_use_by":{"type":["string","null"]},"track":{"type":"string","enum":["expiry","quantity"]}},"required":["name","quantity","unit","storage","package_expiry","planned_use_by","track"],"additionalProperties":false}}},"required":["items"],"additionalProperties":false}},
-    {"type":"function","name":"propose_set_quantity","description":"把某件物品的剩余数量设置为指定值（不是扣减）。设为0等于用完。lot_id 必须来自 search_inventory。","strict":true,"parameters":{"type":"object","properties":{"lot_id":{"type":"string"},"quantity":{"type":"integer","minimum":0,"maximum":999}},"required":["lot_id","quantity"],"additionalProperties":false}},
+    {"type":"function","name":"propose_set_quantity","description":"把某件物品的剩余数量设置为指定值（不是扣减）。设为0等于用完。lot_id 必须来自本轮程序预取的真实库存或 search_inventory。","strict":true,"parameters":{"type":"object","properties":{"lot_id":{"type":"string"},"quantity":{"type":"integer","minimum":0,"maximum":999}},"required":["lot_id","quantity"],"additionalProperties":false}},
     {"type":"function","name":"propose_close","description":"把某件物品标记为处理掉：used_up 用完/吃完，discarded 丢掉，gifted 送人。","strict":true,"parameters":{"type":"object","properties":{"lot_id":{"type":"string"},"reason":{"type":"string","enum":["used_up","discarded","gifted"]}},"required":["lot_id","reason"],"additionalProperties":false}},
     {"type":"function","name":"propose_set_date","description":"设置或清除某件物品的日期。kind=package_expiry 包装有效期（只能用用户明确给出的日期），kind=planned_use_by 计划吃完/用完的日期。date 为 YYYY-MM-DD，null 表示清除。","strict":true,"parameters":{"type":"object","properties":{"lot_id":{"type":"string"},"kind":{"type":"string","enum":["package_expiry","planned_use_by"]},"date":{"type":["string","null"]}},"required":["lot_id","kind","date"],"additionalProperties":false}},
     {"type":"function","name":"propose_move","description":"更改某件物品的存放位置。","strict":true,"parameters":{"type":"object","properties":{"lot_id":{"type":"string"},"location":{"type":"string"}},"required":["lot_id","location"],"additionalProperties":false}},
@@ -96,7 +96,7 @@ final class ButlerTools {
     {"type":"function","name":"propose_reminder","description":"设一个定时提醒：到点时手机弹出通知。用于“11点提醒我热饭”“每天晚上9点提醒我吃药”“周六早上提醒我买菜”。time 为本地时间 YYYY-MM-DD HH:mm；repeat：none 只提醒一次，daily 每天这个时间，weekly 每周这一天这个时间。text 是通知里显示的话，简短具体。","strict":true,"parameters":{"type":"object","properties":{"text":{"type":"string"},"time":{"type":"string"},"repeat":{"type":"string","enum":["none","daily","weekly"]}},"required":["text","time","repeat"],"additionalProperties":false}},
     {"type":"function","name":"list_reminders","description":"查看已经设好、还没到点（或重复）的定时提醒。","strict":true,"parameters":{"type":"object","properties":{},"additionalProperties":false}},
     {"type":"function","name":"propose_cancel_reminder","description":"取消一个定时提醒，id 来自 list_reminders。","strict":true,"parameters":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":false}},
-    {"type":"function","name":"search_notes","description":"查询用户告诉过你的习惯、偏好和其他需要记住的事（例如常去哪家店买、放在哪里、家里的布局）。query 为空返回全部。","strict":true,"parameters":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}},
+    {"type":"function","name":"search_notes","description":"查询用户告诉过你的习惯、偏好和其他需要记住的事（例如常去哪家店买、放在哪里、家里的布局）。query 为空返回全部笔记。程序预取的笔记有容量上限，以complete/truncated判断是否完整；资料不足时可按关键词调用本工具补查。","strict":true,"parameters":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}},
     {"type":"function","name":"propose_note","description":"新增或更正一条需要长期记住的事（习惯、偏好、布局、提醒自己的话）。id=null 新建；更正时传原 id，保留没被纠正的内容。库存物品本身不要写成笔记。","strict":true,"parameters":{"type":"object","properties":{"id":{"type":["string","null"]},"title":{"type":"string"},"text":{"type":"string"}},"required":["id","title","text"],"additionalProperties":false}}
     """#
 
@@ -111,6 +111,40 @@ final class ButlerTools {
     """#
 
     // MARK: - Execution
+
+    /// Read-only, bounded data for this turn. Bypasses judgment, proposals and cached results.
+    /// A failed store is reported explicitly while the other selected store can still succeed.
+    func prefetch(inventory: Bool, notes: Bool) async throws -> [PrefetchedToolResult] {
+        try Task.checkCancellation()
+        var results: [PrefetchedToolResult] = []
+        let selected = [("search_inventory", inventory), ("search_notes", notes)]
+        for (name, enabled) in selected where enabled {
+            try Task.checkCancellation()
+            let isInventory = name == "search_inventory"
+            let arguments = isInventory ? #"{"query":"","include_finished":false}"# : #"{"query":""}"#
+            let call = LocalToolCall(id: "prefetch_" + UUID().uuidString, name: name, arguments: arguments)
+            let source = isInventory ? "local_inventory" : "local_notes"
+            let scope = isInventory ? Self.inventoryScope(query: "", includeFinished: false) : Self.notesScope
+            let output: String
+            do {
+                let value = isInventory
+                    ? try await searchInventory("", includeFinished: false, limit: 40, byteBudget: 12_000, useJev: false)
+                    : try prefetchedNotes()
+                try Task.checkCancellation()
+                output = try encode(value)
+            } catch {
+                if error is CancellationError || Task.isCancelled { throw CancellationError() }
+                output = try encode([
+                    "source": source, "queried_at": Self.queryTimestamp, "scope": scope,
+                    "error": error.localizedDescription, "count": NSNull(), "returned_count": 0,
+                    "complete": false, "truncated": false,
+                ] as [String: Any])
+            }
+            results.append(PrefetchedToolResult(call: call, output: output))
+        }
+        try Task.checkCancellation()
+        return results
+    }
 
     func execute(_ call: LocalToolCall) async -> String {
         insistedConcern = nil
@@ -516,7 +550,8 @@ final class ButlerTools {
         try activeLot(lot.id.uuidString)
     }
 
-    private func searchInventory(_ query: String, includeFinished: Bool) async throws -> [String: Any] {
+    private func searchInventory(_ query: String, includeFinished: Bool, limit: Int = 80,
+                                 byteBudget: Int? = nil, useJev: Bool = true) async throws -> [String: Any] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let lots = try allLots()
         // "牛奶 鸡蛋" or "牛奶、鸡蛋" matches either word.
@@ -534,12 +569,17 @@ final class ButlerTools {
         var active = lots.filter { $0.0.state == .active && matches($0.0, $0.1) }
             .map { LotFacts(lot: $0.0, product: $0.1) }
             .sorted { ($0.daysLeft ?? .max) < ($1.daysLeft ?? .max) }
-        var items = active.prefix(80).map(Self.describe)
-        var result: [String: Any] = ["today": Date.now.isoDay]
+        var items = active.map(Self.describe)
+        var semanticExcludedCount = 0
+        var result: [String: Any] = [
+            "today": Date.now.isoDay, "queried_at": Self.queryTimestamp, "source": "local_inventory",
+            "scope": Self.inventoryScope(query: query, includeFinished: includeFinished),
+            "count_unit": "inventory_lots", "quantity_semantics": "每个批次的quantity是该批次的剩余数量，单位见unit；不同单位不可直接相加",
+        ]
 
         // Jev between the data and the model: rank what the words matched, or find what they missed.
         // An overview ("" query) has nothing to disambiguate and is left as is.
-        if !words.isEmpty {
+        if useJev && !words.isEmpty {
             let pool = active.count >= 2 && active.count <= 30 ? active
                 : active.isEmpty && allActive.count <= 60 ? allActive : []
             let answers = await ask(pool.map {
@@ -556,23 +596,95 @@ final class ButlerTools {
                     return item
                 }
                 result["judged_by"] = "jev"
-                if keywordMissed { result["found_by"] = "jev（关键词没有直接命中）" }
+                if keywordMissed {
+                    semanticExcludedCount = pool.count - kept.count
+                    result["semantically_filtered"] = true
+                    result["semantic_excluded_count"] = semanticExcludedCount
+                    result["semantic_candidate_count"] = pool.count
+                    result["hint"] = "Jev相关性筛选可能漏项，不能据此断言没有；可查询全部或更换关键词"
+                    result["found_by"] = "jev（关键词没有直接命中）"
+                    result["scope"] = Self.inventoryScope(query: query, includeFinished: includeFinished,
+                                                          matchMethod: "jev_candidate_pool")
+                }
             } else if let jevFailure, !pool.isEmpty {
                 result["jev"] = "暂时不可用（\(jevFailure)），以下是未经判断的原始结果"
             }
         }
+        items = try Self.boundedRecords(items, limit: limit, byteBudget: byteBudget)
+        let activeComplete = items.count == active.count && semanticExcludedCount == 0
         result["count"] = active.count
+        result["returned_count"] = items.count
+        result["complete"] = activeComplete
+        result["truncated"] = items.count < active.count
+        result["active_complete"] = activeComplete
+        result["active_truncated"] = items.count < active.count
         result["items"] = items
         if includeFinished {
             let cutoff = Calendar.current.date(byAdding: .day, value: -30, to: .now) ?? .distantPast
-            result["finished"] = lots.filter { $0.0.state != .active && $0.0.updatedAt >= cutoff && matches($0.0, $0.1) }
-                .sorted { $0.0.updatedAt > $1.0.updatedAt }.prefix(30)
+            let finished = lots.filter { $0.0.state != .active && $0.0.updatedAt >= cutoff && matches($0.0, $0.1) }
+                .sorted { $0.0.updatedAt > $1.0.updatedAt }
+            let returned = finished.prefix(30)
                 .map { lot, product in
                     ["lot_id": lot.id.uuidString, "name": product?.canonicalName ?? "未命名",
                      "state": lot.state.rawValue, "when": lot.updatedAt.isoDay] as [String: Any]
                 }
+            result["finished"] = returned
+            result["finished_count"] = finished.count
+            result["finished_returned_count"] = returned.count
+            result["finished_complete"] = finished.count == returned.count
+            result["finished_truncated"] = finished.count > returned.count
+            result["complete"] = activeComplete && finished.count == returned.count
+            result["truncated"] = items.count < active.count || finished.count > returned.count
         }
         return result
+    }
+
+    private static var queryTimestamp: String { ISO8601DateFormatter().string(from: .now) }
+
+    private static func inventoryScope(query: String, includeFinished: Bool, matchMethod: String? = nil) -> [String: Any] {
+        ["query": query, "active_states": ["active"], "include_finished": includeFinished,
+         "match_method": matchMethod ?? (query.isEmpty ? "all_active" : "keyword"),
+         "complete_means": "all_matching_records_returned_within_scope",
+         "finished_window_days": includeFinished ? 30 : 0,
+         "finished_date_field": "updated_at", "conversation_history_included": false,
+         "older_finished_included": false]
+    }
+
+    private static var notesScope: [String: Any] {
+        ["query": "", "records": "current_saved_notes", "conversation_history_included": false,
+         "inventory_included": false, "previous_note_revisions_included": false]
+    }
+
+    private func prefetchedNotes() throws -> [String: Any] {
+        let records = notes.records
+        let all = records.map { note -> [String: Any] in
+            var record: [String: Any] = ["id": note.id.uuidString, "title": note.title,
+                                          "text": note.text, "revision": note.revision]
+            if let quantity = note.quantity { record["quantity"] = quantity }
+            return record
+        }
+        let returned = try Self.boundedRecords(all, limit: 20, byteBudget: 8_000)
+        return ["source": "local_notes", "queried_at": Self.queryTimestamp, "scope": Self.notesScope,
+                "count": records.count, "count_unit": "notes", "returned_count": returned.count,
+                "complete": returned.count == records.count, "truncated": returned.count < records.count,
+                "notes": returned]
+    }
+
+    /// Measures the exact JSON array's UTF-8 bytes, including brackets and commas. A record is
+    /// included whole or skipped; a large record must not hide smaller records after it.
+    private static func boundedRecords(_ records: [[String: Any]], limit: Int, byteBudget: Int?) throws -> [[String: Any]] {
+        guard let byteBudget else { return Array(records.prefix(limit)) }
+        var returned: [[String: Any]] = []
+        var bytes = 2 // []
+        for record in records {
+            guard returned.count < limit else { break }
+            let recordBytes = try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]).count
+            let addedBytes = recordBytes + (returned.isEmpty ? 0 : 1)
+            guard bytes + addedBytes <= byteBudget else { continue }
+            returned.append(record)
+            bytes += addedBytes
+        }
+        return returned
     }
 
     private static func describe(_ lot: LotFacts) -> [String: Any] {

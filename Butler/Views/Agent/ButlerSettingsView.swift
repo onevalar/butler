@@ -182,9 +182,13 @@ struct ButlerSettingsView: View {
 
                 Section {
                     if chat.jev.isConfigured {
-                        Toggle("启用 Jev 核对", isOn: Binding(
+                        Toggle("启用 Jev", isOn: Binding(
                             get: { chat.jev.isEnabled }, set: { chat.jev.isEnabled = $0 }
                         ))
+                        Toggle("提前准备查询资料", isOn: Binding(
+                            get: { chat.jev.prefetchEnabled }, set: { chat.jev.prefetchEnabled = $0 }
+                        ))
+                        .disabled(!chat.jev.isEnabled)
                         Label(chat.jev.isEnabled ? "已启用 · \(JevClient.model)" : "已关闭 · 密钥已保留",
                               systemImage: chat.jev.isEnabled ? "checkmark.circle.fill" : "pause.circle")
                             .foregroundStyle(chat.jev.isEnabled ? Color.blue : Color.secondary)
@@ -202,7 +206,7 @@ struct ButlerSettingsView: View {
                 } header: {
                     Text("Jev 条件判断")
                 } footer: {
-                    Text("启用后，管家查询物品和提出修改时会请 Jev 核对。关闭后不再发起新的 Jev 请求，已发出的请求仍可能完成；管家可继续使用。密钥保存在系统钥匙串，重新开启无需填写。\n请求数从这次管家载入时开始统计，重新载入会归零；失败也计入，不代表实际扣费。开关不会清零。")
+                    Text("提前准备资料：Jev 根据你的消息和上一轮问答判断是否需要库存、偏好笔记，让管家有机会直接回答；不确定或等待过久时照常查询。关闭这一项可比较原来的对话流程。\nJev 也会在部分查询和修改时核对；关闭 Jev 后不再发起新请求，已发出的请求仍可能完成。密钥保存在系统钥匙串。\n请求数从这次管家载入时开始统计，重新载入会归零；失败也计入，不代表实际扣费。开关不会清零。")
                 }
 
                 #if DEBUG
@@ -210,7 +214,7 @@ struct ButlerSettingsView: View {
                     NavigationLink("Jev 自动对照测试") { JevEvaluationView(connection: chat.connection) }
                         .disabled(chat.working)
                 } footer: {
-                    Text("使用虚构库存自动完成 32 个测试对话；消耗现有模型额度，不修改家里的真实数据。")
+                    Text("使用虚构库存自动完成 32 个测试对话；消耗现有模型额度，不修改家里的真实数据。这组测试比较修改核对流程，不包含提前准备查询资料。")
                 }
                 #endif
 

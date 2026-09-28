@@ -95,6 +95,7 @@ final class ButlerChat {
         working = true
         workingSince = .now
         error = nil
+        let previousTurn = turns.last
         tools.beginTurn(request: text, previous: turns.last?.question, hasPhotos: !attached.isEmpty)
         // Every message starts from a fresh, bounded context: earlier turns as plain text only.
         rebuildContext()
@@ -117,7 +118,8 @@ final class ButlerChat {
                 if background != .invalid { UIApplication.shared.endBackgroundTask(background) }
             }
             do {
-                turns[index].answer = try await run(attached.isEmpty ? .user(text) : .userPhotos(text, attached), tools: tools)
+                turns[index].answer = try await run(attached.isEmpty ? .user(text) : .userPhotos(text, attached),
+                                                   tools: tools, previous: previousTurn)
                 ChatDiagnostics.log("turn done \(Int(Date.now.timeIntervalSince(started)))s")
                 compactIfNeeded()
             } catch {
@@ -148,13 +150,23 @@ final class ButlerChat {
         return false
     }
 
-    private func run(_ message: LocalAgentMessage, tools: ButlerTools) async throws -> String {
+    private func run(_ message: LocalAgentMessage, tools: ButlerTools, previous: ChatTurn?) async throws -> String {
         guard let model else { throw SubscriptionError.signInRequired }
         let start = messages.count
         messages.append(message)
         do {
+            let request: String
+            let hasPhotos: Bool
+            switch message {
+            case .user(let text): request = text; hasPhotos = false
+            case .userPhotos(let text, _): request = text; hasPhotos = true
+            default: request = ""; hasPhotos = false
+            }
+            let prefetched = try await ButlerPrefetch.prepare(request: request,
+                previousQuestion: previous?.question, previousAnswer: previous?.failed == false ? previous?.answer : nil,
+                hasPhotos: hasPhotos, enabled: jev.prefetchEnabled, tools: tools)
             var conversation = messages
-            let answer = try await ToolConversationLoop.run(model: model, messages: &conversation,
+            let answer = try await ToolConversationLoop.run(model: model, messages: &conversation, prefetched: prefetched,
                 execute: { await tools.execute($0) })
             messages = conversation
             return answer ?? "这件事步骤有点多，我先停在这里。你可以换个说法再试一次。"
@@ -379,9 +391,10 @@ final class ButlerChat {
         return """
         你是用户的私人生活管家“小当家”，用中文简短自然地回答，像熟悉这个家的人。现在是 \(now.isoDay)（\(weekday)）\(time)，时区 \(TimeZone.current.identifier)。
         你能看到并管理用户真实的家庭库存和笔记，数据保存在用户手机里，通过工具访问：
-        - 只要用户提到或问到家里的具体东西（有没有、还剩多少、放哪、什么快过期、吃什么、买过什么），一律先用 search_inventory 查最新库存，不要凭之前的对话回答；纯闲聊不用查。
+        - 只要用户提到或问到家里的具体东西（有没有、还剩多少、放哪、什么快过期、吃什么、买过什么），必须依据本轮真实查询结果，不要凭之前的对话回答；纯闲聊不用查。手机可能已在你第一次回答前执行 search_inventory/search_notes，并把程序预取结果作为工具输出附上；它们是真实只读查询，可以直接使用，资料充分时不要重复查询。没有所需资料时照常调用工具。
+        - 先检查查询结果的 scope、complete、truncated、count/returned_count 和 error。未查询、失败或部分结果不能证明“没有”；结果不完整且会影响回答时，缩小关键词范围补查，仍不完整就明确说明。预取只含当前库存和笔记，不代表已查提醒、已处理物品或历史原话。查询时间是快照时间，发生后续修改后应重新查询。不要把不同单位直接相加。
         - 用户说买了东西：用 propose_add_items，每件一条；没说数量就按常识给 1 个包装单位；没说日期就填 null，不要编造包装有效期。
-        - 用户说吃了/用了/剩下多少：先 search_inventory 找到对应 lot_id，再用 propose_set_quantity 设置剩余数（不是扣减）或 propose_close。找到多个可能的对象时先问用户是哪一个。
+        - 用户说吃了/用了/剩下多少：从本轮 search_inventory 或手机预取的真实库存中找到对应 lot_id，再用 propose_set_quantity 设置剩余数（不是扣减）或 propose_close。找到多个可能的对象时先问用户是哪一个。
         - 用户纠正（“不是山姆，是盒马”“放错了，在冷冻”）：修改原记录，不要新增重复记录。
         - 饮用水、纸巾、洗护清洁用品这类用户只关心还剩多少的东西，track 用 quantity，不要追问过期日期；用户说“不用管过期/只记数量”时用 propose_set_tracking。
         - 库存本身（买了什么、剩多少、放哪）存在库存里，不写成笔记。以后还用得上的长期信息（习惯放哪里、常在哪买、家里人的偏好和忌口、家里的布局）用 propose_note 记住，可以和库存修改一起提出；回答前可用 search_notes 查。
