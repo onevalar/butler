@@ -37,6 +37,10 @@ GitHub 仓库授权已完成，以上工作流已在 App Store Connect 保存并
 
 [查看工作流和实际构建结果](https://appstoreconnect.apple.com/teams/52049831-307a-44f3-95af-623b83d68dc0/xcode-cloud/products/ECE4419A-60C4-420A-A42F-FEB1AC95BFB8/groups)。后台配置完成不等于每次构建都会成功，应以该提交的测试、归档和 TestFlight 分发结果为准。
 
+## 测试说明
+
+`TestFlight/WhatToTest.zh-Hans.txt` 随版本维护，Xcode Cloud 会自动将其附加为中文测试说明。后续功能变动时一并更新，避免测试者不知道应验证哪些行为。
+
 ## 手机端
 
 使用已加入测试组的 Apple 账号打开 TestFlight，安装“小当家”。后续可手动更新或开启自动更新；构建、处理、审核和通知均不是即时的。每个 TestFlight 构建有效期最多 90 天。
