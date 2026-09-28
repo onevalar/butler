@@ -1,5 +1,13 @@
 # Butler Project Development Log & Handover Notes
 
+## 云构建改为按需手动启动
+**Date:** 2026-09-28 · 用户要求节省构建额度
+
+- Main · TestFlight 已移除 Branch Changes，只保留 Manual Start，分支限定 main；没有自动推送、PR、标签或定时触发。
+- 保留已验证的测试、Release 归档、签名和内部 test 组分发。本次未启动新构建，最新已分发版本仍为 1.0 (24)。
+- 用户要求“提交推送”时只提交推送；明确要求构建或更新测试版时才手动启动。操作步骤、构建号和失败排查已写入 docs/XCODE_CLOUD.md。
+
+
 ## Xcode Cloud 自动构建与 TestFlight 内部分发
 **Date:** 2026-09-28 · main · Xcode 26.3 / 云端 iOS 26.3
 

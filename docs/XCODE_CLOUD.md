@@ -4,9 +4,9 @@
 
 ## 目标流程
 
-云端修改并推送 `main` → Xcode Cloud 测试与 Release 归档 → Apple 处理构建 → 分发给内部 TestFlight 测试组 → 手机安装/更新。
+云端修改并推送 `main` → 用户要求新测试版时手动启动工作流 → Xcode Cloud 测试与 Release 归档 → Apple 处理构建 → 分发给内部 TestFlight 测试组 → 手机安装/更新。
 
-TestFlight 是分发渠道；云端编译由 Xcode Cloud 完成。GitHub 上的代码必须先提交推送，手机才可能收到新版本。手机和开发电脑不必连接；初始化完成后的构建也不依赖开发电脑在线。
+TestFlight 是分发渠道；云端编译由 Xcode Cloud 完成。GitHub 上的代码必须先提交推送，再手动启动构建，手机才可能收到新版本。普通提交和推送不会触发云构建。手机和开发电脑不必连接；初始化完成后的构建也不依赖开发电脑在线。
 
 ## 仓库配置
 
@@ -22,8 +22,8 @@ TestFlight 是分发渠道；云端编译由 Xcode Cloud 完成。GitHub 上的�
 | 项目 | 设置 |
 |---|---|
 | 名称 | Main · TestFlight |
-| 触发 | `main` 的提交变动 |
-| 重复提交 | 自动取消同分支旧的未完成构建 |
+| 触发 | 仅 Manual Start，指定 `main`；已移除 Branch Changes |
+| 自动触发 | 无推送、PR、标签或定时触发 |
 | 工具链 | 固定 Xcode 26.3；升级后先验证 |
 | 测试 | iPhone 17 Pro，Xcode 26.3 对应的 iOS 26.3，Butler 全部测试，Required to Pass |
 | 归档 | iOS，Butler，Release，App Store 分发准备 |
@@ -41,7 +41,19 @@ GitHub 仓库授权已完成，以上工作流已在 App Store Connect 保存并
 
 2026-09-28，构建 23 手动验证成功；随后提交 `d11f06f` 自动触发构建 24，后台明确显示 `Code push`。构建 24 的 Test、Archive 和 TestFlight Internal Testing 三项均成功，版本 `1.0 (24)` 已进入内部 `test` 组，并带中文测试说明。真实手机安装与通知送达仍需测试者接受邀请后验证。
 
-纯文档记录可在提交信息加入 Apple 支持的 `[ci skip]`，避免无意义地重复分发；功能、测试或项目配置变更不要使用该标记。
+以上自动触发仅用于首次验证。按用户后续要求，现已移除 Branch Changes，只保留 main 的 Manual Start；不再每次推送都构建。正常提交不需要依赖 `[ci skip]`。
+
+## 后续构建操作
+
+用户约定：完成开发或“提交推送”不意味着需要新测试版。只有用户要求构建、发布测试版或更新 TestFlight 时，才启动云构建；不要为验证文档或配置变更重复构建。
+
+1. 确认要分发的功能已提交推送到 `main`，记录提交 SHA；更新 `TestFlight/WhatToTest.zh-Hans.txt`。
+2. 打开上述构建页面 → **Start Build** → **Main · TestFlight** → **Next** → 选择 **main** → **Start Build**。日常无需重新配置 Xcode、签名或仓库授权。
+3. 确认构建对应预期 SHA。构建号由 Xcode Cloud 自动递增；仅当其他渠道上传过更高构建号时，再通过 Settings → Build Number 调整下一次编号。
+4. 等待 Test、Archive、TestFlight Internal Testing 都成功，然后在 TestFlight 核对新版本属于内部 `test` 组。失败时先看对应日志，修复后再手动重试。
+5. 向用户报告版本/构建号、提交、测试与分发结果。本人需接受邀请并在手机 TestFlight 安装或更新；外部测试分发仍单独处理。
+
+已跑通的构建 23/24 等待约 5～7 分钟，消耗约 7 计算分钟/次，仅作经验估计；Apple 排队和处理可能延长耗时。
 
 ## 测试说明
 
