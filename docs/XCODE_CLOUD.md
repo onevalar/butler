@@ -4,7 +4,7 @@
 
 ## 目标流程
 
-云端修改并推送 `main` → 用户要求新测试版时手动启动工作流 → Xcode Cloud 测试与 Release 归档 → Apple 处理构建 → 分发给内部 TestFlight 测试组 → 手机安装/更新。
+云端修改并推送 `main` → 用户要求新测试版时手动启动工作流 → Xcode Cloud 测试与 Release 归档 → Apple 处理构建 → 分发给内部和外部 TestFlight `test` 测试组 → 手机安装/更新。
 
 TestFlight 是分发渠道；云端编译由 Xcode Cloud 完成。GitHub 上的代码必须先提交推送，再手动启动构建，手机才可能收到新版本。普通提交和推送不会触发云构建。手机和开发电脑不必连接；初始化完成后的构建也不依赖开发电脑在线。
 
@@ -27,13 +27,15 @@ TestFlight 是分发渠道；云端编译由 Xcode Cloud 完成。GitHub 上的�
 | 工具链 | 固定 Xcode 26.3；升级后先验证 |
 | 测试 | iPhone 17 Pro，Xcode 26.3 对应的 iOS 26.3，Butler 全部测试，Required to Pass |
 | 归档 | iOS，Butler，Release，App Store 分发准备 |
-| 分发 | 成功后自动交给内部 TestFlight `test` 组 |
+| 分发 | 同一 Archive 同时配置内部和外部 TestFlight `test` 组分发 |
+| 干净构建 | Clean 开启，满足外部测试分发要求 |
+| 编辑权限 | 按 Apple 要求限制为账户持有人、Admin / App Manager |
 
-“App Store 分发准备”仅生成适合 Apple 分发的签名归档，不会自动提交正式商店审核或上架。外部测试另受 TestFlight 审核和分组控制。
+“App Store 分发准备”仅生成适合 Apple 分发的签名归档，不会自动提交正式商店审核或上架。内部和外部复用同一次归档，不会为两组重复编译。外部测试仍受 Apple Beta App Review 约束，因此配置同时分发不等于两组同时可安装。
 
 ## 配置进度
 
-GitHub 仓库授权已完成，以上工作流已在 App Store Connect 保存并启用。首次初始化构建 1 已完成编译，但上传因构建号低于已有的 22 而失败；下一次构建号已设为 23，之后由 Xcode Cloud 递增。测试动作与内部组自动分发已补齐。
+GitHub 仓库授权已完成，以上工作流已在 App Store Connect 保存并启用。首次初始化构建 1 已完成编译，但上传因构建号低于已有的 22 而失败；下一次构建号已设为 23，之后由 Xcode Cloud 递增。测试动作与内部、外部组自动分发已补齐。
 
 [查看工作流和实际构建结果](https://appstoreconnect.apple.com/teams/52049831-307a-44f3-95af-623b83d68dc0/xcode-cloud/products/ECE4419A-60C4-420A-A42F-FEB1AC95BFB8/groups)。后台配置完成不等于每次构建都会成功，应以该提交的测试、归档和 TestFlight 分发结果为准。
 
@@ -43,6 +45,15 @@ GitHub 仓库授权已完成，以上工作流已在 App Store Connect 保存并
 
 以上自动触发仅用于首次验证。按用户后续要求，现已移除 Branch Changes，只保留 main 的 Manual Start；不再每次推送都构建。正常提交不需要依赖 `[ci skip]`。
 
+### 内外部双组分发（2026-09-28）
+
+工作流保存并重新加载确认包含两个 Post-Actions，均使用 `Archive - iOS`：
+
+- TestFlight Internal Testing → 内部 `test`（`abcf921d-805b-4c64-aa27-1b4e0f4c3e8b`）。
+- TestFlight External Testing → 外部 `test`（`fc3975ec-6907-48e5-a8a7-ac0df7264279`）。
+
+两组同名但不是同一组，检查时必须同时核对内部/外部类型。已有 `1.0 (24)` 已补加入外部组，提交时勾选 Automatically notify testers；后台现显示 Testing，并关联两组。手机通知和实际安装尚未验证。本次没有启动新构建；新的自动外部分发动作将在下一次用户要求的构建中验证运行结果。
+
 ## 后续构建操作
 
 用户约定：完成开发或“提交推送”不意味着需要新测试版。只有用户要求构建、发布测试版或更新 TestFlight 时，才启动云构建；不要为验证文档或配置变更重复构建。
@@ -50,8 +61,8 @@ GitHub 仓库授权已完成，以上工作流已在 App Store Connect 保存并
 1. 确认要分发的功能已提交推送到 `main`，记录提交 SHA；更新 `TestFlight/WhatToTest.zh-Hans.txt`。
 2. 打开上述构建页面 → **Start Build** → **Main · TestFlight** → **Next** → 选择 **main** → **Start Build**。日常无需重新配置 Xcode、签名或仓库授权。
 3. 确认构建对应预期 SHA。构建号由 Xcode Cloud 自动递增；仅当其他渠道上传过更高构建号时，再通过 Settings → Build Number 调整下一次编号。
-4. 等待 Test、Archive、TestFlight Internal Testing 都成功，然后在 TestFlight 核对新版本属于内部 `test` 组。失败时先看对应日志，修复后再手动重试。
-5. 向用户报告版本/构建号、提交、测试与分发结果。本人需接受邀请并在手机 TestFlight 安装或更新；外部测试分发仍单独处理。
+4. 等待 Test、Archive、TestFlight Internal Testing 和 TestFlight External Testing 完成，然后在 TestFlight 核对新版本关联内部、外部两个 `test` 组，并检查外部审核/可测试状态。失败时先看对应日志，修复后再手动重试；不要把等待审核误认为需要重新构建。
+5. 向用户报告版本/构建号、提交、测试与分发结果。测试者需接受对应组邀请并在手机 TestFlight 安装或更新；如外部仍待审核，分别报告内部可用和外部等待状态。
 
 已跑通的构建 23/24 等待约 5～7 分钟，消耗约 7 计算分钟/次，仅作经验估计；Apple 排队和处理可能延长耗时。
 

@@ -1,5 +1,14 @@
 # Butler Project Development Log & Handover Notes
 
+## Xcode Cloud 内外部双组分发
+**Date:** 2026-09-28 · Main · TestFlight
+
+- 工作流新增 TestFlight External Testing，指向现有外部 test 组；保留内部 test 分发，两者复用 Archive - iOS。保存后重新加载确认两个分发动作和 Apple 强制编辑权限限制均已生效。
+- 仍仅允许手动从 main 启动，无提交/推送触发；保留 Required to Pass 和 Clean。外部审核可能导致两组可安装时间不同。
+- 已有 1.0 (24) 补加入外部 test 组并开启自动通知，后台已显示 Testing，关联内部及外部两组。未验证手机通知送达或安装。
+- 本次未运行新构建；自动外部分发动作将在下次用户要求的构建中验证执行结果。操作和排查更新至 docs/XCODE_CLOUD.md。
+
+
 ## 云构建改为按需手动启动
 **Date:** 2026-09-28 · 用户要求节省构建额度
 
