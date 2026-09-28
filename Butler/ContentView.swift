@@ -77,7 +77,10 @@ struct ContentView: View {
         // Every page scrolls clear of the orb.
         .contentMargins(.bottom, 96, for: .scrollContent)
         .overlay {
-            OrbDockView(working: chat?.working ?? false, onOpenChat: { chatRequest = nil; showingChat = true }, onSend: sendSpoken)
+            GeometryReader { geometry in
+                OrbDockView(working: chat?.working ?? false, safeBottom: geometry.safeAreaInsets.bottom,
+                            onOpenChat: { chatRequest = nil; showingChat = true }, onSend: sendSpoken)
+            }
         }
         .environment(orbDock)
         .environment(calendarFeed)

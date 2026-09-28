@@ -63,6 +63,7 @@ final class MotionTilt {
 /// Tap the spread water: it gathers back into a ball.
 struct OrbDockView: View {
     var working: Bool
+    var safeBottom: CGFloat = 34
     let onOpenChat: () -> Void
     let onSend: (String) -> Void
 
@@ -72,6 +73,10 @@ struct OrbDockView: View {
     @State private var motion = MotionTilt()
     @State private var dictation = LiveDictation()
     @State private var holdTask: Task<Void, Never>?
+    @State private var finishTask: Task<Void, Never>?
+    @State private var press = OrbPress()
+    @State private var finishingVoice = false
+    @State private var voiceMessage: String?
     @State private var interaction = OrbInteraction()
     @State private var cancelling = false
     @State private var travel = OrbMotion()
@@ -86,20 +91,24 @@ struct OrbDockView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            if dock.listening { listeningOverlay.transition(.opacity) }
+            if dock.listening || finishingVoice || voiceMessage != nil { listeningOverlay.transition(.opacity) }
             GeometryReader { proxy in
                 let width = proxy.size.width
                 TimelineView(.animation(minimumInterval: 1.0 / 60, paused: !motionEnabled || (!moving && dock.spread))) { _ in
                     let time = ProcessInfo.processInfo.systemUptime
                     OrbStage(progress: travel.progress(at: time),
                              width: width, height: Self.areaHeight,
-                             ballScale: reduceMotion ? 1 : (dock.listening ? 1.3 : (interaction.pressing && !interaction.dragging ? 0.92 : 1)),
+                             safeBottom: safeBottom,
+                             pressure: press.depth(at: time) * (reduceMotion ? 0.3 : 1),
+                             contact: press.contact,
+                             audioLevel: reduceMotion || cancelling ? 0 : dictation.audioLevel,
+                             cancelling: cancelling,
                              pull: interaction.pull,
                              breath: motionEnabled ? (sin(time * .pi / 2.4) + 1) / 2 : 0.5,
-                             active: working || dock.listening, tilt: motionEnabled ? motion.tilt : .zero,
+                             active: working || dictation.listening, tilt: motionEnabled ? motion.tilt : .zero,
                              feedbackEnabled: motionEnabled && moving,
                              hint: dock.spread ? "聚回成球" : moving ? "再次轻点可反向" : "点一下和管家对话，按住直接说话",
-                             onChange: dragChanged, onEnd: dragEnded,
+                             onChange: { dragChanged($0, width: width) }, onEnd: dragEnded,
                              onCancel: { cancelInteraction(animated: motionEnabled) },
                              onActivate: activate)
                 }
@@ -109,9 +118,9 @@ struct OrbDockView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         .ignoresSafeArea(edges: .bottom)
         .ignoresSafeArea(.keyboard)
-        .animation(motionEnabled ? .spring(response: 0.35, dampingFraction: 0.7) : nil, value: dock.listening)
-        .animation(motionEnabled ? .spring(response: 0.25, dampingFraction: 0.7) : nil, value: interaction.pressing && !interaction.dragging)
-        .sensoryFeedback(.impact(weight: .medium), trigger: dock.listening) { _, new in new }
+        .animation(.easeOut(duration: 0.15), value: dock.listening)
+        .sensoryFeedback(.impact(weight: .light), trigger: dock.listening) { _, new in new }
+        .sensoryFeedback(.selection, trigger: cancelling)
         .onChange(of: dock.spread) { _, spread in
             cancelInteraction(animated: false)
             travel.move(to: spread, at: ProcessInfo.processInfo.systemUptime, animated: motionEnabled)
@@ -140,19 +149,29 @@ struct OrbDockView: View {
         .onDisappear {
             motion.stop()
             cancelInteraction(animated: false)
+            finishTask?.cancel()
+            dictation.cancel()
+            finishingVoice = false
+            voiceMessage = nil
         }
     }
 
     private func activate() {
+        guard !finishingVoice, voiceMessage == nil else { return }
         if moving || dock.spread { dock.spread.toggle() } else { onOpenChat() }
     }
 
-    private func dragChanged(_ value: DragGesture.Value) {
+    private func dragChanged(_ value: DragGesture.Value, width: CGFloat) {
+        guard !finishingVoice, voiceMessage == nil else { return }
+        let time = ProcessInfo.processInfo.systemUptime
+        let contact = CGPoint(x: (value.location.x - width / 2) / (Self.ballSize / 2),
+                              y: (value.location.y - (Self.areaHeight - Self.ballLift)) / (Self.ballSize / 2))
         if !interaction.pressing {
             interaction.begin(onBall: !moving && !dock.spread)
             if interaction.startedOnBall {
+                press.begin(at: contact, time: time)
                 holdTask = Task {
-                    do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
+                    do { try await Task.sleep(for: .seconds(OrbPress.holdDuration)) } catch { return }
                     guard !Task.isCancelled, interaction.pressing, !interaction.dragging else { return }
                     dock.listening = true
                     await dictation.start(after: "")
@@ -161,22 +180,35 @@ struct OrbDockView: View {
         }
         if dock.listening {
             cancelling = value.translation.height < -60
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                press.move(to: contact)
+                interaction.drag(value.translation)
+            }
         } else {
             // Resistance is spatial, not temporal: no spring trails the finger.
             var transaction = Transaction(animation: nil)
             transaction.disablesAnimations = true
-            withTransaction(transaction) { interaction.drag(value.translation) }
-            if interaction.dragging { holdTask?.cancel() }
+            withTransaction(transaction) {
+                press.move(to: contact)
+                interaction.drag(value.translation)
+            }
+            if interaction.dragging {
+                holdTask?.cancel()
+                if press.held { press.release(at: time, animated: motionEnabled) }
+            }
         }
     }
 
     private func dragEnded(_ value: DragGesture.Value) {
         guard interaction.pressing else { return }
-        holdTask?.cancel()
+        if !dock.listening || dictation.preparing { holdTask?.cancel() }
         let wasDragging = interaction.dragging
         let wasListening = dock.listening
         let wasBall = interaction.startedOnBall
         if wasListening { finishListening(cancel: value.translation.height < -60) }
+        press.release(at: ProcessInfo.processInfo.systemUptime, animated: motionEnabled)
         let velocity = OrbInteraction.returnVelocity(translation: value.translation, velocity: value.velocity)
         withAnimation(motionEnabled && wasDragging ? .interpolatingSpring(stiffness: 190, damping: 12, initialVelocity: velocity) : nil) {
             interaction.reset()
@@ -196,25 +228,31 @@ struct OrbDockView: View {
         withTransaction(transaction) {
             if dock.listening { finishListening(cancel: true) }
             interaction.reset()
+            press.release(at: ProcessInfo.processInfo.systemUptime, animated: animated)
         }
         cancelling = false
     }
 
     private func finishListening(cancel: Bool) {
         dock.listening = false
-        if cancel {
+        if cancel || !dictation.listening {
+            if !cancel { voiceMessage = dictation.error ?? "语音还没准备好，请再次按住说话。" }
             dictation.cancel()
             return
         }
-        Task {
+        finishingVoice = true
+        finishTask = Task {
             let text = await dictation.stop().trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !Task.isCancelled else { return }
+            finishingVoice = false
             if !text.isEmpty { onSend(text) }
+            else { voiceMessage = dictation.error ?? "没有听清，请再次按住说话。" }
         }
     }
 
     private var listeningOverlay: some View {
         ZStack(alignment: .bottom) {
-            Color(.systemBackground).opacity(0.55)
+            Color(.systemBackground).opacity(0.25)
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
             VStack(spacing: 10) {
@@ -224,20 +262,26 @@ struct OrbDockView: View {
                     .foregroundStyle(dictation.text.isEmpty ? .secondary : .primary)
                     .padding(.horizontal, 18).padding(.vertical, 14)
                     .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-                Text(cancelling ? "松开取消" : "松开就发给管家 · 上滑取消")
-                    .font(.footnote)
-                    .foregroundStyle(cancelling ? Color.red : .secondary)
+                if voiceMessage != nil {
+                    Button("知道了") { voiceMessage = nil }
+                        .buttonStyle(.bordered)
+                } else if !finishingVoice {
+                    Text(cancelling ? "松开取消" : "松开就发给管家 · 上滑取消")
+                        .font(.footnote)
+                        .foregroundStyle(cancelling ? Color.red : .secondary)
+                }
             }
             .padding(.horizontal, 24)
             .padding(.bottom, Self.areaHeight - 10)
-            .allowsHitTesting(false)
         }
         .ignoresSafeArea(edges: .bottom)
     }
 
     private var transcript: String {
+        if let voiceMessage { return voiceMessage }
+        if finishingVoice { return "正在整理语音…" }
         if let error = dictation.error { return error }
-        if dictation.preparing { return "正在准备语音…" }
+        if !dictation.listening { return "正在准备语音…" }
         return dictation.text.isEmpty ? "正在听…" : dictation.text
     }
 }
@@ -250,7 +294,11 @@ private struct OrbStage: View, Animatable {
     let progress: CGFloat
     let width: CGFloat
     let height: CGFloat
-    var ballScale: CGFloat
+    let safeBottom: CGFloat
+    let pressure: CGFloat
+    let contact: CGPoint
+    let audioLevel: CGFloat
+    let cancelling: Bool
     var pull: CGSize
     let breath: CGFloat
     let active: Bool
@@ -263,17 +311,16 @@ private struct OrbStage: View, Animatable {
     let onActivate: () -> Void
     @GestureState private var touching = false
 
-    var animatableData: AnimatablePair<CGFloat, AnimatablePair<CGFloat, CGFloat>> {
-        get { AnimatablePair(ballScale, AnimatablePair(pull.width, pull.height)) }
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(pull.width, pull.height) }
         set {
-            ballScale = newValue.first
-            pull = CGSize(width: newValue.second.first, height: newValue.second.second)
+            pull = CGSize(width: newValue.first, height: newValue.second)
         }
     }
 
     var body: some View {
-        let size = OrbDockView.ballSize * ballScale
-        let pose = OrbPose.at(progress)
+        let size = OrbDockView.ballSize
+        let pose = OrbPose.at(progress, safeBottom: safeBottom)
         let reach = hypot(pull.width, pull.height)
         let wobble = (breath - 0.5) * 0.024 * (1 - pose.water)
         let deformation = BallDeformation(scaleX: pose.scaleX * (1 + wobble), scaleY: pose.scaleY * (1 - wobble),
@@ -282,11 +329,17 @@ private struct OrbStage: View, Animatable {
         let contours = pose.peak == -18 ? [] : OrbLiquidGeometry(pose: pose, radius: size * 0.485).contours(width: width, height: height)
         // Drawing, hit testing and feedback all use this displayed frame. Extend
         // the outline by 16pt for a forgiving target, including the thin water edge.
-        let surface = LiquidSurface(pose: pose, radius: size * 0.485, contours: contours, deformation: deformation, pull: pull)
+        let surface = LiquidSurface(pose: pose, radius: size * 0.485, contours: contours,
+                                    deformation: deformation, pull: pull, pressure: pressure, contact: contact)
             .path(in: CGRect(x: 0, y: 0, width: width, height: height))
         let hitArea = Path { path in
             path.addPath(surface)
-            path.addPath(surface.strokedPath(StrokeStyle(lineWidth: 32)))
+            path.addPath(surface.strokedPath(StrokeStyle(lineWidth: 32 * (1 - pose.water) + 8 * pose.water)))
+            if progress == 1 {
+                // A local 44pt target, not an invisible full-width band over content.
+                path.addRoundedRect(in: CGRect(x: width / 2 - 30, y: height - 44, width: 60, height: 44),
+                                    cornerSize: CGSize(width: 16, height: 16))
+            }
         }
         ZStack {
             Color.clear.glassEffect(.clear, in: surface)
@@ -297,10 +350,30 @@ private struct OrbStage: View, Animatable {
                                            startPoint: .leading, endPoint: .trailing), lineWidth: 1.2)
                 .opacity(pose.water)
             if pose.water < 1 {
-                BallLight(size: size, deformation: deformation, active: active, tilt: tilt)
+                BallLight(size: size, deformation: deformation, active: active, tilt: tilt,
+                          pressure: pressure, contact: contact)
                     .offset(x: pull.width * 0.55 * (1 - pose.water), y: pull.height * 0.55 * (1 - pose.water))
                     .position(x: width / 2, y: height - OrbDockView.ballLift + pose.ballY)
                     .opacity(1 - pose.water)
+                // An indentation into the screen is read through its reflection.
+                // Offset it with the same pull as the surface, and clip all light to it.
+                Ellipse()
+                    .fill(RadialGradient(colors: [.black.opacity(0.12), .clear, .white.opacity(0.6)],
+                                         center: .center, startRadius: 0, endRadius: 14))
+                    .frame(width: 25 + pressure * 7, height: 18 + pressure * 5)
+                    .rotationEffect(Angle(radians: atan2(contact.y, contact.x)))
+                    .position(x: width / 2 + contact.x * size * 0.32 + pull.width * 0.55,
+                              y: height - OrbDockView.ballLift + contact.y * size * 0.32 + pull.height * 0.55)
+                    .opacity(pressure * (1 - pose.water))
+                    .clipShape(surface)
+                Circle()
+                    .fill(RadialGradient(colors: [cancelling ? Color.orange : Color.cyan, .clear],
+                                         center: .center, startRadius: 0, endRadius: 26))
+                    .frame(width: 52, height: 52)
+                    .position(x: width / 2 + pull.width * 0.55,
+                              y: height - OrbDockView.ballLift + pull.height * 0.55)
+                    .opacity((cancelling ? 0.25 : audioLevel * 0.3) * (1 - pose.water))
+                    .clipShape(surface)
             }
         }
         .frame(width: width, height: height)
@@ -352,13 +425,21 @@ private struct LiquidSurface: Shape {
     let contours: [[CGPoint]]
     var deformation: BallDeformation? = nil
     var pull: CGSize = .zero
+    var pressure: CGFloat = 0
+    var contact: CGPoint = .zero
 
     func path(in rect: CGRect) -> Path {
         let center = CGPoint(x: rect.midX, y: rect.maxY - OrbPose.ballLift + pose.ballY)
         var path = Path()
         if pose.peak == -18 {
-            path = Path(ellipseIn: CGRect(x: center.x - radius, y: center.y - radius,
-                                          width: radius * 2, height: radius * 2))
+            if pressure > 0.001 {
+                path.addLines(OrbPress.outline(radius: radius, contact: contact, depth: pressure)
+                    .map { CGPoint(x: center.x + $0.x, y: center.y + $0.y) })
+                path.closeSubpath()
+            } else {
+                path = Path(ellipseIn: CGRect(x: center.x - radius, y: center.y - radius,
+                                              width: radius * 2, height: radius * 2))
+            }
             let bend = deformation ?? BallDeformation(scaleX: pose.scaleX, scaleY: pose.scaleY)
             path = path.applying(bend.transform(center: center, radius: radius))
         } else {
@@ -384,6 +465,8 @@ private struct BallLight: View {
     var deformation = BallDeformation()
     let active: Bool
     let tilt: CGSize
+    let pressure: CGFloat
+    let contact: CGPoint
 
     var body: some View {
         // Room around the ball for it to stretch into.
@@ -398,7 +481,7 @@ private struct BallLight: View {
                                          center: .center, startRadius: 0, endRadius: size))
                     .frame(width: size * 2, height: size * 2)
             }
-            ButlerOrb(size: size, active: active, drift: true, tilt: tilt)
+            ButlerOrb(size: size, active: active, drift: true, tilt: tilt, pressure: pressure, contact: contact)
                 .rotationEffect(-deformation.angle)
                 .scaleEffect(x: 1 + deformation.stretch, y: 1 - deformation.stretch * 0.38)
                 .rotationEffect(deformation.angle)
