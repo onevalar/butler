@@ -37,6 +37,12 @@ GitHub 仓库授权已完成，以上工作流已在 App Store Connect 保存并
 
 [查看工作流和实际构建结果](https://appstoreconnect.apple.com/teams/52049831-307a-44f3-95af-623b83d68dc0/xcode-cloud/products/ECE4419A-60C4-420A-A42F-FEB1AC95BFB8/groups)。后台配置完成不等于每次构建都会成功，应以该提交的测试、归档和 TestFlight 分发结果为准。
 
+### 首次完整验证
+
+2026-09-28，构建 23 手动验证成功；随后提交 `d11f06f` 自动触发构建 24，后台明确显示 `Code push`。构建 24 的 Test、Archive 和 TestFlight Internal Testing 三项均成功，版本 `1.0 (24)` 已进入内部 `test` 组，并带中文测试说明。真实手机安装与通知送达仍需测试者接受邀请后验证。
+
+纯文档记录可在提交信息加入 Apple 支持的 `[ci skip]`，避免无意义地重复分发；功能、测试或项目配置变更不要使用该标记。
+
 ## 测试说明
 
 `TestFlight/WhatToTest.zh-Hans.txt` 随版本维护，Xcode Cloud 会自动将其附加为中文测试说明。后续功能变动时一并更新，避免测试者不知道应验证哪些行为。

@@ -1,5 +1,15 @@
 # Butler Project Development Log & Handover Notes
 
+## Xcode Cloud 自动构建与 TestFlight 内部分发
+**Date:** 2026-09-28 · main · Xcode 26.3 / 云端 iOS 26.3
+
+- 已共享 Butler Scheme，包含完整串行 ButlerTests 和 Release 归档；本机验证 237 项：236 通过、1 项原有跳过、0 失败。
+- 所有者完成 GitHub 授权。后台工作流 Main · TestFlight 监听 main 全部文件变更，自动取消同分支旧的同类构建，测试 Required to Pass，成功后分发内部 test 组。保留干净构建，不需要真实模型密钥。
+- 初始化构建 1 在上传阶段因旧构建号失败，已将后续起始号改为 23。构建 23 完整验证成功；提交 d11f06f 自动触发构建 24，来源 Code push，Test、Archive、TestFlight Internal Testing 全部成功，1.0 (24) 已出现于 TestFlight 并关联内部 test 组。
+- 加入 TestFlight/WhatToTest.zh-Hans.txt，云端确认保存中文测试说明。使用和排查方法见 docs/XCODE_CLOUD.md。
+- 当前所有者内部测试邀请仍为 Invited，需本人在手机接受邀请。未声称已完成真机安装验收，也未自动分发给外部组或提交正式商店审核。
+
+
 ## 页面上下文对话、设置工具、分阶段任务与输入框
 **Date:** 2026-09-28 · 基于 `8f1c3b9` 的本地开发 · Xcode 26.3 / iOS 26.2 Simulator
 
