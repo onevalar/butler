@@ -35,6 +35,7 @@ struct HomeView: View {
     let onOpenInventory: () -> Void
     let onOpenOverview: () -> Void
     let onOpenButler: () -> Void
+    var onOpenTasks: (() -> Void)? = nil
     let brief: DailyBrief
 
     var body: some View {
@@ -73,6 +74,10 @@ struct HomeView: View {
             Spacer(minLength: 8)
             GlassEffectContainer(spacing: 8) {
                 HStack(spacing: 0) {
+                    if let onOpenTasks {
+                        Button(action: onOpenTasks) { Image(systemName: "checklist").font(.system(size: 18, weight: .medium)).frame(width: 44, height: 44) }
+                            .accessibilityLabel("任务与历史")
+                    }
                     Button(action: onOpenOverview) {
                         Image(systemName: "calendar").font(.system(size: 18, weight: .medium)).frame(width: 44, height: 44)
                     }
@@ -255,6 +260,7 @@ struct HomeView: View {
 
 /// The butler's few sentences about today, with what they're based on.
 struct BriefCard: View {
+    var onOpenTasks: (() -> Void)? = nil
     let brief: DailyBrief
 
     var body: some View {

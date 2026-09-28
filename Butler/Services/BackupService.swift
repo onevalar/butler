@@ -4,10 +4,10 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// Everything Butler keeps, in one JSON file the owner can save to Files / iCloud Drive and restore later.
-/// Chat photos are not included (they can be large); the conversation text is.
+/// Includes scoped conversations, drafts and their photo attachments.
 struct ButlerBackup: Codable {
     static let format = "butler-backup"
-    static let currentVersion = 1
+    static let currentVersion = 2
 
     var format = ButlerBackup.format
     var version = ButlerBackup.currentVersion
@@ -72,8 +72,11 @@ enum BackupError: LocalizedError {
 enum BackupService {
     /// Phone-side files that make up the owner's data, by backup key.
     static let fileNames = ["notes": "agent-test-memory.json", "reminders": "reminders.json",
-                            "chat": "butler-chat.json", "chatSummary": "butler-chat-summary.json"]
-    static let settingKeys = ["butlerProfile", "expiryWarningDays", "reminderMinutes", "showSystemCalendar"]
+                            "chat": "butler-chat.json", "chatSummary": "butler-chat-summary.json",
+                            "chatDraft": "butler-chat-draft.json"]
+    static let settingKeys = ButlerSettingsService.definitions.map(\.key)
+    private static let chatFilePrefix = "chat-file/"
+    private static let chatDirectories = ["chat-sessions", "chat-photos"]
 
     nonisolated static var supportDirectory: URL? {
         try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
@@ -120,9 +123,15 @@ enum BackupService {
             for (key, name) in fileNames {
                 if let data = try? Data(contentsOf: directory.appendingPathComponent(name)) { backup.files[key] = data }
             }
+            for folder in chatDirectories {
+                try collectChatFiles(at: directory.appendingPathComponent(folder), relative: folder, into: &backup.files)
+            }
+            if backup.files["chatDraft"] == nil, let text = defaults.string(forKey: "butlerChatDraft") {
+                backup.files["chatDraft"] = try JSONEncoder().encode(ChatDraft(text: text))
+            }
         }
         for key in settingKeys {
-            if let value = defaults.object(forKey: key) { backup.settings[key] = "\(value)" }
+            backup.settings[key] = ButlerSettingsService.value(key, defaults: defaults)
         }
         return backup
     }
@@ -154,6 +163,10 @@ enum BackupService {
     /// so a wrong restore can still be undone by restoring that file.
     static func restore(_ backup: ButlerBackup, container: ModelContainer, directory: URL? = supportDirectory,
                         defaults: UserDefaults = .standard) throws {
+        // Validate paths before any existing state is replaced.
+        for key in backup.files.keys where key.hasPrefix(chatFilePrefix) {
+            guard validChatPath(String(key.dropFirst(chatFilePrefix.count))) else { throw BackupError.notABackup }
+        }
         if let directory {
             let safety = try encode(makeBackup(container: container, directory: directory, defaults: defaults))
             let folder = directory.appendingPathComponent("backups", isDirectory: true)
@@ -210,6 +223,12 @@ enum BackupService {
         try context.save()
 
         if let directory {
+            // Remove newer sessions too: a restore is a complete snapshot replacement.
+            // A safety backup including all attachments was already written above.
+            for folder in chatDirectories {
+                let url = directory.appendingPathComponent(folder, isDirectory: true)
+                if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+            }
             for (key, name) in fileNames {
                 let url = directory.appendingPathComponent(name)
                 if let data = backup.files[key] {
@@ -218,16 +237,48 @@ enum BackupService {
                     try? FileManager.default.removeItem(at: url)
                 }
             }
+            for (key, data) in backup.files where key.hasPrefix(chatFilePrefix) {
+                let relative = String(key.dropFirst(chatFilePrefix.count))
+                let url = directory.appendingPathComponent(relative)
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try data.write(to: url, options: .atomic)
+            }
         }
+        defaults.removeObject(forKey: "butlerChatDraft")
         for key in settingKeys {
             guard let value = backup.settings[key] else { continue }
             switch key {
             case "expiryWarningDays", "reminderMinutes": if let number = Int(value) { defaults.set(number, forKey: key) }
-            case "showSystemCalendar": defaults.set(value == "1" || value == "true", forKey: key)
+            case "showSystemCalendar", "ambientGlow", "jevEnabled", "jevPrefetchEnabled":
+                defaults.set(value == "1" || value == "true", forKey: key)
             default: defaults.set(value, forKey: key)
             }
         }
+        NotificationCenter.default.post(name: .butlerBackupRestored, object: nil)
     }
+
+    private static func validChatPath(_ path: String) -> Bool {
+        let parts = path.split(separator: "/", omittingEmptySubsequences: false)
+        return parts.count >= 2 && chatDirectories.contains(String(parts[0]))
+            && parts.allSatisfy { !$0.isEmpty && $0 != "." && $0 != ".." && !$0.contains("\\") }
+    }
+
+    private static func collectChatFiles(at url: URL, relative: String, into files: inout [String: Data]) throws {
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        let values = try url.resourceValues(forKeys: [.isSymbolicLinkKey, .isDirectoryKey, .isRegularFileKey])
+        guard values.isSymbolicLink != true else { return }
+        if values.isDirectory == true {
+            for child in try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil) {
+                try collectChatFiles(at: child, relative: relative + "/" + child.lastPathComponent, into: &files)
+            }
+        } else if values.isRegularFile == true, validChatPath(relative) {
+            files[chatFilePrefix + relative] = try Data(contentsOf: url)
+        }
+    }
+}
+
+extension Notification.Name {
+    static let butlerBackupRestored = Notification.Name("butlerBackupRestored")
 }
 
 /// The backup as a document for the system "save to Files" sheet.

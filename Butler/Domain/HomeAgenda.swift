@@ -109,16 +109,21 @@ struct HomeAgenda {
 
         for reminder in reminders {
             for day in days {
-                guard let start = occurrence(of: reminder, on: day, calendar: calendar) else { continue }
-                let repeatLabel: String? = switch reminder.repeats {
-                case .daily: "每天重复"
-                case .weekly: "每周重复"
-                case .none: nil
+                for start in ReminderSchedule.occurrences(reminder, on: day, calendar: calendar) {
+                    let repeatLabel: String?
+                    if reminder.phases != nil { repeatLabel = reminder.whenLabel }
+                    else {
+                        repeatLabel = switch reminder.repeats {
+                        case .daily: "每天重复"
+                        case .weekly: "每周重复"
+                        case .none: nil
+                        }
+                    }
+                    byDay[day, default: []].append(AgendaEntry(
+                        id: "reminder-\(reminder.id)-\(start.timeIntervalSince1970)", kind: .reminder, title: reminder.text,
+                        subtitle: repeatLabel, day: day, start: start, end: start.addingTimeInterval(30 * 60),
+                        target: .reminder(reminder.id), isRoutine: reminder.repeats == .daily && reminder.phases == nil))
                 }
-                byDay[day, default: []].append(AgendaEntry(
-                    id: "reminder-\(reminder.id)-\(day.timeIntervalSince1970)", kind: .reminder, title: reminder.text,
-                    subtitle: repeatLabel, day: day, start: start, end: start.addingTimeInterval(30 * 60),
-                    target: .reminder(reminder.id), isRoutine: reminder.repeats == .daily))
             }
         }
 
@@ -152,17 +157,6 @@ struct HomeAgenda {
 
     /// When a reminder fires on `day`, if it does.
     static func occurrence(of reminder: TimedReminder, on day: Date, calendar: Calendar) -> Date? {
-        let time = calendar.dateComponents([.hour, .minute], from: reminder.fireDate)
-        guard let at = calendar.date(bySettingHour: time.hour ?? 0, minute: time.minute ?? 0, second: 0, of: day) else { return nil }
-        switch reminder.repeats {
-        case .none:
-            return calendar.isDate(reminder.fireDate, inSameDayAs: day) ? reminder.fireDate : nil
-        case .daily:
-            return day >= calendar.startOfDay(for: reminder.createdAt) ? at : nil
-        case .weekly:
-            guard day >= calendar.startOfDay(for: reminder.createdAt),
-                  calendar.component(.weekday, from: day) == calendar.component(.weekday, from: reminder.fireDate) else { return nil }
-            return at
-        }
+        ReminderSchedule.occurrences(reminder, on: day, calendar: calendar).first
     }
 }

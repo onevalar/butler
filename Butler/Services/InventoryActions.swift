@@ -100,8 +100,10 @@ struct InventoryActions {
     }
 
     /// Adds several purchases in one transaction (all or nothing).
-    func add(_ items: [NewItem], sourceText: String) throws {
-        guard !items.isEmpty else { return }
+    @discardableResult
+    func add(_ items: [NewItem], sourceText: String) throws -> [UUID] {
+        guard !items.isEmpty else { return [] }
+        var createdLotIDs: [UUID] = []
         var operations: [PlannedInventoryOperation] = []
         for item in items {
             let kind = ProductLexicon.lookup(item.name)?.kind ?? .unknown
@@ -137,12 +139,15 @@ struct InventoryActions {
                 evidence.append(.init(fieldKey: .plannedUseByDate, source: .systemEstimate, confidence: 0.7,
                                       rawText: "本地默认：\(horizon.phrase)内用完"))
             }
+            let lotID = UUID()
+            createdLotIDs.append(lotID)
             operations.append(.init(operationID: UUID(), operation: .addLot(.init(
-                lotID: UUID(), productID: productID, quantity: item.quantity, unit: item.unit,
+                lotID: lotID, productID: productID, quantity: item.quantity, unit: item.unit,
                 purchasedAt: nil, packageExpiryDate: item.packageExpiry, estimatedExpiryDate: nil,
                 plannedUseByDate: planned, storageLocation: item.storage, evidence: evidence))))
         }
         try run(operations)
+        return createdLotIDs
     }
 
     private func run(_ operation: InventoryOperation) throws {

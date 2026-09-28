@@ -5,9 +5,11 @@ import Foundation
 struct ConversationArchive {
     let turns: [ChatTurn]
     /// First turn (0-based) the model already sees verbatim with every message.
-    let recentStart: Int
+    let recentStart: Int?
     /// Last turn (0-based) folded into the running summary, if any.
     let summaryThrough: Int?
+    var scopeDescription: String? = nil
+    var sources: [UUID: ChatScope] = [:]
 
     /// Size of one page of original conversation, in characters.
     static let pageBudget = 12_000
@@ -25,8 +27,9 @@ struct ConversationArchive {
                  "topics": indices.prefix(4).map { String(turns[$0].question.prefix(30)) }]
             }
         var result: [String: Any] = ["total_turns": turns.count, "days": days.suffix(90).map { $0 }]
-        if !turns.isEmpty { result["already_in_context_from_turn"] = number(recentStart) }
+        if !turns.isEmpty, let recentStart { result["already_in_context_from_turn"] = number(recentStart) }
         if let summaryThrough { result["summary_covers_up_to_turn"] = number(summaryThrough) }
+        if let scopeDescription { result["scope"] = scopeDescription }
         return result
     }
 
@@ -41,11 +44,15 @@ struct ConversationArchive {
         }
         let shown = hits.prefix(max(1, min(limit, 50))).map { index -> [String: Any] in
             let turn = turns[index]
-            return ["turn": number(index), "date": turn.date.isoDay,
-                    "user": String(turn.question.prefix(200)), "butler": String(turn.answer.prefix(300))]
+            var item: [String: Any] = ["turn": number(index), "turn_id": turn.id.uuidString, "date": turn.date.isoDay,
+                                      "user": String(turn.question.prefix(200)), "butler": String(turn.answer.prefix(300))]
+            addSource(of: turn, to: &item)
+            return item
         }
-        return ["total_matches": hits.count, "matches": shown,
-                "hint": "要看完整原文，用 read_conversation 按 turn 读取"]
+        var result: [String: Any] = ["total_matches": hits.count, "matches": shown,
+                                     "hint": "要看完整原文，用 read_conversation 按 turn 读取"]
+        if let scopeDescription { result["scope"] = scopeDescription }
+        return result
     }
 
     /// Original turns in order, one page at a time. `cursor` is the turn number to continue from.
@@ -61,9 +68,11 @@ struct ConversationArchive {
                 guard inRange(turn.date, from: from, to: to) else { continue }
                 var item: [String: Any] = [
                     "turn": number(index),
+                    "turn_id": turn.id.uuidString,
                     "time": turn.date.isoDay + " " + turn.date.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits)),
                     "user": turn.question, "butler": turn.answer,
                 ]
+                addSource(of: turn, to: &item)
                 if !turn.receipts.isEmpty { item["saved"] = turn.receipts }
                 if turn.photos?.isEmpty == false { item["had_photos"] = true }
                 let size = turn.question.count + turn.answer.count + 40
@@ -76,11 +85,18 @@ struct ConversationArchive {
             }
         }
         var result: [String: Any] = ["turns": page, "total_turns": turns.count]
+        if let scopeDescription { result["scope"] = scopeDescription }
         if let next {
             result["next_cursor"] = next
             result["hint"] = "还没读完，用 cursor=\(next) 继续读下一页"
         }
         return result
+    }
+
+    private func addSource(of turn: ChatTurn, to item: inout [String: Any]) {
+        guard let source = sources[turn.id] else { return }
+        item["source_scope"] = source.key
+        item["source_title"] = source.title
     }
 
     private func inRange(_ date: Date, from: Date?, to: Date?) -> Bool {

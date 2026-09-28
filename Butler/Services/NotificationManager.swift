@@ -33,6 +33,9 @@ enum LotReminderPolicy {
 final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationManager()
     private(set) var pendingLotID: UUID?
+    private(set) var pendingReminderID: UUID?
+    private(set) var reminderActionError: String?
+    weak var reminderStore: ReminderStore?
     private var syncTask: Task<Void, Never>?
     private let identifierPrefix = "butler.lot."
     private let receiptsKey = "butler.reminderReceipts.v1"
@@ -69,7 +72,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         center.setNotificationCategories([lot, reminder])
     }
 
-    func clearPendingRoute() { pendingLotID = nil }
+    func clearPendingRoute() { pendingLotID = nil; pendingReminderID = nil }
 
     /// Show reminders even while the app is open.
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
@@ -83,23 +86,48 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         let action = response.actionIdentifier
         let content = response.notification.request.content
         let lotID = (content.userInfo["lotID"] as? String).flatMap(UUID.init)
+        let reminderID = (content.userInfo["reminderID"] as? String).flatMap(UUID.init)
+            ?? Self.legacyReminderID(response.notification.request.identifier)
+        let reminderRevision = content.userInfo["reminderRevision"] as? Int ?? 1
         nonisolated(unsafe) let copy = content.mutableCopy() as? UNMutableNotificationContent
         nonisolated(unsafe) let done = completionHandler
         Task { @MainActor in
+            // A notification action can arrive before the first view has bound its store.
+            let tasks = reminderID == nil ? nil : (self.reminderStore ?? ReminderStore.openOnDevice())
+            if let tasks { self.reminderStore = tasks }
             switch action {
             case UNNotificationDefaultActionIdentifier:
                 if let lotID { self.pendingLotID = lotID }
+                if let reminderID { self.pendingReminderID = reminderID }
             case Self.usedUpAction:
                 if let lotID { self.markUsedUp(lotID) }
             case Self.snoozeLotAction:
                 if let lotID, let copy { await self.snooze(copy, id: self.snoozePrefix + lotID.uuidString, after: .tomorrow) }
             case Self.snoozeReminderAction:
-                if let copy { await self.snooze(copy, id: self.snoozePrefix + UUID().uuidString, after: .minutes(10)) }
+                if let reminderID {
+                    do { try await self.reminderStore?.snooze(id: reminderID, revision: reminderRevision) }
+                    catch { self.reminderActionError = error.localizedDescription }
+                }
+            case Self.doneReminderAction:
+                if let reminderID { self.completeReminder(reminderID, revision: reminderRevision) }
             default:
                 break
             }
+            await tasks?.waitForScheduling()
             done()
         }
+    }
+
+    /// Old installations used the task UUID directly in the request identifier.
+    nonisolated static func legacyReminderID(_ identifier: String) -> UUID? {
+        let prefix = "butler.reminder."
+        guard identifier.hasPrefix(prefix) else { return nil }
+        return UUID(uuidString: String(identifier.dropFirst(prefix.count).prefix(36)))
+    }
+
+    func completeReminder(_ id: UUID, revision: Int) {
+        do { try reminderStore?.completeFromNotification(id: id, revision: revision) }
+        catch { reminderActionError = error.localizedDescription }
     }
 
     /// The owner confirmed on the notification itself (after unlocking): the whole lot is used up.

@@ -1,3 +1,4 @@
+import AVFoundation
 import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
@@ -19,13 +20,24 @@ struct ButlerChatView: View {
     @Bindable var chat: ButlerChat
     @Binding var request: ChatRequest?
     var onQuickCapture: (() -> Void)? = nil
+    var onGeneralChat: (() -> Void)? = nil
+    var onSettingsChat: (() -> Void)? = nil
+    var hasOtherWork = false
+    var diaryTurns: [ChatTurn]? = nil
     let onClose: () -> Void
 
     @Environment(\.butlerAccent) private var accent
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
     @State private var scrollPolicy = ChatScrollPolicy()
     @State private var startTask: Task<Void, Never>?
     @State private var dictation = LiveDictation()
+    @State private var voiceSession = ChatDictationSession()
+    @State private var voiceTask: Task<Void, Never>?
+    @State private var voiceDeadlineTask: Task<Void, Never>?
+    @State private var visible = true
+    @State private var attachmentTask: Task<Void, Never>?
+    @State private var loadingAttachments = false
     @State private var showingCamera = false
     @State private var showingLibrary = false
     @State private var showingFiles = false
@@ -96,25 +108,62 @@ struct ButlerChatView: View {
             .safeAreaBar(edge: .bottom) { composer }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    HStack(spacing: 8) {
-                        ButlerOrb(size: 30, active: chat.working || dictation.listening)
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text("小当家").font(.subheadline.weight(.semibold))
-                            Text(statusLine).font(.caption2).foregroundStyle(.secondary)
-                        }
+                    ButlerOrb(size: 30, active: chat.working || dictation.listening)
+                        .accessibilityHidden(true)
+                }
+                ToolbarItem(placement: .principal) {
+                    VStack(spacing: 1) {
+                        Text(chat.contextTitle)
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Text(statusLine)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
-                    .padding(.trailing, 8)
-                    .fixedSize()
+                    .fixedSize(horizontal: false, vertical: true)
                     .accessibilityElement(children: .combine)
+                    .accessibilityAddTraits(.isHeader)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { dictation.cancel(); onClose() } label: { Image(systemName: "xmark") }
+                    Menu {
+                        if let onGeneralChat {
+                            Button("通用对话", systemImage: "bubble.left.and.bubble.right") {
+                                cancelListening(); onGeneralChat()
+                            }
+                        }
+                        if let onSettingsChat {
+                            Button("聊聊设置", systemImage: "slider.horizontal.3") {
+                                cancelListening(); onSettingsChat()
+                            }
+                        }
+                        Button("管家设置", systemImage: "gearshape") {
+                            cancelListening(); showingSettings = true
+                        }
+                    } label: { Image(systemName: "ellipsis") }
+                    .accessibilityLabel("对话与设置")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { cancelListening(); onClose() } label: { Image(systemName: "xmark") }
                         .accessibilityLabel("关闭")
                 }
             }
             .navigationBarTitleDisplayMode(.inline)
             .sheet(isPresented: $showingSettings) {
-                NavigationStack { ButlerSettingsView(chat: chat, showsDone: true) }
+                NavigationStack {
+                    ButlerSettingsView(chat: chat, showsDone: true, hasOtherWork: hasOtherWork, diaryTurns: diaryTurns)
+                        .toolbar {
+                            if let onSettingsChat {
+                                ToolbarItem(placement: .bottomBar) {
+                                    Button("就设置与管家聊聊") {
+                                        showingSettings = false
+                                        onSettingsChat()
+                                    }
+                                }
+                            }
+                        }
+                }
             }
             .fullScreenCover(isPresented: $showingCamera) {
                 PhotoCapture(onPhoto: { image in
@@ -132,27 +181,51 @@ struct ButlerChatView: View {
                     await Task.yield()
                     guard !Task.isCancelled else { return }
                     switch start {
-                    case .camera: showingCamera = true
-                    case .voice: await startListening()
-                    case .typing: composing = true
+                    case .camera: cancelListening(); showingCamera = true
+                    case .voice: startListening()
+                    case .typing: cancelListening(); composing = true
                     }
                 }
             }
+            .onAppear { visible = true }
             .onDisappear {
+                visible = false
                 startTask?.cancel()
                 startTask = nil
-                dictation.cancel()
+                cancelListening()
+                attachmentTask?.cancel()
+                attachmentTask = nil
+                loadingAttachments = false
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .background { cancelListening() }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)) { notification in
+                if let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                   AVAudioSession.InterruptionType(rawValue: raw) == .began {
+                    cancelListening()
+                }
+            }
+            .onChange(of: dictation.listening) { _, listening in
+                // LiveDictation also stops itself when recognition is interrupted.
+                if !listening, voiceSession.phase == .listening { cancelListening() }
             }
             .photosPicker(isPresented: $showingLibrary, selection: $pickedPhotos, maxSelectionCount: 4, matching: .images)
             .onChange(of: pickedPhotos) { _, items in
                 guard !items.isEmpty else { return }
                 pickedPhotos = []
-                Task {
+                attachmentTask?.cancel()
+                loadingAttachments = true
+                attachmentTask = Task { @MainActor in
                     for item in items {
                         if let data = try? await item.loadTransferable(type: Data.self), let jpeg = UIImage(data: data)?.chatJPEG() {
+                            guard !Task.isCancelled, visible else { return }
                             chat.photos.append(jpeg)
                         }
                     }
+                    guard !Task.isCancelled else { return }
+                    loadingAttachments = false
+                    attachmentTask = nil
                 }
             }
             .fileImporter(isPresented: $showingFiles, allowedContentTypes: [.image], allowsMultipleSelection: true) { result in
@@ -187,14 +260,42 @@ struct ButlerChatView: View {
 
     // MARK: - Conversation
 
+    private var welcomeContent: (title: String, detail: String, examples: [String]) {
+        switch chat.scope {
+        case .general:
+            ("家里的事，直接跟我说", "买了什么、吃了什么、需要记住什么，或者让我安排提醒。这里保留你的通用对话。",
+             ["盒马买了两盒草莓和一箱牛奶", "今晚用家里的食材做什么？", "11 点提醒我热剩饭"])
+        case .inventory:
+            ("一起看看家里的东西", "可以查询库存、整理位置，或记录新买和用掉的东西。这里保留关于库存的对话。",
+             ["冰箱里有什么快过期了？", "哪些东西快用完了？", "帮我看看今天该补买什么"])
+        case .lot:
+            ("这件物品的事，在这里聊", "管家会读取这件物品的最新记录。你可以直接说“这个”，查询数量、调整位置或回顾变化。",
+             ["这个还剩多少，什么时候用完合适？", "这个放到冷冻了", "看看这个物品之前的变动"])
+        case .task:
+            ("继续处理这个任务", "查看提醒规则和处理记录，也可以调整安排、暂停或完成这个任务。修改前会给你确认。",
+             ["这个任务接下来怎么提醒？", "把这个任务暂停", "这个任务我已经完成了"])
+        case .settings:
+            ("把管家调成你喜欢的样子", "可以查看和修改已有配置，或补充关于你和家里的信息。系统授权和密钥在对应设置入口处理。",
+             ["看看当前可以修改哪些设置", "把显示模式改成深色", "默认提醒时间改成早上八点半"])
+        case .day(let day):
+            ("聊聊这一天的安排", "这里关联 \(day) 的日程。可以查看已有任务，或为这一天安排提醒。",
+             ["这天有哪些任务？", "这天有什么物品需要处理？", "帮我梳理这一天的安排"])
+        }
+    }
+
     private var welcome: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("家里的事，直接跟我说").font(.title2.bold())
-            Text("买了什么、吃了什么、放在哪，或者问我家里还有什么、什么快过期。也可以拍一张买回来的东西或小票，或者让我到点提醒你。")
+            Text(welcomeContent.title).font(.title2.bold())
+            Text(welcomeContent.detail)
                 .font(.subheadline).foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 8) {
-                ForEach(["盒马买了两盒草莓和一箱牛奶", "鸡蛋还剩 4 个", "冰箱里有什么快过期了？", "11 点提醒我热剩饭"], id: \.self) { example in
-                    Button { chat.draft = example; composing = true } label: {
+                ForEach(welcomeContent.examples, id: \.self) { example in
+                    Button {
+                        cancelListening()
+                        if chat.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { chat.draft = example }
+                        else { chat.draft += (chat.draft.hasSuffix("\n") ? "" : "\n") + example }
+                        composing = true
+                    } label: {
                         Text(example)
                             .font(.subheadline)
                             .padding(.horizontal, 14).padding(.vertical, 8)
@@ -209,7 +310,7 @@ struct ButlerChatView: View {
                     .buttonStyle(AccentButtonStyle())
                     .padding(.top, 8)
                 if let onQuickCapture {
-                    Button("不登录，先用本机快速记一笔") { dictation.cancel(); onQuickCapture() }
+                    Button("不登录，先用本机快速记一笔") { cancelListening(); onQuickCapture() }
                         .font(.subheadline)
                         .frame(maxWidth: .infinity)
                 }
@@ -264,8 +365,8 @@ struct ButlerChatView: View {
 
     private func color(for change: PendingChange) -> Color {
         switch change.kind {
-        case .reminder, .cancelReminder: .blue
-        case .note: .gray
+        case .reminder, .cancelReminder, .taskPlan, .taskAction: .blue
+        case .note, .settings: .gray
         case .add: .green
         default: .orange
         }
@@ -323,6 +424,10 @@ struct ButlerChatView: View {
                     .padding(.horizontal, 12).padding(.vertical, 6)
                     .glassEffect(.regular, in: .capsule)
             }
+            if let hint = composerHint {
+                Text(hint).font(.footnote).foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+            }
             if !chat.photos.isEmpty { attachedPhotos }
             GlassEffectContainer(spacing: 10) {
                 HStack(alignment: .bottom, spacing: 10) {
@@ -335,55 +440,121 @@ struct ButlerChatView: View {
                     }
                     .buttonStyle(.plain)
                     .glassEffect(.regular.interactive(), in: .circle)
-                    .disabled(chat.working || dictation.listening)
+                    .disabled(voiceSession.phase != .idle || loadingAttachments)
                     .accessibilityLabel("添加照片")
 
                     HStack(alignment: .bottom, spacing: 6) {
                         TextField(placeholder, text: $chat.draft, axis: .vertical)
                             .lineLimit(1...6)
                             .focused($composing)
+                            // Recognition owns this draft until its last result is finalized.
+                            // Never overwrite a manual edit with a late partial transcript.
+                            .disabled(!composerPolicy.canEditText)
                             .padding(.leading, 18)
                             .padding(.vertical, 15)
-                        trailingButton
-                            .padding(.trailing, 6).padding(.bottom, 6)
+                            .padding(.trailing, composerPolicy.showsInlineMicrophone ? 0 : 18)
+                        if composerPolicy.showsInlineMicrophone {
+                            Button(action: startListening) {
+                                Image(systemName: "mic")
+                                    .font(.system(size: 20, weight: .regular))
+                                    .frame(width: 44, height: 44)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.secondary)
+                            .disabled(!composerPolicy.canStartVoice || loadingAttachments)
+                            .accessibilityLabel("用语音补充")
+                            .accessibilityHint(chat.working ? "管家回答结束后可用" : "停止听写后可编辑和发送")
+                            .padding(.trailing, 4).padding(.bottom, 4)
+                        }
                     }
                     .frame(minHeight: 52)
                     .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+
+                    trailingButton
                 }
             }
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 4)
         .onChange(of: dictation.text) { _, text in
-            if dictation.listening { chat.draft = text }
+            if visible, voiceSession.phase == .listening || voiceSession.phase == .finishing {
+                chat.draft = text
+            }
         }
     }
 
-    private var placeholder: String {
-        dictation.preparing ? "正在准备语音…" : dictation.listening ? "正在听，说完点停止" : "和管家说…"
+    private var composerPolicy: ChatComposerPolicy {
+        ChatComposerPolicy(draft: chat.draft, photoCount: chat.photos.count + (loadingAttachments ? 1 : 0),
+                           working: chat.working, voicePhase: voiceSession.phase)
     }
 
-    /// Mic when empty, send when there's something to send, stop while listening or thinking.
+    private var placeholder: String {
+        switch voiceSession.phase {
+        case .preparing: "正在准备语音…"
+        case .listening: "正在听，说完点停止"
+        case .finishing: "正在整理最后一句…"
+        case .idle: chat.working ? "可以先写下一条…" : "和管家说…"
+        }
+    }
+
+    private var composerHint: String? {
+        switch voiceSession.phase {
+        case .preparing: return "正在准备麦克风，点右侧可取消。"
+        case .listening: return "正在听写，停止后可以修改文字再发送。"
+        case .finishing: return "正在整理最后一句，点右侧可保留当前文字。"
+        case .idle: break
+        }
+        if loadingAttachments { return "正在添加照片…" }
+        if chat.draft.count > 8_000 { return "内容超过 8,000 字，请分成几条发送。" }
+        if composerPolicy.hasContent, !chat.connection.isLoggedIn { return "请先在管家设置里登录，草稿会保留。" }
+        if composerPolicy.hasContent, chat.tools == nil { return "暂时无法读取本机资料，草稿已保留。" }
+        if chat.working { return "管家正在回答，你可以先写下一条。" }
+        return nil
+    }
+
     @ViewBuilder
     private var trailingButton: some View {
-        if chat.working {
-            GlassCircleButton(systemImage: "stop.fill") { chat.stop() }
-                .accessibilityLabel("停止")
-        } else if dictation.listening {
-            GlassCircleButton(systemImage: "stop.fill", tint: .red) { Task { chat.draft = await dictation.stop() } }
-                .accessibilityLabel("停止听写")
-        } else if chat.canSend {
-            GlassCircleButton(systemImage: "arrow.up", tint: accent.fill, glyph: accent.onFill) {
+        switch composerPolicy.action {
+        case .stopResponse:
+            composerButton("stop.fill", label: "停止生成") { chat.stop() }
+        case .cancelPreparation:
+            composerButton("xmark", label: "取消准备语音", busy: true) { cancelListening() }
+        case .stopDictation:
+            composerButton("stop.fill", label: "停止听写", tint: .red, glyph: .white) { stopListening() }
+        case .finishDictation:
+            composerButton("xmark", label: "保留当前文字并结束语音收尾", busy: true) { cancelListening() }
+        case .send:
+            composerButton("arrow.up", label: "发送", tint: accent.fill, glyph: accent.onFill) {
+                guard chat.canSend, !loadingAttachments, voiceSession.phase == .idle else { return }
                 scrollPolicy.sendToLatest()
                 composing = false
                 chat.send()
             }
-            .accessibilityLabel("发送")
-        } else {
-            GlassCircleButton(systemImage: "mic.fill", tint: accent.fill, glyph: accent.onFill) { Task { await startListening() } }
-                .disabled(dictation.preparing)
-                .accessibilityLabel("说话")
+            .disabled(!chat.canSend || loadingAttachments)
+        case .voice:
+            composerButton("mic.fill", label: "开始语音输入", tint: accent.fill, glyph: accent.onFill) { startListening() }
+                .disabled(loadingAttachments)
         }
+    }
+
+    private func composerButton(_ symbol: String, label: String, tint: Color? = nil,
+                                glyph: Color = .primary, busy: Bool = false,
+                                action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            ZStack {
+                if busy { ProgressView().controlSize(.small).offset(y: -9) }
+                Image(systemName: symbol)
+                    .font(.system(size: busy ? 11 : 20, weight: .semibold))
+                    .offset(y: busy ? 10 : 0)
+            }
+            .foregroundStyle(glyph)
+            .frame(width: 52, height: 52)
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .glassEffect(tint.map { Glass.regular.tint($0).interactive() } ?? Glass.regular.interactive(), in: .circle)
+        .accessibilityLabel(label)
     }
 
     private var attachedPhotos: some View {
@@ -413,8 +584,46 @@ struct ButlerChatView: View {
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
-    private func startListening() async {
+    private func startListening() {
+        guard visible, composerPolicy.canStartVoice, !loadingAttachments,
+              let id = voiceSession.begin() else { return }
         composing = false
-        await dictation.start(after: chat.draft)
+        voiceTask = Task { @MainActor in
+            await dictation.start(after: chat.draft)
+            guard !Task.isCancelled, visible, voiceSession.accepts(id) else { return }
+            voiceSession.prepared(id, listening: dictation.listening)
+            voiceTask = nil
+        }
+    }
+
+    private func stopListening() {
+        guard let id = voiceSession.finish() else { return }
+        voiceTask = Task { @MainActor in
+            let text = await dictation.stop()
+            guard !Task.isCancelled, visible, voiceSession.end(id) else { return }
+            chat.draft = text
+            voiceDeadlineTask?.cancel()
+            voiceDeadlineTask = nil
+            voiceTask = nil
+        }
+        // Speech services must not leave sending or manual editing blocked indefinitely.
+        voiceDeadlineTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled, voiceSession.accepts(id) else { return }
+            cancelListening()
+            dictation.error = "语音收尾超时，已保留识别文字，请检查后发送。"
+        }
+    }
+
+    private func cancelListening() {
+        if voiceSession.phase == .listening || voiceSession.phase == .finishing {
+            chat.draft = dictation.text
+        }
+        voiceSession.cancel()
+        voiceTask?.cancel()
+        voiceTask = nil
+        voiceDeadlineTask?.cancel()
+        voiceDeadlineTask = nil
+        dictation.cancel()
     }
 }

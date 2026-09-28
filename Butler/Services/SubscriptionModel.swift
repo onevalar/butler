@@ -29,6 +29,10 @@ final class SubscriptionModel: LocalAgentModel {
     /// Last time the model answered; after a quiet spell the service is checked quickly before waiting on it.
     private var lastAnswer: Date?
 
+    // No executor-bound cleanup. Avoid the iOS 26.2 isolated-deinit runtime fault
+    // when a scoped conversation releases its transport synchronously.
+    nonisolated deinit {}
+
     func reply(to messages: [LocalAgentMessage]) async throws -> LocalModelReply {
         if lastAnswer.map({ Date.now.timeIntervalSince($0) > 120 }) ?? true {
             try await ensureReachable()

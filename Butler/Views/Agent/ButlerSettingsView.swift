@@ -8,6 +8,8 @@ struct ButlerSettingsView: View {
     @Bindable var chat: ButlerChat
     /// Shown as a sheet from the conversation: add a 完成 button.
     var showsDone = false
+    var hasOtherWork = false
+    var diaryTurns: [ChatTurn]? = nil
     @FocusState private var editingProfile: Bool
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
@@ -44,7 +46,7 @@ struct ButlerSettingsView: View {
                 .listRowInsets(EdgeInsets())
 
                 Section {
-                    DiaryStrip(turns: chat.turns)
+                    DiaryStrip(turns: diaryTurns ?? chat.turns)
                 } header: {
                     Text("管家日记").font(.title3.bold()).foregroundStyle(.primary).textCase(nil)
                 }
@@ -150,13 +152,14 @@ struct ButlerSettingsView: View {
                 } header: {
                     Text("定时提醒")
                 } footer: {
-                    Text("左滑可以删除。")
+                    Text("左滑可以取消提醒，任务历史会保留。")
                 }
 
                 Section {
                     if chat.connection.isLoggedIn {
                         Label("已登录 · GPT-6 Sol", systemImage: "checkmark.circle.fill").foregroundStyle(.blue)
                         Button("退出登录", role: .destructive) { chat.signOut() }
+                            .disabled(chat.working || hasOtherWork)
                     } else if let code = chat.connection.deviceCode {
                         Text("1. 复制登录码")
                         HStack {
@@ -194,6 +197,7 @@ struct ButlerSettingsView: View {
                             .foregroundStyle(chat.jev.isEnabled ? Color.blue : Color.secondary)
                         LabeledContent("Jev 请求尝试次数", value: "\(chat.jev.callsThisSession) 次")
                         Button("移除密钥", role: .destructive) { chat.jev.removeKey() }
+                            .disabled(chat.working || hasOtherWork)
                     } else {
                         SecureField("粘贴 Jev API 密钥", text: $jevKey)
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
@@ -212,7 +216,7 @@ struct ButlerSettingsView: View {
                 #if DEBUG
                 Section {
                     NavigationLink("Jev 自动对照测试") { JevEvaluationView(connection: chat.connection) }
-                        .disabled(chat.working)
+                        .disabled(chat.working || hasOtherWork)
                 } footer: {
                     Text("使用虚构库存自动完成 32 个测试对话；消耗现有模型额度，不修改家里的真实数据。这组测试比较修改核对流程，不包含提前准备查询资料。")
                 }
@@ -238,14 +242,14 @@ struct ButlerSettingsView: View {
                 } header: {
                     Text("备份与恢复")
                 } footer: {
-                    Text("备份包含家里的东西和变动记录、习惯和偏好、提醒、对话文字和设置，不含对话里的照片。建议存到 iCloud 云盘，换手机或重装后可以恢复。")
+                    Text("备份包含家里的东西和变动记录、习惯和偏好、任务、全部会话、草稿、照片和设置。建议存到 iCloud 云盘，换手机或重装后可以恢复。")
                 }
 
                 Section {
-                    Button("清空对话记录", role: .destructive) { confirmClear = true }
+                    Button("清空当前对话记录", role: .destructive) { confirmClear = true }
                         .disabled(chat.turns.isEmpty || chat.working)
                 } footer: {
-                    Text("只清空聊天内容和聊天里的照片，不影响库存和管家记住的事。")
+                    Text("只清空当前会话的聊天内容和照片，其他会话、库存和管家记住的事不受影响。")
                 }
 
                 Section {
@@ -294,13 +298,14 @@ struct ButlerSettingsView: View {
                     Text("备份时间 \(backup.createdAt.formatted(date: .abbreviated, time: .shortened))，家里 \(backup.activeLotCount) 样东西。现在的数据会先自动保存一份，再被替换。")
                 }
             }
-            .confirmationDialog("清空全部对话记录？", isPresented: $confirmClear, titleVisibility: .visible) {
+            .confirmationDialog("清空当前对话记录？", isPresented: $confirmClear, titleVisibility: .visible) {
                 Button("清空", role: .destructive) { chat.clearHistory() }
             }
         }
     }
 
     private func restorePending() {
+        guard !hasOtherWork && !chat.working else { backupMessage = "请先停止正在进行的对话，再恢复备份。"; return }
         guard let backup = pendingRestore else { return }
         pendingRestore = nil
         do {

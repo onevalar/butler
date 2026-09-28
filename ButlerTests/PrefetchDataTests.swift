@@ -90,6 +90,23 @@ final class PrefetchDataTests: XCTestCase {
         XCTAssertEqual(second.quantity, 6)
     }
 
+    func testSpecificSearchLinksReturnedLotsButOverviewDoesNot() async throws {
+        let (tools, container, _) = try makeTools()
+        let context = ModelContext(container)
+        let milk = seed(context, name: "牛奶")
+        let finished = seed(context, name: "旧牛奶", quantity: 0, state: .depleted)
+        let eggs = seed(context, name: "鸡蛋")
+        try context.save()
+        _ = try await search(tools)
+        XCTAssertTrue(tools.relatedScopes.isEmpty)
+        _ = try await search(tools, query: "牛奶", finished: true)
+        XCTAssertEqual(tools.relatedScopes, [.lot(milk.id), .lot(finished.id)])
+        XCTAssertFalse(tools.relatedScopes.contains(.lot(eggs.id)))
+        tools.beginTurn(request: "牛奶还剩多少", previous: nil)
+        _ = try await tools.prefetch(inventory: true, notes: false)
+        XCTAssertEqual(tools.relatedScopes, [.lot(milk.id)])
+    }
+
     func testReadsOnlySelectedStoreAndKeepsCompleteNoteText() async throws {
         let (tools, _, judge) = try makeTools()
         let note = LocalMemory(id: UUID(), title: "早餐偏好", text: "早餐喜欢热牛奶，不喜欢甜食。", quantity: nil, revision: 2)

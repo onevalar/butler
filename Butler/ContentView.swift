@@ -3,6 +3,8 @@ import SwiftData
 
 enum Route: Hashable {
     case lot(UUID)
+    case task(UUID)
+    case tasks
     case day(Date)
     case overview
     case memories
@@ -31,11 +33,14 @@ struct ContentView: View {
     @AppStorage(AccentChoice.modeKey) private var appearanceMode: AppearanceMode = .system
     @AppStorage(AccentChoice.storageKey) private var accentChoice: AccentChoice = .glass
     @State private var chat: ButlerChat?
+    @State private var sessions: ChatSessions?
+    @State private var voiceScope: ChatScope?
+    @State private var notificationError: String?
     /// Shared by home (to show reminders) and the chat (to set them).
     @State private var reminders = ReminderStore.openOnDevice()
     @State private var calendarFeed = CalendarFeed()
     @State private var selectedDay = Calendar.current.startOfDay(for: .now)
-    @State private var chosenReminder: TimedReminder?
+
     @AppStorage("onboardingDone") private var onboardingDone = false
     @Environment(\.openURL) private var openURL
     @Environment(\.modelContext) private var modelContext
@@ -70,6 +75,7 @@ struct ContentView: View {
                 onOpenInventory: { path.append(.items) },
                 onOpenOverview: { path.append(.overview) },
                 onOpenButler: { path.append(.butler) },
+                onOpenTasks: { path.append(.tasks) },
                 brief: brief
             )
             .navigationDestination(for: Route.self) { destination($0, facts: facts) }
@@ -79,7 +85,8 @@ struct ContentView: View {
         .overlay {
             GeometryReader { geometry in
                 OrbDockView(working: chat?.working ?? false, safeBottom: geometry.safeAreaInsets.bottom,
-                            onOpenChat: { chatRequest = nil; showingChat = true }, onSend: sendSpoken)
+                            onOpenChat: { openChat(.typing) }, onSend: sendSpoken,
+                            onBeginVoice: { voiceScope = currentScope })
             }
         }
         .environment(orbDock)
@@ -89,7 +96,10 @@ struct ContentView: View {
                 ButlerChatView(chat: chat, request: $chatRequest, onQuickCapture: {
                     showingChat = false
                     Task { try? await Task.sleep(for: .milliseconds(450)); capturing = true }
-                }, onClose: { showingChat = false })
+                }, onGeneralChat: { selectChat(.general) },
+                onSettingsChat: { selectChat(.settings) }, hasOtherWork: sessions?.working ?? false,
+                diaryTurns: sessions?.allTurns, onClose: { showingChat = false })
+                .id(chat.scope.key)
                 .environment(calendarFeed)
             }
         }
@@ -99,18 +109,15 @@ struct ContentView: View {
                     .interactiveDismissDisabled()
             }
         }
-        .confirmationDialog(chosenReminder?.text ?? "", isPresented: Binding(
-            get: { chosenReminder != nil }, set: { if !$0 { chosenReminder = nil } }
-        ), titleVisibility: .visible) {
-            if let reminder = chosenReminder {
-                Button("删除这个提醒", role: .destructive) { try? reminders.remove(reminder.id) }
-            }
-        } message: {
-            Text(chosenReminder?.whenLabel ?? "")
-        }
         .task {
-            // One conversation for the whole app, so it survives closing and reopening the chat.
-            if chat == nil { chat = ButlerChat(container: modelContext.container, reminders: reminders) }
+            // Shared services, independently persisted conversations.
+            if sessions == nil {
+                let store = ChatSessions(container: modelContext.container, reminders: reminders)
+                sessions = store
+                chat = store.chat(for: .general)
+                NotificationManager.shared.reminderStore = reminders
+                reminders.rescheduleAll()
+            }
             if UserDefaults.standard.double(forKey: "butlerSince") == 0 {
                 let since = min(Date.now, chat?.turns.first?.date ?? .now)
                 UserDefaults.standard.set(since.timeIntervalSince1970, forKey: "butlerSince")
@@ -145,10 +152,34 @@ struct ContentView: View {
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
             refreshID = UUID()
+            reminders.rescheduleAll()
             // A new day since the app was last open: start from today again.
             let today = Calendar.current.startOfDay(for: .now)
             if selectedDay < today { selectedDay = today }
             Task { await calendarFeed.refresh() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .butlerSettingsChanged)) { _ in
+            sessions?.reloadSettings()
+            calendarFeed.enabled = UserDefaults.standard.bool(forKey: "showSystemCalendar")
+            refreshID = UUID()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .butlerBackupRestored)) { _ in
+            sessions?.reloadFromDisk()
+            reminders.reload()
+            calendarFeed.enabled = UserDefaults.standard.bool(forKey: "showSystemCalendar")
+            refreshID = UUID()
+        }
+        .onChange(of: NotificationManager.shared.reminderActionError, initial: true) { _, error in
+            notificationError = error
+        }
+        .alert("提醒操作未完成", isPresented: Binding(get: { notificationError != nil }, set: { if !$0 { notificationError = nil } })) {
+            Button("知道了", role: .cancel) { notificationError = nil }
+        } message: { Text(notificationError ?? "") }
+        .onChange(of: NotificationManager.shared.pendingReminderID, initial: true) { _, id in
+            guard let id else { return }
+            showingChat = false
+            path = [.task(id)]
+            NotificationManager.shared.clearPendingRoute()
         }
         .onChange(of: NotificationManager.shared.pendingLotID, initial: true) { _, id in
             guard let id else { return }
@@ -171,6 +202,18 @@ struct ContentView: View {
         switch route {
         case .lot(let id):
             LotDetailView(lotID: id)
+                .toolbar { ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink { RelatedConversationView(scope: .lot(id), sessions: sessions) { scope in selectChat(scope); showingChat = true } } label: { Image(systemName: "bubble.left.and.bubble.right") }
+                        .accessibilityLabel("相关对话")
+                } }
+        case .task(let id):
+            TaskDetailView(id: id, store: reminders, sessions: sessions, onChat: { selectChat(.task(id)); showingChat = true }, onOpenScope: { scope in selectChat(scope); showingChat = true })
+        case .tasks:
+            TaskListView(store: reminders, onOpen: { path.append(.task($0)) }, onCreate: {
+                selectChat(.general)
+                prefillDraft("帮我安排一个任务：")
+                showingChat = true
+            })
         case .day(let day):
             DayScheduleView(agenda: yearAgenda, day: day, onOpen: open)
         case .overview:
@@ -185,8 +228,8 @@ struct ContentView: View {
             InventoryView(facts: facts, history: history, onOpenLot: { path.append(.lot($0)) },
                           onChat: openChat, onAsk: ask)
         case .butler:
-            if let chat {
-                ButlerSettingsView(chat: chat)
+            if let sessions {
+                ButlerSettingsView(chat: sessions.chat(for: .settings), hasOtherWork: sessions.working, diaryTurns: sessions.allTurns)
             }
         }
     }
@@ -197,18 +240,27 @@ struct ContentView: View {
     }
 
     private func openChat(_ start: ChatStart) {
+        selectChat(currentScope)
         chatRequest = ChatRequest(start: start)
         showingChat = true
     }
 
     /// Opens the conversation with a sentence already started, e.g. "买了".
     private func ask(_ text: String) {
-        chat?.draft = text
         openChat(.typing)
+        prefillDraft(text)
+    }
+
+    private func prefillDraft(_ text: String) {
+        guard let chat else { return }
+        let existing = chat.draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        chat.draft = existing.isEmpty ? text : existing + "\n" + text
     }
 
     /// Held the orb and spoke: send it straight away and show the conversation.
     private func sendSpoken(_ text: String) {
+        selectChat(voiceScope ?? currentScope)
+        voiceScope = nil
         guard let chat else { return }
         let existing = chat.draft.trimmingCharacters(in: .whitespacesAndNewlines)
         chat.draft = existing.isEmpty ? text : existing + " " + text
@@ -220,10 +272,27 @@ struct ContentView: View {
     private func open(_ target: AgendaEntry.Target) {
         switch target {
         case .lot(let id): path.append(.lot(id))
-        case .reminder(let id): chosenReminder = reminders.upcoming.first { $0.id == id }
+        case .reminder(let id): path.append(.task(id))
         case .calendarEvent:
             if let url = URL(string: "calshow:\(selectedDay.timeIntervalSinceReferenceDate)") { openURL(url) }
         }
+    }
+
+    private var currentScope: ChatScope {
+        switch path.last {
+        case .lot(let id): .lot(id)
+        case .task(let id): .task(id)
+        case .butler, .memories: .settings
+        case .items: .inventory
+        case .day(let date): .day(date.isoDay)
+        default: .general
+        }
+    }
+
+    private func selectChat(_ scope: ChatScope) {
+        guard let sessions else { return }
+        chat = sessions.chat(for: scope)
+        chatRequest = nil
     }
 
     private var showsOnboarding: Bool {

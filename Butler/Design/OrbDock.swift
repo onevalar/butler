@@ -43,6 +43,8 @@ final class MotionTilt {
     private(set) var tilt: CGSize = .zero
     @ObservationIgnored private let manager = CMMotionManager()
 
+    nonisolated deinit {}
+
     func start() {
         guard manager.isDeviceMotionAvailable, !manager.isDeviceMotionActive else { return }
         manager.deviceMotionUpdateInterval = 1.0 / 30
@@ -66,6 +68,7 @@ struct OrbDockView: View {
     var safeBottom: CGFloat = 34
     let onOpenChat: () -> Void
     let onSend: (String) -> Void
+    var onBeginVoice: (() -> Void)? = nil
 
     @Environment(OrbDock.self) private var dock
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -173,6 +176,7 @@ struct OrbDockView: View {
                 holdTask = Task {
                     do { try await Task.sleep(for: .seconds(OrbPress.holdDuration)) } catch { return }
                     guard !Task.isCancelled, interaction.pressing, !interaction.dragging else { return }
+                    onBeginVoice?()
                     dock.listening = true
                     await dictation.start(after: "")
                 }

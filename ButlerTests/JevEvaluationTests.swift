@@ -179,20 +179,50 @@ final class JevEvaluationTests: XCTestCase {
         weak var retained = export
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
         let window = UIWindow(windowScene: scene)
-        window.rootViewController = UIHostingController(rootView: EvaluationShareHarness(export: export!))
+        let appeared = expectation(description: "The native share sheet appeared")
+        let dismissed = expectation(description: "SwiftUI received the sheet dismissal")
+        window.rootViewController = UIHostingController(rootView: EvaluationShareHarness(
+            export: export!, onAppear: { appeared.fulfill() }, onDismiss: { dismissed.fulfill() }))
         window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
         export = nil // The share UI, not the presenting page, now owns the file.
-        try await Task.sleep(for: .milliseconds(800))
+        await fulfillment(of: [appeared], timeout: 5)
+        try await finishSharePresentation(in: window)
         XCTAssertNotNil(retained)
         XCTAssertEqual(try Data(contentsOf: url), expected)
         XCTAssertNotNil(try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
         capture(window, "evaluation-share")
-        window.rootViewController?.dismiss(animated: false)
+        // Keep the hosting view alive until UIKit finishes dismissal and SwiftUI clears
+        // its item binding. Destroying it immediately can strand the presentation state.
+        try await dismissShare(in: window)
+        await fulfillment(of: [dismissed], timeout: 5)
         window.isHidden = true
         window.rootViewController = nil
-        try await Task.sleep(for: .milliseconds(500))
+        let released = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in retained == nil }, object: nil)
+        await fulfillment(of: [released], timeout: 5)
         XCTAssertNil(retained)
         XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    private func finishSharePresentation(in window: UIWindow) async throws {
+        let presenter = try XCTUnwrap(window.rootViewController)
+        let presented = try XCTUnwrap(presenter.presentedViewController)
+        if let transition = presented.transitionCoordinator {
+            await withCheckedContinuation { continuation in
+                let registered = transition.animate(alongsideTransition: nil) { _ in continuation.resume() }
+                if !registered { continuation.resume() }
+            }
+        }
+        XCTAssertFalse(presented.isBeingPresented)
+    }
+
+    private func dismissShare(in window: UIWindow) async throws {
+        let presenter = try XCTUnwrap(window.rootViewController)
+        XCTAssertNotNil(presenter.presentedViewController)
+        await withCheckedContinuation { continuation in
+            presenter.dismiss(animated: false) { continuation.resume() }
+        }
+        XCTAssertNil(presenter.presentedViewController)
     }
 
     private func capture(_ window: UIWindow, _ name: String) {
@@ -213,12 +243,12 @@ final class JevEvaluationTests: XCTestCase {
 
 private struct EvaluationShareHarness: View {
     @State var export: EvaluationExport?
-    @State private var presented = false
+    let onAppear: () -> Void
+    let onDismiss: () -> Void
     var body: some View {
         Text("测试 JSON 分享")
-            .onAppear { presented = true }
-            .sheet(isPresented: $presented, onDismiss: { export = nil }) {
-                if let export { EvaluationShareSheet(export: export) }
+            .sheet(item: $export, onDismiss: onDismiss) { export in
+                EvaluationShareSheet(export: export).onAppear(perform: onAppear)
             }
     }
 }

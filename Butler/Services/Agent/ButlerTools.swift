@@ -14,6 +14,9 @@ struct PendingChange: Identifiable {
         case note(LocalMemory)
         case reminder(TimedReminder)
         case cancelReminder(TimedReminder)
+        case taskPlan(TimedReminder, expectedRevision: Int?)
+        case taskAction(UUID, TaskAction, expectedRevision: Int)
+        case settings([ButlerSettingChange])
     }
 
     let id = UUID()
@@ -41,6 +44,10 @@ final class ButlerTools {
     private(set) var pending: [PendingChange] = []
     /// The saved conversation, provided by the chat that owns these tools.
     var conversation: (() -> ConversationArchive)?
+    var currentContext: (() -> String)?
+    var conversationScope: ChatScope = .general
+    var relatedScopes: Set<ChatScope> = []
+    var settingsDefaults: UserDefaults = .standard
     /// What the owner said this turn (and just before), given to Jev as the request.
     private var request = ""
     private var previous: String?
@@ -71,6 +78,7 @@ final class ButlerTools {
         self.request = hasPhotos ? request + "（用户附了照片）" : request
         self.previous = previous
         raisedConcerns = []
+        relatedScopes = []
         pending = []
     }
 
@@ -79,7 +87,7 @@ final class ButlerTools {
     // MARK: - Tool definitions
 
     var toolJSON: String {
-        var tools = Self.inventoryTools
+        var tools = Self.inventoryTools + "," + Self.contextTools
         if conversation != nil { tools += "," + Self.conversationTools }
         if jev.isAvailable { tools += "," + Self.jevTool }
         return "[" + tools + "]"
@@ -151,6 +159,7 @@ final class ButlerTools {
         defer { insistedConcern = nil }
         do {
             let data = Data(call.arguments.utf8)
+            if let output = try executeContextTool(call.name, data: data) { return output }
             switch call.name {
             case "search_inventory":
                 struct Args: Decodable { var query: String; var include_finished: Bool }
@@ -324,6 +333,8 @@ final class ButlerTools {
             return "{\"status\":\"waiting_for_user_confirmation\",\"pending_changes\":\(pending.count),\"saved\":false}"
         } catch let error as ToolError {
             return (try? encode(["error": error.message, "saved": false] as [String: Any])) ?? #"{"error":"invalid"}"#
+        } catch let error as ReminderSchedule.InvalidRule {
+            return (try? encode(["error": error.localizedDescription, "saved": false] as [String: Any])) ?? #"{"error":"invalid_rule"}"#
         } catch let error as JevClient.JevError {
             return (try? encode(["error": "jev_failed", "detail": error.localizedDescription,
                                  "hint": "自己判断并继续"] as [String: Any])) ?? #"{"error":"jev_failed"}"#
@@ -342,7 +353,8 @@ final class ButlerTools {
         }
         if !adds.isEmpty {
             do {
-                try actions.add(adds.map(\.1), sourceText: "对话中确认")
+                let addedIDs = try actions.add(adds.map(\.1), sourceText: "对话中确认")
+                relatedScopes.formUnion(addedIDs.map { .lot($0) })
                 results += adds.map { "✓ \($0.0.title)" }
             } catch {
                 results += adds.map { "✗ \($0.0.title)：\(error.localizedDescription)" }
@@ -359,7 +371,25 @@ final class ButlerTools {
                 case .tracking(let lot, let quantityOnly): try actions.setQuantityOnly(quantityOnly, productID: lot.productID)
                 case .note(let memory): try notes.upsert(memory)
                 case .reminder(let reminder): try reminders.add(reminder)
-                case .cancelReminder(let reminder): try reminders.remove(reminder.id)
+                case .cancelReminder(let reminder):
+                    try requireTaskRevision(reminder.id, reminder.revision)
+                    try reminders.remove(reminder.id)
+                case .taskPlan(let reminder, let revision):
+                    if let revision {
+                        try requireTaskRevision(reminder.id, revision)
+                        try reminders.update(reminder)
+                    } else { try reminders.add(reminder) }
+                case .taskAction(let id, let action, let revision):
+                    try requireTaskRevision(id, revision)
+                    if let task = reminders.reminder(id: id) { try validateTaskAction(action, reminder: task) }
+                    switch action {
+                    case .complete: try reminders.complete(id)
+                    case .pause: try reminders.pause(id)
+                    case .resume: try reminders.resume(id)
+                    case .cancel: try reminders.remove(id)
+                    }
+                case .settings(let changes):
+                    try ButlerSettingsService.apply(changes, defaults: settingsDefaults, jev: jev as? JevClient)
                 }
                 results.append("✓ \(change.title)")
             } catch {
@@ -372,15 +402,24 @@ final class ButlerTools {
 
     // MARK: - Helpers
 
-    private struct ToolError: Error {
+    struct ToolError: LocalizedError {
         let message: String
         init(_ message: String) { self.message = message }
+        var errorDescription: String? { message }
     }
 
     /// Set by `gate` when the model re-proposed despite Jev; consumed by the next `add`s of this call.
     private var insistedConcern: String?
 
-    private func add(_ kind: PendingChange.Kind, title: String, detail: String?, check: JevCheck? = nil) {
+    func add(_ kind: PendingChange.Kind, title: String, detail: String?, check: JevCheck? = nil) {
+        switch kind {
+        case .setQuantity(let lot, _), .close(let lot, _), .setDate(let lot, _, _), .move(let lot, _), .tracking(let lot, _):
+            relatedScopes.insert(.lot(lot.id))
+        case .reminder(let value), .cancelReminder(let value), .taskPlan(let value, _): relatedScopes.insert(.task(value.id))
+        case .taskAction(let id, _, _): relatedScopes.insert(.task(id))
+        case .settings: relatedScopes.insert(.settings)
+        default: break
+        }
         pending.append(PendingChange(kind: kind, title: title, detail: detail,
                                      check: insistedConcern.map { .concern($0) } ?? check))
     }
@@ -619,6 +658,13 @@ final class ButlerTools {
         result["active_complete"] = activeComplete
         result["active_truncated"] = items.count < active.count
         result["items"] = items
+        // A specific search is a real reference. Broad overviews/prefetch must not attach
+        // every household item to a conversation that may never discuss any of them.
+        let referencedItems = words.isEmpty ? items.filter {
+            guard let name = $0["name"] as? String, !name.isEmpty else { return false }
+            return request.localizedStandardContains(name)
+        } : items
+        relatedScopes.formUnion(referencedItems.compactMap { ($0["lot_id"] as? String).flatMap(UUID.init).map(ChatScope.lot) })
         if includeFinished {
             let cutoff = Calendar.current.date(byAdding: .day, value: -30, to: .now) ?? .distantPast
             let finished = lots.filter { $0.0.state != .active && $0.0.updatedAt >= cutoff && matches($0.0, $0.1) }
@@ -629,6 +675,9 @@ final class ButlerTools {
                      "state": lot.state.rawValue, "when": lot.updatedAt.isoDay] as [String: Any]
                 }
             result["finished"] = returned
+            if !words.isEmpty {
+                relatedScopes.formUnion(returned.compactMap { ($0["lot_id"] as? String).flatMap(UUID.init).map(ChatScope.lot) })
+            }
             result["finished_count"] = finished.count
             result["finished_returned_count"] = returned.count
             result["finished_complete"] = finished.count == returned.count
@@ -726,7 +775,7 @@ final class ButlerTools {
         return date
     }
 
-    private func encode(_ value: Any) throws -> String {
+    func encode(_ value: Any) throws -> String {
         String(decoding: try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]), as: UTF8.self)
     }
 }
