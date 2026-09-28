@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 /// The displayed pose is sampled once for drawing, touch geometry and contact feedback.
 /// Reversing preserves the current position and scales the remaining travel time.
