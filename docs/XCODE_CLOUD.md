@@ -17,7 +17,7 @@ TestFlight 是分发渠道；云端编译由 Xcode Cloud 完成。GitHub 上的�
 - 无额外包管理器安装步骤；不向仓库放入证书、Apple 密码、GitHub 令牌、主模型凭证或 Jev 密钥。自动测试使用本地替身，不需要真实模型账号。
 - 保留现有非豁免加密声明；Xcode Cloud 构建号由后台递增管理，启用分发前核对其高于已有 TestFlight 构建号。
 
-## 后台工作流目标
+## 后台工作流配置
 
 | 项目 | 设置 |
 |---|---|
@@ -25,15 +25,17 @@ TestFlight 是分发渠道；云端编译由 Xcode Cloud 完成。GitHub 上的�
 | 触发 | `main` 的提交变动 |
 | 重复提交 | 自动取消同分支旧的未完成构建 |
 | 工具链 | 固定 Xcode 26.3；升级后先验证 |
-| 测试 | iOS 模拟器，Butler 共享方案，全部测试 |
+| 测试 | iPhone 17 Pro，Xcode 26.3 对应的 iOS 26.3，Butler 全部测试，Required to Pass |
 | 归档 | iOS，Butler，Release，App Store 分发准备 |
-| 分发 | 成功后交给内部 TestFlight 测试组 |
+| 分发 | 成功后自动交给内部 TestFlight `test` 组 |
 
 “App Store 分发准备”仅生成适合 Apple 分发的签名归档，不会自动提交正式商店审核或上架。外部测试另受 TestFlight 审核和分组控制。
 
 ## 配置进度
 
-仓库共享方案已准备；Xcode 初次向导已填写主分支触发、固定工具链和分发归档。首次连接仍在等待所有者完成 GitHub 的仓库授权。后台测试、分发动作及首次云构建成功状态尚未验证，不能将此文档视为服务已开通的证明。
+GitHub 仓库授权已完成，以上工作流已在 App Store Connect 保存并启用。首次初始化构建 1 已完成编译，但上传因构建号低于已有的 22 而失败；下一次构建号已设为 23，之后由 Xcode Cloud 递增。测试动作与内部组自动分发已补齐。
+
+[查看工作流和实际构建结果](https://appstoreconnect.apple.com/teams/52049831-307a-44f3-95af-623b83d68dc0/xcode-cloud/products/ECE4419A-60C4-420A-A42F-FEB1AC95BFB8/groups)。后台配置完成不等于每次构建都会成功，应以该提交的测试、归档和 TestFlight 分发结果为准。
 
 ## 手机端
 
