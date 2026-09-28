@@ -1,5 +1,7 @@
 # Butler Agent 接入原型
 
+> 本目录为历史宿主实验，不是当前手机版本运行所必需的服务。当前功能、手机与云模型分工、Jev 调用时机见[功能与工作原理](../docs/FEATURES_AND_JEV_GUIDE.md)。
+
 > **路线已纠正：本目录保留为历史实验，不再作为手机端的必要服务扩展。** iPhone 内保存记忆、执行简单工具，云端模型只承担理解和判断。手机端内核 `Butler/Services/LocalAgent.swift` 已接到原生 Debug 试用界面与订阅直连适配，手机真实授权联调仍待完成；最新状态见 `../DEVELOPMENT_LOG.md`。安装 iOS App 不需要运行本目录的服务；下文仅描述旧实验。
 
 个人自用的虚构数据原型，包含命令行宿主和 SwiftUI Agent 测试入口，**不是已可发布的生活管家**。使用 Codex 官方订阅登录、stdio App Server、查询/历史/变更预览/Jev 四项动态工具。新增有限 HTTP 接口供原生界面使用；不连接 SwiftData 正式库，不写真实库存，也不发送通知。

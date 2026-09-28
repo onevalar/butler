@@ -1,5 +1,7 @@
 # Butler MVP 产品说明（历史版本）
 
+> 当前已实现功能与 Jev 使用说明见[功能与工作原理](docs/FEATURES_AND_JEV_GUIDE.md)；本文件继续作为早期构想保留。
+
 > 本文仅存档最初的 MVP 构想，不代表当前实现或未来范围。最新的 Agent 管家构想、SwiftUI 交互规划、主模型与 Jev 分工、个人记忆和逐步实施路线以 [`docs/BUTLER_2_SPEC.md` §0](docs/BUTLER_2_SPEC.md#0-新方向理解个人生活的-agent-管家) 为准。下文“全部离线”“仅库存管理”和 iOS 17 等旧约束不再指导新开发。
 
 ## 1. 产品概述 (Executive Summary)
