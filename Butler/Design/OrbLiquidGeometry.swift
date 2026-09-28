@@ -18,9 +18,15 @@ struct OrbPose: Sendable {
         let p = max(0, min(1, progress))
         let drop = min(1, p / 0.38)
         let impact = smooth((p - 0.38) / 0.36)
+        // Preserve the downward velocity at contact instead of clamping the
+        // fall and starting a second ease-in from rest.
+        let sink = max(0, min(1, (p - 0.38) / 0.42))
+        let tangent = (2 * 43 / 0.38) * 0.42
+        let sinkingY = 43 + tangent * (sink * sink * sink - 2 * sink * sink + sink)
+            + 64 * (-2 * sink * sink * sink + 3 * sink * sink)
         let water = smooth((p - 0.24) / 0.42)
         // The front moves first; the corners only fill once it reaches them.
-        let spread = 1 - pow(1 - smooth((p - 0.32) / 0.68), 2)
+        let spread = 1 - pow(1 - smooth((p - 0.22) / 0.78), 2)
         let floor = -18 + 18 * smooth((p - 0.18) / 0.16)
         let inset = max(0, min(34, safeBottom))
         let restSide = max(6, inset * 0.65)
@@ -28,7 +34,7 @@ struct OrbPose: Sendable {
         // Keep the contact neck, then settle into a thinner pool as the front spreads.
         let settle = smooth((p - 0.55) / 0.45)
         return OrbPose(
-            ballY: 43 * drop * drop + 64 * impact,
+            ballY: p < 0.38 ? 43 * drop * drop : sinkingY,
             scaleX: 1 - 0.12 * smooth(drop) + 1.1 * impact,
             scaleY: 1 + 0.2 * smooth(drop) - 0.88 * impact,
             water: water, spread: spread,

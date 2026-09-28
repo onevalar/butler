@@ -25,8 +25,11 @@ struct AgendaEntry: Identifiable, Hashable {
     let target: Target
     /// Happens every day (a daily reminder): shown once in lists and not dotted on every day.
     var isRoutine = false
+    var isCompleted = false
 
     var isAllDay: Bool { start == nil }
+
+    func isPending(at now: Date) -> Bool { kind == .reminder && !isCompleted && (start ?? day) <= now }
 }
 
 /// A system calendar event, already read from EventKit.
@@ -52,10 +55,24 @@ struct HomeAgenda {
 
     func entries(on day: Date) -> [AgendaEntry] { byDay[day] ?? [] }
 
+    /// Due tasks stay visible until their lifecycle changes, even outside the
+    /// compact hour window. Repeated notifications represent one unfinished task.
+    func pending(on day: Date, at now: Date) -> [AgendaEntry] {
+        var seen = Set<AgendaEntry.Target>()
+        return entries(on: day).filter {
+            $0.isPending(at: now) && seen.insert($0.target).inserted
+        }
+    }
+
+    func completed(on day: Date) -> [AgendaEntry] {
+        entries(on: day).filter(\.isCompleted)
+    }
+
     /// Everything after `day` in the week, with each daily routine only at its next occurrence.
     func upcoming(after day: Date) -> [AgendaEntry] {
         var seen = Set<AgendaEntry.Target>()
         return days.filter { $0 > day }.flatMap { entries(on: $0) }.filter { entry in
+            guard !entry.isCompleted else { return false }
             guard entry.isRoutine else { return true }
             return seen.insert(entry.target).inserted && !entries(on: day).contains { $0.target == entry.target }
         }
@@ -107,7 +124,38 @@ struct HomeAgenda {
                 target: .lot(lot.id)))
         }
 
-        for reminder in reminders {
+        // Completion is a retained record, not another notification occurrence.
+        // A one-off stays at its planned time. Cross-day completion also appears
+        // on the day it was actually done. Repeating tasks finish once, not once
+        // for every historical notification or on all future scheduled dates.
+        for reminder in reminders where reminder.status == .completed {
+            let completion = reminder.activity.last(where: { $0.kind == "completed" || $0.kind == "autoCompleted" })?.date
+            let finished = completion ?? reminder.autoCompleteAt ?? reminder.fireDate
+            let once = reminder.repeats == .none && reminder.phases == nil
+            let scheduled = once && reminder.fireDate <= finished ? reminder.fireDate : finished
+            var dates = [scheduled]
+            if !calendar.isDate(scheduled, inSameDayAs: finished) { dates.append(finished) }
+            for date in dates {
+                let day = calendar.startOfDay(for: date)
+                guard day <= today else { continue }
+                let detail = completion.map { "已完成 · \($0.monthDay) \($0.clockTime) 完成" } ?? "已完成"
+                byDay[day, default: []].append(AgendaEntry(
+                    id: "completed-\(reminder.id)-\(date.timeIntervalSince1970)", kind: .reminder,
+                    title: reminder.text, subtitle: detail, day: day, start: date,
+                    end: date.addingTimeInterval(30 * 60), target: .reminder(reminder.id), isCompleted: true))
+            }
+        }
+
+        for reminder in reminders where reminder.status == .active {
+            // An exhausted reminder schedule does not complete its task. Carry
+            // older unfinished tasks onto today without inventing another alert.
+            if reminder.fireDate < today,
+               ReminderSchedule.preview(reminder, now: today.addingTimeInterval(-0.001), limit: 1).isEmpty {
+                byDay[today, default: []].append(AgendaEntry(
+                    id: "pending-\(reminder.id)", kind: .reminder, title: reminder.text,
+                    subtitle: "\(reminder.fireDate.monthDay) 的任务 · 尚未完成", day: today, start: nil, end: nil,
+                    target: .reminder(reminder.id)))
+            }
             for day in days {
                 for start in ReminderSchedule.occurrences(reminder, on: day, calendar: calendar) {
                     let repeatLabel: String?

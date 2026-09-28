@@ -50,6 +50,12 @@ enum AccentChoice: String, CaseIterable, Identifiable {
         }
     }
 
+    /// A concrete track colour: semantic `.primary` is a foreground style, and
+    /// becomes white in dark mode while the native switch thumb is also white.
+    var switchTint: Color {
+        self == .glass ? Color(light: 0x48484A, dark: 0x636366) : accent.fill
+    }
+
     static let storageKey = "accentChoice"
     static let modeKey = "appearanceMode"
     static let glowKey = "ambientGlow"
@@ -71,6 +77,7 @@ extension View {
     func butlerAppearance(mode: AppearanceMode, accent: AccentChoice) -> some View {
         environment(\.butlerAccent, accent.accent)
             .tint(accent.accent.fill)
+            .toggleStyle(SwitchToggleStyle(tint: accent.switchTint))
             .preferredColorScheme(mode.colorScheme)
     }
 }

@@ -123,6 +123,9 @@ final class ReminderStore {
         return store
     }
 
+    /// Task visibility is independent of whether another notification is scheduled.
+    var active: [TimedReminder] { reminders.filter { $0.status == .active } }
+
     var upcoming: [TimedReminder] {
         reminders.filter { $0.isUpcoming() }.sorted {
             (ReminderSchedule.preview($0, limit: 1).first ?? .distantFuture) <

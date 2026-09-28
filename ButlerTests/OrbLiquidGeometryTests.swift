@@ -16,6 +16,17 @@ final class OrbLiquidGeometryTests: XCTestCase {
         }
     }
 
+    func testContactKeepsDownwardMomentumWhileSpreadIsAlreadyMoving() {
+        let h: CGFloat = 0.0001
+        let contact: CGFloat = 0.38
+        let before = (OrbPose.at(contact).ballY - OrbPose.at(contact - h).ballY) / h
+        let after = (OrbPose.at(contact + h).ballY - OrbPose.at(contact).ballY) / h
+        XCTAssertGreaterThan(before, 200)
+        XCTAssertEqual(before, after, accuracy: 0.3, "No velocity stop at the fall/spread handoff")
+        XCTAssertGreaterThan(OrbPose.at(contact).spread, 0.08)
+        XCTAssertGreaterThan(OrbPose.at(contact + h).spread, OrbPose.at(contact).spread)
+    }
+
     func testPoolSettlesWithinDeviceBottomSpace() {
         for (inset, side, peak): (CGFloat, CGFloat, CGFloat) in [(0, 6, 18), (21, 13.65, 31), (34, 22.1, 44)] {
             let pose = OrbPose.at(1, safeBottom: inset)

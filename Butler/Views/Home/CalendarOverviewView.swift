@@ -117,7 +117,7 @@ private struct MonthCard: View {
     private func cell(_ day: Date) -> some View {
         let isToday = day == agenda.today
         let isPast = day < agenda.today
-        let dots = isPast ? [] : agenda.dots(on: day)
+        let dots = agenda.dots(on: day)
         return Button { onOpenDay(day) } label: {
             VStack(spacing: 3) {
                 Text("\(calendar.component(.day, from: day))")
@@ -135,7 +135,7 @@ private struct MonthCard: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(isPast)
+        .disabled(isPast && agenda.entries(on: day).isEmpty)
         .accessibilityLabel(day.formatted(.dateTime.month().day().weekday(.wide).locale(Locale(identifier: "zh_CN")))
                             + (dots.isEmpty ? "" : "，有安排"))
     }

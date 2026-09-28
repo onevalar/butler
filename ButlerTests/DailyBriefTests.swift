@@ -38,7 +38,7 @@ final class DailyBriefTests: XCTestCase {
         XCTAssertEqual(brief.basis, "依据：家里的 3 样东西 · 1 条提醒 · 日历")
     }
 
-    func testEveningBriefLeadsWithTonightAndSkipsWhatAlreadyHappened() {
+    func testEveningBriefKeepsUnfinishedTasksAlongsideTonight() {
         let now = at(20, 30)
         let earlier = TimedReminder(text: "热剩饭", fireDate: at(14), createdAt: now)
         let medicine = TimedReminder(text: "吃药", fireDate: at(21), repeats: .daily, createdAt: now)
@@ -48,8 +48,18 @@ final class DailyBriefTests: XCTestCase {
 
         XCTAssertEqual(brief.greeting, "晚上好")
         XCTAssertTrue(brief.isEvening)
-        XCTAssertEqual(brief.text, "今晚还有晚上 9 点提醒你吃药。")
+        XCTAssertEqual(brief.text, "还有 1 件任务待完成：热剩饭。今晚还有晚上 9 点提醒你吃药。")
         XCTAssertEqual(brief.basis, "依据：家里的 0 样东西 · 2 条提醒")
+    }
+
+    func testBriefSeparatesCompletedFromPendingAndUpcoming() {
+        let now = at(10)
+        let completed = TimedReminder(text: "已取快递", fireDate: at(12), status: .completed,
+                                      activity: [ReminderActivity(date: now, kind: "completed", detail: "提前完成")])
+        let pending = TimedReminder(text: "交材料", fireDate: at(9))
+        let agenda = HomeAgenda.build(lots: [], reminders: [completed, pending], events: [], now: now)
+        let brief = DailyBrief.compose(agenda: agenda, lotCount: 0, reminderCount: 1, usesCalendar: false, now: now)
+        XCTAssertEqual(brief.text, "还有 1 件任务待完成：交材料。今天已完成 1 件任务。")
     }
 
     func testQuietDayStillSaysSomething() {

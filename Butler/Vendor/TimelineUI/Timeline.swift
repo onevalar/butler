@@ -15,6 +15,7 @@ struct TimelineItem: Identifiable, Hashable {
     let endDate: Date
     var isAllDay = false
     let color: Color
+    var isCompleted = false
 }
 
 enum TimelineMetrics {
@@ -151,12 +152,14 @@ struct TimelineHourGrid: View {
         let width = contentWidth / CGFloat(placed.totalColumns)
         let x = labelWidth + 8 + width * CGFloat(placed.column)
         return HStack(alignment: .top, spacing: 0) {
-            Rectangle().fill(item.color).frame(width: 4)
+            Rectangle().fill(item.isCompleted ? Color.secondary : item.color).frame(width: 4)
             VStack(alignment: .leading, spacing: 0) {
-                Text(item.title)
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    if item.isCompleted { Image(systemName: "checkmark") }
+                    Text(item.title).strikethrough(item.isCompleted).lineLimit(1)
+                }
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(item.isCompleted ? .secondary : .primary)
                 if let subtitle = item.subtitle, height > 36 {
                     Text(subtitle)
                         .font(.caption)
@@ -169,13 +172,13 @@ struct TimelineHourGrid: View {
             Spacer(minLength: 0)
         }
         .frame(width: width - 2, height: height, alignment: .topLeading)
-        .background(item.color.opacity(0.2))
+        .background(item.isCompleted ? Color.secondary.opacity(0.08) : item.color.opacity(0.2))
         .clipShape(RoundedRectangle(cornerRadius: TimelineMetrics.blockRadius, style: .circular))
         .offset(x: x, y: top)
         .onTapGesture { onTap?(item) }
         .accessibilityElement(children: .ignore)
         .accessibilityAddTraits(.isButton)
-        .accessibilityLabel("\(item.startDate.formatted(date: .omitted, time: .shortened)) \(item.title)")
+        .accessibilityLabel("\(item.startDate.formatted(date: .omitted, time: .shortened)) \(item.title)\(item.isCompleted ? "，已完成" : "")")
     }
 }
 
@@ -192,7 +195,9 @@ struct TimelineAllDaySection: View {
                 Button { onTap?(item) } label: {
                     HStack(spacing: 6) {
                         RoundedRectangle(cornerRadius: 2).fill(item.color).frame(width: 4, height: 16)
-                        Text(item.title).font(.subheadline).foregroundStyle(.primary).lineLimit(1)
+                        if item.isCompleted { Image(systemName: "checkmark").foregroundStyle(.secondary) }
+                        Text(item.title).font(.subheadline).strikethrough(item.isCompleted)
+                            .foregroundStyle(item.isCompleted ? .secondary : .primary).lineLimit(1)
                         if let subtitle = item.subtitle {
                             Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                         }

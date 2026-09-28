@@ -158,13 +158,15 @@ struct HomeView: View {
     private var dayEntries: [AgendaEntry] { agenda.entries(on: selectedDay) }
 
     private var schedule: some View {
-        let items = dayEntries.map(\.timelineItem)
         let calendar = Calendar.current
         let now = Date.now
         let isToday = calendar.isDateInToday(selectedDay)
+        let completed = agenda.completed(on: selectedDay)
+        let pending = isToday ? agenda.pending(on: selectedDay, at: now) : []
+        let items = dayEntries.filter { !$0.isCompleted && (!isToday || !$0.isPending(at: now)) }.map(\.timelineItem)
         // Only what is still ahead earns an hour grid; an empty grid just takes space.
         let ahead = dayEntries.filter { entry in
-            guard !entry.isAllDay else { return false }
+            guard !entry.isAllDay, !entry.isCompleted, !isToday || !entry.isPending(at: now) else { return false }
             return !isToday || (entry.end ?? entry.start ?? now) > now
         }
         let anchor: Int? = ahead.first?.start.map { start in
@@ -189,6 +191,17 @@ struct HomeView: View {
                     .padding(.bottom, 8)
             }
             GroupCard {
+                if !pending.isEmpty {
+                    Text("已到时间 · 待完成")
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16).padding(.top, 12)
+                    ForEach(pending) { entry in
+                        AgendaRow(entry: entry, accessory: .action("查看"),
+                                  leading: entry.isAllDay ? .bar : .time(entry)) { onOpen(entry.target) }
+                    }
+                    if !allDay.isEmpty || !ahead.isEmpty { RowDivider(inset: 0) }
+                }
                 if !allDay.isEmpty {
                     TimelineAllDaySection(items: allDay, onTap: tap)
                         .padding(.top, 16).padding(.trailing, 16).padding(.leading, 8)
@@ -198,7 +211,7 @@ struct HomeView: View {
                 if !ahead.isEmpty {
                     CompactTimelineView(items: items, day: selectedDay, visibleHours: 3, anchorHour: anchor, onTap: tap)
                         .padding(.top, 20).padding(.leading, 8).padding(.trailing, 12).padding(.bottom, later.isEmpty ? 8 : 0)
-                } else if allDay.isEmpty {
+                } else if allDay.isEmpty && pending.isEmpty && completed.isEmpty {
                     HStack(spacing: 10) {
                         Image(systemName: "clock").foregroundStyle(.secondary)
                         Text(isToday ? "今天接下来没有定时安排" : "这天没有安排")
@@ -207,6 +220,16 @@ struct HomeView: View {
                     }
                     .padding(.horizontal, 16)
                     .frame(minHeight: 52)
+                }
+                if !completed.isEmpty {
+                    if !pending.isEmpty || !allDay.isEmpty || !ahead.isEmpty { RowDivider(inset: 0) }
+                    Text("已完成 · \(completed.count) 件")
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16).padding(.top, 12)
+                    ForEach(completed) { entry in
+                        AgendaRow(entry: entry, leading: .time(entry)) { onOpen(entry.target) }
+                    }
                 }
                 if !later.isEmpty {
                     RowDivider(inset: 0)
@@ -283,7 +306,7 @@ struct BriefCard: View {
 extension AgendaEntry {
     var timelineItem: TimelineItem {
         TimelineItem(id: id, title: title, subtitle: subtitle, startDate: start ?? day,
-                     endDate: end ?? day, isAllDay: isAllDay, color: kind.color)
+                     endDate: end ?? day, isAllDay: isAllDay, color: kind.color, isCompleted: isCompleted)
     }
 }
 
@@ -359,9 +382,13 @@ struct AgendaRow: View {
                         .font(.subheadline.weight(.semibold)).monospacedDigit()
                         .frame(width: 44, alignment: .leading)
                 }
-                KindBar(color: entry.kind.color)
+                if entry.isCompleted {
+                    Image(systemName: "checkmark").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                } else { KindBar(color: entry.kind.color) }
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(entry.title).font(.body).foregroundStyle(.primary).lineLimit(1)
+                    Text(entry.title).font(.body)
+                        .strikethrough(entry.isCompleted)
+                        .foregroundStyle(entry.isCompleted ? .secondary : .primary).lineLimit(1)
                     if let subtitle = entry.subtitle {
                         Text(subtitle).font(.subheadline)
                             .foregroundStyle(entry.kind == .expired ? Color.red : .secondary).lineLimit(1)

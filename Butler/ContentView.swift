@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 import SwiftData
 
@@ -21,6 +22,7 @@ struct ContentView: View {
 
     @State private var path: [Route] = Self.launchPath
     @State private var refreshID = UUID()
+    @State private var agendaNow = Date.now
     #if DEBUG
     @State private var capturing = ProcessInfo.processInfo.environment["BUTLER_CAPTURE_TEXT"] != nil
     #else
@@ -63,9 +65,9 @@ struct ContentView: View {
 
     var body: some View {
         let facts = facts
-        let agenda = HomeAgenda.build(lots: facts, reminders: reminders.upcoming, events: calendarFeed.events)
-        let brief = DailyBrief.compose(agenda: agenda, lotCount: facts.count, reminderCount: reminders.upcoming.count,
-                                       usesCalendar: calendarFeed.enabled && calendarFeed.canRead)
+        let agenda = HomeAgenda.build(lots: facts, reminders: reminders.reminders, events: calendarFeed.events, now: agendaNow)
+        let brief = DailyBrief.compose(agenda: agenda, lotCount: facts.count, reminderCount: reminders.active.count,
+                                       usesCalendar: calendarFeed.enabled && calendarFeed.canRead, now: agendaNow)
         NavigationStack(path: $path) {
             HomeView(
                 agenda: agenda,
@@ -149,9 +151,20 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .butlerNotificationAuthorizationChanged)) { _ in
             refreshID = UUID()
         }
+        .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { now in
+            guard scenePhase == .active else { return }
+            let previousDay = Calendar.current.startOfDay(for: agendaNow)
+            agendaNow = now
+            if !Calendar.current.isDate(previousDay, inSameDayAs: now) {
+                if selectedDay == previousDay { selectedDay = Calendar.current.startOfDay(for: now) }
+                reminders.rescheduleAll()
+                Task { await calendarFeed.refresh() }
+            }
+        }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
             refreshID = UUID()
+            agendaNow = .now
             reminders.rescheduleAll()
             // A new day since the app was last open: start from today again.
             let today = Calendar.current.startOfDay(for: .now)
@@ -236,7 +249,7 @@ struct ContentView: View {
 
     /// A year ahead, for the overview and for days opened from it.
     private var yearAgenda: HomeAgenda {
-        HomeAgenda.build(lots: facts, reminders: reminders.upcoming, events: calendarFeed.events, dayCount: 366)
+        HomeAgenda.build(lots: facts, reminders: reminders.reminders, events: calendarFeed.events, now: agendaNow, dayCount: 366)
     }
 
     private func openChat(_ start: ChatStart) {

@@ -25,13 +25,21 @@ struct DailyBrief: Equatable {
             sentences.append("有 \(count) 样要处理：\(attention.joined(separator: "，"))")
         }
 
+        let pending = agenda.pending(on: agenda.today, at: now)
+        if !pending.isEmpty {
+            sentences.append("还有 \(pending.count) 件任务待完成：\(list(pending.map(\.title)))")
+        }
+
+        let completed = agenda.completed(on: agenda.today)
+        if !completed.isEmpty { sentences.append("今天已完成 \(completed.count) 件任务") }
+
         // Still ahead today.
         let today = agenda.entries(on: agenda.today)
         let dueToday = today.filter { $0.isAllDay && ($0.kind == .expired || $0.kind == .expiring) }.map(\.title)
         if !dueToday.isEmpty { sentences.append(dueToday.joined(separator: "，")) }
         let ahead = today.filter { entry in
             guard let start = entry.start else { return false }
-            return start > now && (entry.kind == .reminder || entry.kind == .calendar)
+            return !entry.isCompleted && start > now && (entry.kind == .reminder || entry.kind == .calendar)
         }
         if !ahead.isEmpty {
             let lead = evening ? "今晚还有" : "今天"

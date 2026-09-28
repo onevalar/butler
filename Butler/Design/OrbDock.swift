@@ -94,7 +94,9 @@ struct OrbDockView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            if dock.listening || finishingVoice || voiceMessage != nil { listeningOverlay.transition(.opacity) }
+            if dock.listening || finishingVoice || voiceMessage != nil {
+                listeningOverlay.transition(.opacity)
+            }
             GeometryReader { proxy in
                 let width = proxy.size.width
                 TimelineView(.animation(minimumInterval: 1.0 / 60, paused: !motionEnabled || (!moving && dock.spread))) { _ in
@@ -104,6 +106,9 @@ struct OrbDockView: View {
                              safeBottom: safeBottom,
                              pressure: press.depth(at: time) * (reduceMotion ? 0.3 : 1),
                              contact: press.contact,
+                             holding: press.held && !interaction.dragging,
+                             preparingVoice: dock.listening && !dictation.listening && dictation.error == nil,
+                             recording: dock.listening && dictation.listening,
                              audioLevel: reduceMotion || cancelling ? 0 : dictation.audioLevel,
                              cancelling: cancelling,
                              pull: interaction.pull,
@@ -121,8 +126,7 @@ struct OrbDockView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         .ignoresSafeArea(edges: .bottom)
         .ignoresSafeArea(.keyboard)
-        .animation(.easeOut(duration: 0.15), value: dock.listening)
-        .sensoryFeedback(.impact(weight: .light), trigger: dock.listening) { _, new in new }
+        .sensoryFeedback(.impact(weight: .light), trigger: dictation.listening) { _, new in new }
         .sensoryFeedback(.selection, trigger: cancelling)
         .onChange(of: dock.spread) { _, spread in
             cancelInteraction(animated: false)
@@ -270,7 +274,7 @@ struct OrbDockView: View {
                     Button("知道了") { voiceMessage = nil }
                         .buttonStyle(.bordered)
                 } else if !finishingVoice {
-                    Text(cancelling ? "松开取消" : "松开就发给管家 · 上滑取消")
+                    Text(cancelling ? "松开取消" : dictation.listening ? "松开就发给管家 · 上滑取消" : "准备好后开始说话 · 松开取消")
                         .font(.footnote)
                         .foregroundStyle(cancelling ? Color.red : .secondary)
                 }
@@ -301,6 +305,9 @@ private struct OrbStage: View, Animatable {
     let safeBottom: CGFloat
     let pressure: CGFloat
     let contact: CGPoint
+    let holding: Bool
+    let preparingVoice: Bool
+    let recording: Bool
     let audioLevel: CGFloat
     let cancelling: Bool
     var pull: CGSize
@@ -327,7 +334,9 @@ private struct OrbStage: View, Animatable {
         let pose = OrbPose.at(progress, safeBottom: safeBottom)
         let reach = hypot(pull.width, pull.height)
         let wobble = (breath - 0.5) * 0.024 * (1 - pose.water)
-        let deformation = BallDeformation(scaleX: pose.scaleX * (1 + wobble), scaleY: pose.scaleY * (1 - wobble),
+        let compression = pressure * (1 - pose.water)
+        let deformation = BallDeformation(scaleX: pose.scaleX * (1 + wobble + compression * 0.10),
+                                          scaleY: pose.scaleY * (1 - wobble - compression * 0.13),
                                           stretch: reach / 44 * 0.34,
                                           angle: Angle(radians: reach > 0 ? atan2(pull.height, pull.width) : 0))
         let contours = pose.peak == -18 ? [] : OrbLiquidGeometry(pose: pose, radius: size * 0.485).contours(width: width, height: height)
@@ -370,14 +379,21 @@ private struct OrbStage: View, Animatable {
                               y: height - OrbDockView.ballLift + contact.y * size * 0.32 + pull.height * 0.55)
                     .opacity(pressure * (1 - pose.water))
                     .clipShape(surface)
-                Circle()
-                    .fill(RadialGradient(colors: [cancelling ? Color.orange : Color.cyan, .clear],
-                                         center: .center, startRadius: 0, endRadius: 26))
-                    .frame(width: 52, height: 52)
-                    .position(x: width / 2 + pull.width * 0.55,
-                              y: height - OrbDockView.ballLift + pull.height * 0.55)
-                    .opacity((cancelling ? 0.25 : audioLevel * 0.3) * (1 - pose.water))
-                    .clipShape(surface)
+                // Respond through the glass itself and a small voice glyph.
+                // Never add progress rings or rotating halos around the orb.
+                if holding || preparingVoice || recording {
+                    OrbVoiceFeedback(recording: recording, cancelling: cancelling, level: audioLevel)
+                        .position(x: width / 2 + pull.width * 0.55,
+                                  y: height - OrbDockView.ballLift + pull.height * 0.55)
+                        .opacity(1 - pose.water)
+                        .allowsHitTesting(false)
+                    if holding && !preparingVoice && !recording {
+                        Text("按住说话")
+                            .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                            .position(x: width / 2, y: height - OrbDockView.ballLift - 57)
+                            .allowsHitTesting(false)
+                    }
+                }
             }
         }
         .frame(width: width, height: height)
@@ -478,13 +494,6 @@ private struct BallLight: View {
         let radius = size * 0.485
         let bottomAnchor = UnitPoint(x: 0.5, y: 0.5 + radius / room)
         ZStack {
-            if active {
-                Circle()
-                    .fill(RadialGradient(colors: [Color(red: 1, green: 0.6, blue: 0.8).opacity(0.35),
-                                                  Color(red: 0.5, green: 0.75, blue: 1).opacity(0.22), .clear],
-                                         center: .center, startRadius: 0, endRadius: size))
-                    .frame(width: size * 2, height: size * 2)
-            }
             ButlerOrb(size: size, active: active, drift: true, tilt: tilt, pressure: pressure, contact: contact)
                 .rotationEffect(-deformation.angle)
                 .scaleEffect(x: 1 + deformation.stretch, y: 1 - deformation.stretch * 0.38)
@@ -522,5 +531,35 @@ private struct WaterLight: View {
             }
             .shadow(color: .black.opacity(0.08), radius: 6, y: -2)
         }
+    }
+}
+
+/// Voice feedback lives inside the glass; no ring, spinner or progress track.
+/// Bars show measured microphone energy, never simulated speech.
+private struct OrbVoiceFeedback: View {
+    let recording: Bool
+    let cancelling: Bool
+    let level: CGFloat
+
+    private var colour: Color { cancelling ? .orange : .primary }
+
+    var body: some View {
+        ZStack {
+            if recording {
+                HStack(spacing: 3) {
+                    ForEach(0..<5) { index in
+                        Capsule().fill(colour.opacity(0.85))
+                            .frame(width: 3, height: 4 + level * (index == 2 ? 22 : index % 2 == 1 ? 15 : 9))
+                    }
+                }
+                .animation(.easeOut(duration: 0.08), value: level)
+            } else {
+                Image(systemName: "mic.fill")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(colour.opacity(0.8))
+            }
+        }
+        .frame(width: 28, height: 28)
+        .accessibilityHidden(true)
     }
 }

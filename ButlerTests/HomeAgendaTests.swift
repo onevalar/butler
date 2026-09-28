@@ -66,6 +66,98 @@ final class HomeAgendaTests: XCTestCase {
         XCTAssertTrue(agenda.entries(on: day(5)).isEmpty, "an all-day event ends at midnight")
     }
 
+    func testPastDueTaskSurvivesAndCompletionPersistsHistory() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let store = ReminderStore(file: file, schedules: false)
+        let due = now.addingTimeInterval(-3600)
+        let task = TimedReminder(text: "取快递", fireDate: due, createdAt: day(-1))
+        try store.add(task)
+        let agenda = HomeAgenda.build(lots: [], reminders: store.reminders, events: [], now: now)
+        XCTAssertEqual(agenda.entries(on: day(0)).first?.start, due)
+        XCTAssertEqual(agenda.pending(on: day(0), at: now).map(\.title), ["取快递"])
+        XCTAssertTrue(ReminderSchedule.preview(task, now: now).isEmpty, "No new notification is invented")
+        let brief = DailyBrief.compose(agenda: agenda, lotCount: 1, reminderCount: 1, usesCalendar: false, now: now)
+        XCTAssertTrue(brief.text.contains("待完成"))
+        try store.complete(task.id)
+        let reloaded = ReminderStore(file: file, schedules: false)
+        XCTAssertTrue(reloaded.active.isEmpty)
+        let saved = try XCTUnwrap(reloaded.reminder(id: task.id))
+        XCTAssertEqual(saved.status, .completed)
+        let finished = try XCTUnwrap(saved.activity.last?.date)
+        let history = HomeAgenda.build(lots: [], reminders: reloaded.reminders, events: [], now: finished)
+        XCTAssertEqual(history.completed(on: calendar.startOfDay(for: finished)).map(\.target), [.reminder(task.id)])
+        XCTAssertTrue(history.pending(on: calendar.startOfDay(for: finished), at: finished).isEmpty)
+    }
+
+    func testUnfinishedTaskCarriesToNextDayButInactiveTasksDoNot() {
+        let original = TimedReminder(text: "昨天未完成", fireDate: day(-1).addingTimeInterval(3600))
+        for status in [TimedReminder.Status.active, .paused, .completed, .cancelled] {
+            var task = original
+            task.status = status
+            let agenda = HomeAgenda.build(lots: [], reminders: [task], events: [], now: now)
+            XCTAssertEqual(agenda.pending(on: day(0), at: now).count, status == .active ? 1 : 0)
+            XCTAssertTrue(agenda.entries(on: day(1)).isEmpty)
+        }
+    }
+
+    func testExhaustedPhasesStayVisibleAndRepeatedAlertsOnlyMakeOnePendingTask() {
+        var task = TimedReminder(text: "交材料", fireDate: day(-1))
+        task.phases = [ReminderPhase(startDate: day(-1), intervalMinutes: 5, maxOccurrences: 3)]
+        let carried = HomeAgenda.build(lots: [], reminders: [task], events: [], now: now)
+        XCTAssertEqual(carried.pending(on: day(0), at: now).count, 1)
+        task.fireDate = now.addingTimeInterval(-900)
+        task.phases = [ReminderPhase(startDate: task.fireDate, intervalMinutes: 5, maxOccurrences: 6)]
+        let today = HomeAgenda.build(lots: [], reminders: [task], events: [], now: now)
+        XCTAssertEqual(today.entries(on: day(0)).count, 6)
+        XCTAssertEqual(today.pending(on: day(0), at: now).count, 1)
+    }
+
+    func testCompletedTaskKeepsOriginalTimeAndTimelineState() throws {
+        let due = now.addingTimeInterval(-3600)
+        let task = TimedReminder(text: "取快递", fireDate: due, status: .completed,
+                                 activity: [ReminderActivity(date: now, kind: "completed", detail: "已完成")])
+        let agenda = HomeAgenda.build(lots: [], reminders: [task], events: [], now: now)
+        let entry = try XCTUnwrap(agenda.entries(on: day(0)).first)
+        XCTAssertEqual(entry.start, due)
+        XCTAssertTrue(entry.isCompleted)
+        XCTAssertTrue(entry.timelineItem.isCompleted)
+        XCTAssertEqual(entry.target, .reminder(task.id))
+        XCTAssertTrue(agenda.pending(on: day(0), at: now).isEmpty)
+        XCTAssertTrue(agenda.upcoming(after: day(0)).isEmpty)
+    }
+
+    func testCrossDayCompletionRetainsPlannedAndFinishedDays() {
+        let task = TimedReminder(text: "交材料", fireDate: day(-1).addingTimeInterval(3600), status: .completed,
+                                 activity: [ReminderActivity(date: now, kind: "completed", detail: "已完成")])
+        let agenda = HomeAgenda.build(lots: [], reminders: [task], events: [], now: now)
+        XCTAssertEqual(agenda.completed(on: day(-1)).first?.start, task.fireDate)
+        XCTAssertEqual(agenda.completed(on: day(0)).first?.start, now)
+        XCTAssertTrue(agenda.entries(on: day(1)).isEmpty)
+    }
+
+    func testEarlyCompletionDoesNotLeaveFuturePendingEntry() {
+        let task = TimedReminder(text: "提前完成", fireDate: day(2), status: .completed,
+                                 activity: [ReminderActivity(date: now, kind: "completed", detail: "已完成")])
+        let agenda = HomeAgenda.build(lots: [], reminders: [task], events: [], now: now)
+        XCTAssertEqual(agenda.completed(on: day(0)).count, 1)
+        XCTAssertTrue(agenda.entries(on: day(2)).isEmpty)
+        XCTAssertTrue(agenda.upcoming(after: day(0)).isEmpty)
+    }
+
+    func testCompletedRepeatingAndPhasedTasksHaveOneCompletionRecord() {
+        for phased in [false, true] {
+            var task = TimedReminder(text: "定期提醒", fireDate: day(-2), repeats: .daily, status: .completed,
+                                     activity: [ReminderActivity(date: now, kind: "autoCompleted", detail: "自动完成")])
+            if phased { task.phases = [ReminderPhase(startDate: day(-2), intervalMinutes: 5, maxOccurrences: 10)] }
+            let agenda = HomeAgenda.build(lots: [], reminders: [task], events: [], now: now)
+            XCTAssertEqual(agenda.completed(on: day(0)).count, 1)
+            XCTAssertEqual(agenda.completed(on: day(0)).first?.start, now)
+            XCTAssertTrue(agenda.entries(on: day(-2)).isEmpty)
+            XCTAssertTrue(agenda.upcoming(after: day(0)).isEmpty)
+        }
+    }
+
     func testCompactWindowFollowsNowOrTheFirstEvent() {
         let items = [TimelineItem(id: "a", title: "开会", startDate: calendar.date(bySettingHour: 15, minute: 0, second: 0, of: day(2))!,
                                   endDate: calendar.date(bySettingHour: 16, minute: 0, second: 0, of: day(2))!, color: .blue)]
