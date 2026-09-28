@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// A time-driven indentation, not pressure sensing. A touch responds immediately;
