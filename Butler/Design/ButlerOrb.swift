@@ -10,28 +10,38 @@ struct ButlerOrb: View {
     var drift = false
     /// How far the phone is tilted (-1…1 each way): the light inside and the reflection move against each other.
     var tilt: CGSize = .zero
+    var pressure: CGFloat = 0
+    var contact: CGPoint = .zero
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
+    @State private var phaseBase: Double = 0
+    @State private var phaseStarted = ProcessInfo.processInfo.systemUptime
 
     var body: some View {
         Group {
             if (active || drift) && !reduceMotion && scenePhase == .active {
-                TimelineView(.animation(minimumInterval: active ? nil : 1.0 / 30)) { context in
-                    let t = context.date.timeIntervalSinceReferenceDate
-                    ball(phase: active ? t : t * 0.35)
+                TimelineView(.animation(minimumInterval: active ? nil : 1.0 / 30)) { _ in
+                    let elapsed = ProcessInfo.processInfo.systemUptime - phaseStarted
+                    ball(phase: phaseBase + elapsed * (active ? 1 : 0.35))
                 }
             } else {
                 ball(phase: 0)
             }
         }
         .frame(width: size, height: size)
+        .onChange(of: active) { old, _ in
+            let now = ProcessInfo.processInfo.systemUptime
+            phaseBase += (now - phaseStarted) * (old ? 1 : 0.35)
+            phaseStarted = now
+        }
         .accessibilityHidden(true)
     }
 
     private func ball(phase: Double) -> some View {
-        OrbDrawing(palette: colorScheme == .dark ? .night : .day, phase: phase, active: active, tilt: tilt)
+        OrbDrawing(palette: colorScheme == .dark ? .night : .day, phase: phase, active: active,
+                   tilt: tilt, pressure: pressure, contact: contact)
             .frame(width: 200, height: 200)
             .scaleEffect(size / 200 * 1.13)
             .frame(width: size, height: size)
@@ -67,12 +77,22 @@ private struct OrbDrawing: View {
     let phase: Double
     let active: Bool
     var tilt: CGSize = .zero
+    var pressure: CGFloat = 0
+    var contact: CGPoint = .zero
 
-    private let ball = Circle().path(in: CGRect(x: 14, y: 14, width: 172, height: 172))
+    private var ball: Path {
+        guard pressure > 0.001 else { return Circle().path(in: CGRect(x: 14, y: 14, width: 172, height: 172)) }
+        return Path { path in
+            path.addLines(OrbPress.outline(radius: 86, contact: contact, depth: pressure)
+                .map { CGPoint(x: 100 + $0.x, y: 100 + $0.y) })
+            path.closeSubpath()
+        }
+    }
 
     var body: some View {
         let p = palette
         let drift = phase
+        let ball = self.ball
         ZStack {
             // A little light escaping the glass (dark only).
             Circle().fill(.white.opacity(p.halo))
@@ -109,25 +129,26 @@ private struct OrbDrawing: View {
                     Ellipse().fill(.white.opacity(0.9))
                         .frame(width: 24, height: 12).rotationEffect(.degrees(-38)).position(x: 66, y: 60).blur(radius: 0.9)
                 }
-                .offset(x: -tilt.width * 6, y: -tilt.height * 4)
+                .offset(x: -tilt.width * 6 - contact.x * pressure * 8,
+                        y: -tilt.height * 4 - contact.y * pressure * 8)
 
                 // Inner reflection along the lower rim, and the thickness of the glass.
                 LowerArc().stroke(.white.opacity(0.45), style: StrokeStyle(lineWidth: 1.4, lineCap: .round)).blur(radius: 0.9)
-                Circle().stroke(LinearGradient(stops: [
+                ball.stroke(LinearGradient(stops: [
                     .init(color: p.edge.opacity(0), location: 0.6),
                     .init(color: p.edge.opacity(p.edgeOpacity * 1.2), location: 1),
                 ], startPoint: UnitPoint(x: 0.2, y: 0), endPoint: UnitPoint(x: 0.8, y: 1)), lineWidth: 3)
-                    .frame(width: 168, height: 168).position(x: 100, y: 100).blur(radius: 0.9)
+                    .scaleEffect(168.0 / 172).blur(radius: 0.9)
             }
             .clipShape(ball)
 
-            Circle().stroke(LinearGradient(stops: [
+            ball.stroke(LinearGradient(stops: [
                 .init(color: .white.opacity(p.rim), location: 0),
                 .init(color: .white.opacity(0.12), location: 0.5),
                 .init(color: .white.opacity(p.rim * 0.55), location: 0.85),
                 .init(color: .white.opacity(p.rim * 0.5), location: 1),
             ], startPoint: UnitPoint(x: 0.15, y: 0), endPoint: UnitPoint(x: 0.85, y: 1)), lineWidth: 1.2)
-                .frame(width: 171, height: 171).position(x: 100, y: 100)
+                .scaleEffect(171.0 / 172)
         }
         .frame(width: 200, height: 200)
         .compositingGroup()

@@ -11,12 +11,10 @@ struct OrbPose: Sendable {
     var side: CGFloat
     var peak: CGFloat
 
-    static let duration: Double = 0.95
-    static let restSide: CGFloat = 28
-    static let restPeak: CGFloat = 60
+    static let duration: Double = 0.75
     static let ballLift: CGFloat = 74
 
-    static func at(_ progress: CGFloat) -> OrbPose {
+    static func at(_ progress: CGFloat, safeBottom: CGFloat = 34) -> OrbPose {
         let p = max(0, min(1, progress))
         let drop = min(1, p / 0.38)
         let impact = smooth((p - 0.38) / 0.36)
@@ -24,13 +22,18 @@ struct OrbPose: Sendable {
         // The front moves first; the corners only fill once it reaches them.
         let spread = 1 - pow(1 - smooth((p - 0.32) / 0.68), 2)
         let floor = -18 + 18 * smooth((p - 0.18) / 0.16)
+        let inset = max(0, min(34, safeBottom))
+        let restSide = max(6, inset * 0.65)
+        let restPeak = max(18, inset + 10)
+        // Keep the contact neck, then settle into a thinner pool as the front spreads.
+        let settle = smooth((p - 0.55) / 0.45)
         return OrbPose(
             ballY: 43 * drop * drop + 64 * impact,
             scaleX: 1 - 0.12 * smooth(drop) + 1.1 * impact,
             scaleY: 1 + 0.2 * smooth(drop) - 0.88 * impact,
             water: water, spread: spread,
             side: floor + restSide * smooth((p - 0.68) / 0.32),
-            peak: floor + restPeak * smooth((p - 0.25) / 0.30))
+            peak: floor + 60 * smooth((p - 0.25) / 0.30) - (60 - restPeak) * settle)
     }
 
     private static func smooth(_ value: CGFloat) -> CGFloat {

@@ -10,9 +10,20 @@ final class OrbLiquidGeometryTests: XCTestCase {
         XCTAssertGreaterThan(ball.distance(x: 0, y: 150, width: 390, height: 170), 0)
         for width: CGFloat in [320, 393, 430, 768] {
             let water = OrbLiquidGeometry(pose: .at(1))
-            XCTAssertEqual(water.distance(x: 0, y: 110, width: width, height: 170), 0, accuracy: 0.001)
-            XCTAssertEqual(water.distance(x: width / 2, y: 142, width: width, height: 170), 0, accuracy: 0.001)
+            XCTAssertEqual(water.distance(x: 0, y: 126, width: width, height: 170), 0, accuracy: 0.001)
+            XCTAssertEqual(water.distance(x: width / 2, y: 147.9, width: width, height: 170), 0, accuracy: 0.001)
             XCTAssertLessThan(water.distance(x: width / 2, y: 160, width: width, height: 170), 0)
+        }
+    }
+
+    func testPoolSettlesWithinDeviceBottomSpace() {
+        for (inset, side, peak): (CGFloat, CGFloat, CGFloat) in [(0, 6, 18), (21, 13.65, 31), (34, 22.1, 44)] {
+            let pose = OrbPose.at(1, safeBottom: inset)
+            XCTAssertEqual(pose.side, side, accuracy: 0.001)
+            XCTAssertEqual(pose.peak, peak, accuracy: 0.001)
+            // At contact, lowering the final resting level must not split the neck.
+            XCTAssertEqual(OrbLiquidGeometry(pose: .at(0.35, safeBottom: inset))
+                .contours(width: 393, height: 170).count, 1)
         }
     }
 
@@ -70,7 +81,7 @@ final class OrbLiquidGeometryTests: XCTestCase {
                 .contours(width: 393, height: 170).flatMap { $0 }
             let top = points.map(\.y).min() ?? 170
             XCTAssertLessThan(abs(top - previousTop), 4, "No frame-sized jump at the handoff")
-            XCTAssertLessThan(top, 113, "No deep collapse followed by an expanding hump")
+            XCTAssertLessThan(top, 127, "The crown settles down to the thinner 44pt pool")
             previousTop = top
         }
     }

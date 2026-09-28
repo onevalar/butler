@@ -6,23 +6,24 @@ final class OrbMotionTests: XCTestCase {
     func testReverseStartsAtDisplayedPoseAndOnlyTravelsRemainingDistance() {
         var motion = OrbMotion()
         motion.move(to: true, at: 10, animated: true)
-        let reversedAt = 10 + 0.95 * 0.7
+        XCTAssertEqual(motion.duration, 0.75)
+        let reversedAt = 10 + 0.75 * 0.7
         XCTAssertEqual(motion.progress(at: reversedAt), 0.7, accuracy: 0.000001)
         motion.move(to: false, at: reversedAt, animated: true)
         XCTAssertEqual(motion.progress(at: reversedAt), 0.7, accuracy: 0.000001)
-        XCTAssertEqual(motion.duration, 0.665, accuracy: 0.000001)
-        XCTAssertEqual(motion.progress(at: reversedAt + 0.3325), 0.35, accuracy: 0.000001)
-        XCTAssertEqual(motion.progress(at: reversedAt + 0.665), 0, accuracy: 0.000001)
+        XCTAssertEqual(motion.duration, 0.525, accuracy: 0.000001)
+        XCTAssertEqual(motion.progress(at: reversedAt + 0.2625), 0.35, accuracy: 0.000001)
+        XCTAssertEqual(motion.progress(at: reversedAt + 0.525), 0, accuracy: 0.000001)
     }
 
     func testRepeatedRetargetingDoesNotJumpOrOvershoot() {
         var motion = OrbMotion()
         motion.move(to: true, at: 0, animated: true)
-        motion.move(to: false, at: 0.19, animated: true)
-        XCTAssertEqual(motion.progress(at: 0.19), 0.2, accuracy: 0.000001)
-        motion.move(to: true, at: 0.2375, animated: true)
-        XCTAssertEqual(motion.progress(at: 0.2375), 0.15, accuracy: 0.000001)
-        XCTAssertEqual(motion.duration, 0.8075, accuracy: 0.000001)
+        motion.move(to: false, at: 0.15, animated: true)
+        XCTAssertEqual(motion.progress(at: 0.15), 0.2, accuracy: 0.000001)
+        motion.move(to: true, at: 0.1875, animated: true)
+        XCTAssertEqual(motion.progress(at: 0.1875), 0.15, accuracy: 0.000001)
+        XCTAssertEqual(motion.duration, 0.6375, accuracy: 0.000001)
         XCTAssertEqual(motion.progress(at: 20), 1)
     }
 
