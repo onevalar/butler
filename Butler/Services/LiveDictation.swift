@@ -15,6 +15,9 @@ final class LiveDictation {
     private(set) var text = ""
     var error: String?
 
+    /// When the owner asked for dictation, for the timing record (uptime seconds).
+    var askedAt: TimeInterval?
+    private var firstWordLogged = false
     private var base = ""
     private var finalized = ""
     private var volatile = ""
@@ -22,6 +25,9 @@ final class LiveDictation {
     private var analyzer: SpeechAnalyzer?
     private var input: AsyncStream<AnalyzerInput>.Continuation?
     private var resultsTask: Task<Void, Never>?
+    /// Brings the recognizer up while the microphone is already recording; resolves when it has caught up.
+    private var recognizerSetup: Task<Void, Never>?
+    private var relay: AudioRelay?
     private var legacyRequest: SFSpeechAudioBufferRecognitionRequest?
     private var legacyTask: SFSpeechRecognitionTask?
     private var sessionID: UUID?
@@ -33,6 +39,8 @@ final class LiveDictation {
 
     func start(after existing: String) async {
         guard sessionID == nil, !Task.isCancelled else { return }
+        askedAt = ProcessInfo.processInfo.systemUptime
+        firstWordLogged = false
         let id = UUID()
         sessionID = id
         error = nil
@@ -52,6 +60,8 @@ final class LiveDictation {
         guard sessionID == id else { throw CancellationError() }
     }
 
+    /// The microphone starts as soon as permission and the audio session allow it. Everything heard from then on is
+    /// kept, and handed to the recognizer once it is ready, so the first words are never lost to start-up time.
     private func prepare(after existing: String, session id: UUID) async {
         defer { if sessionID == id { preparing = false } }
         do {
@@ -70,21 +80,50 @@ final class LiveDictation {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.record, mode: .measurement, options: .duckOthers)
             try session.setActive(true, options: .notifyOthersOnDeactivation)
-            do {
-                try await startAnalyzer(session: id)
-            } catch {
-                try checkSession(id)
-                if error is CancellationError { throw error }
-                teardown(deactivateSession: false)
-                try startLegacy(session: id)
-            }
+            let relay = AudioRelay()
+            self.relay = relay
+            let natural = engine.inputNode.outputFormat(forBus: 0)
+            engine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: natural,
+                                        block: Self.captureTap(relay, meter: makeMeter(session: id)))
+            tapInstalled = true
+            engine.prepare()
             try checkSession(id)
+            try engine.start()
             listening = true
+            preparing = false
+            ChatDiagnostics.log("voice: recording began \(elapsed())s after the request")
+            recognizerSetup = Task { [weak self] in
+                await self?.bringUpRecognizer(session: id, relay: relay, natural: natural)
+            }
         } catch {
             guard sessionID == id else { return }
             let cancelled = error is CancellationError || Task.isCancelled
             cancel()
             if !cancelled { self.error = "语音识别没能启动，先打字吧。" }
+        }
+    }
+
+    private func elapsed() -> String {
+        String(format: "%.2f", ProcessInfo.processInfo.systemUptime - (askedAt ?? ProcessInfo.processInfo.systemUptime))
+    }
+
+    private func bringUpRecognizer(session id: UUID, relay: AudioRelay, natural: AVAudioFormat) async {
+        do {
+            do {
+                try await startAnalyzer(session: id, relay: relay, natural: natural)
+            } catch {
+                try checkSession(id)
+                if error is CancellationError { throw error }
+                teardownRecognizer()
+                try startLegacy(session: id, relay: relay)
+            }
+            try checkSession(id)
+            ChatDiagnostics.log("voice: recognizer caught up \(elapsed())s after the request")
+        } catch {
+            guard sessionID == id else { return }
+            if error is CancellationError || Task.isCancelled { return }
+            cancel()
+            self.error = "语音识别没能启动，先打字吧。"
         }
     }
 
@@ -100,6 +139,9 @@ final class LiveDictation {
         audioLevel = 0
         engine.stop()
         removeTap()
+        // What was heard while the recognizer was still starting is replayed to it first.
+        await recognizerSetup?.value
+        guard sessionID == id else { return stoppedText }
         input?.finish()
         legacyRequest?.endAudio()
         if let analyzer { try? await analyzer.finalizeAndFinishThroughEndOfInput() }
@@ -123,7 +165,7 @@ final class LiveDictation {
 
     // MARK: - Speech analyzer (iOS 26)
 
-    private func startAnalyzer(session id: UUID) async throws {
+    private func startAnalyzer(session id: UUID, relay: AudioRelay, natural: AVAudioFormat) async throws {
         let module: any SpeechModule
         if SpeechTranscriber.isAvailable, let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Self.locale) {
             try checkSession(id)
@@ -181,18 +223,13 @@ final class LiveDictation {
         input = continuation
         let target = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [module])
         try checkSession(id)
-        let natural = engine.inputNode.outputFormat(forBus: 0)
         try await analyzer.prepareToAnalyze(in: target)
         try checkSession(id)
         try await analyzer.start(inputSequence: stream)
         try checkSession(id)
-        engine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: natural,
-                                    block: Self.analyzerTap(from: natural, to: target, into: continuation,
-                                                            meter: makeMeter(session: id)))
-        tapInstalled = true
-        engine.prepare()
-        try checkSession(id)
-        try engine.start()
+        // Levels are already measured by the capture tap; this side only converts and forwards.
+        let convert = Self.analyzerTap(from: natural, to: target, into: continuation, meter: MicrophoneMeter { _ in })
+        relay.attach { buffer in convert(buffer, AVAudioTime(sampleTime: 0, atRate: natural.sampleRate)) }
     }
 
     /// Runs on the audio thread: converts mic buffers to the analyzer's format.
@@ -225,7 +262,7 @@ final class LiveDictation {
 
     // MARK: - Classic recognizer fallback
 
-    private func startLegacy(session id: UUID) throws {
+    private func startLegacy(session id: UUID, relay: AudioRelay) throws {
         try checkSession(id)
         guard let recognizer = SFSpeechRecognizer(locale: Self.locale), recognizer.isAvailable else { throw VoiceError.setupFailed }
         let request = SFSpeechAudioBufferRecognitionRequest()
@@ -242,13 +279,16 @@ final class LiveDictation {
                 if error != nil, result == nil { self.failed(session: id) }
             }
         }
-        let natural = engine.inputNode.outputFormat(forBus: 0)
-        engine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: natural,
-                                    block: Self.legacyTap(request, meter: makeMeter(session: id)))
-        tapInstalled = true
-        engine.prepare()
         try checkSession(id)
-        try engine.start()
+        relay.attach { buffer in request.append(buffer) }
+    }
+
+    /// Runs on the audio thread: measure the level, and keep the audio for whoever is listening.
+    nonisolated private static func captureTap(_ relay: AudioRelay, meter: MicrophoneMeter) -> AVAudioNodeTapBlock {
+        { buffer, _ in
+            meter.consume(buffer)
+            relay.push(buffer)
+        }
     }
 
     nonisolated private static func legacyTap(_ request: SFSpeechAudioBufferRecognitionRequest,
@@ -316,6 +356,10 @@ final class LiveDictation {
     // MARK: - Results
 
     private func heard(_ piece: String, final: Bool) {
+        if !firstWordLogged, !piece.isEmpty {
+            firstWordLogged = true
+            ChatDiagnostics.log("voice: first words \(elapsed())s after the request")
+        }
         if final {
             finalized += piece
             volatile = ""
@@ -349,10 +393,26 @@ final class LiveDictation {
         tapInstalled = false
     }
 
+    /// Drops the recognizer but leaves the microphone recording.
+    private func teardownRecognizer() {
+        resultsTask?.cancel()
+        legacyTask?.cancel()
+        if let analyzer { Task { await analyzer.cancelAndFinishNow() } }
+        input?.finish()
+        input = nil
+        analyzer = nil
+        resultsTask = nil
+        legacyRequest = nil
+        legacyTask = nil
+    }
+
     private func teardown(deactivateSession: Bool = true) {
         audioLevel = 0
         if engine.isRunning { engine.stop() }
         removeTap()
+        recognizerSetup?.cancel()
+        recognizerSetup = nil
+        relay = nil
         resultsTask?.cancel()
         legacyTask?.cancel()
         if let analyzer { Task { await analyzer.cancelAndFinishNow() } }
@@ -374,5 +434,60 @@ final class LiveDictation {
         guard sessionID == id, !Task.isCancelled else { return false }
         let microphone = await AVAudioApplication.requestRecordPermission()
         return speech && microphone
+    }
+}
+
+
+/// Holds microphone audio until the recognizer is ready, then replays it in order and passes everything after it straight on.
+/// Push runs on the audio thread; the backlog is replayed under the lock so the order can never be broken.
+final class AudioRelay: @unchecked Sendable {
+    nonisolated private let lock = NSLock()
+    nonisolated(unsafe) private var backlog: [AVAudioPCMBuffer] = []
+    nonisolated(unsafe) private var frames = 0
+    nonisolated(unsafe) private var consumer: ((AVAudioPCMBuffer) -> Void)?
+    /// About a minute of speech at most; a hold that long has bigger problems.
+    nonisolated private static let limit = 48_000 * 60
+
+    nonisolated init() {}
+    // Released from whichever thread lets go last (the audio thread, a test); no main-actor hop.
+    nonisolated deinit {}
+
+    nonisolated func push(_ buffer: AVAudioPCMBuffer) {
+        lock.lock()
+        if let consumer {
+            lock.unlock()
+            consumer(buffer)
+            return
+        }
+        if frames < Self.limit, let copy = Self.copy(buffer) {
+            backlog.append(copy)
+            frames += Int(copy.frameLength)
+        }
+        lock.unlock()
+    }
+
+    nonisolated func attach(_ consumer: @escaping (AVAudioPCMBuffer) -> Void) {
+        lock.lock()
+        let pending = backlog
+        backlog = []
+        frames = 0
+        for buffer in pending { consumer(buffer) }
+        self.consumer = consumer
+        lock.unlock()
+    }
+
+    /// The tap reuses its buffers, so anything kept has to be a copy.
+    nonisolated private static func copy(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        guard let copy = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameLength) else { return nil }
+        copy.frameLength = buffer.frameLength
+        let channels = Int(buffer.format.channelCount)
+        if let source = buffer.floatChannelData, let target = copy.floatChannelData {
+            let count = Int(buffer.frameLength) * (buffer.format.isInterleaved ? channels : 1)
+            for channel in 0..<(buffer.format.isInterleaved ? 1 : channels) {
+                target[channel].update(from: source[channel], count: count)
+            }
+            return copy
+        }
+        return nil
     }
 }

@@ -4,7 +4,7 @@ import Foundation
 /// A time-driven indentation, not pressure sensing. A touch responds immediately;
 /// continued contact builds resistance and release relaxes from the current depth.
 struct OrbPress: Sendable {
-    static let holdDuration: TimeInterval = 0.35
+    static let holdDuration: TimeInterval = 0.12
     private(set) var contact: CGPoint = .zero // normalized relative to the ball centre
     private(set) var held = false
     private var changedAt: TimeInterval = 0

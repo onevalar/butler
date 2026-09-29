@@ -73,6 +73,16 @@ struct OrbLiquidGeometry: Sendable {
     /// Trace both sides of every connected band. Horizontal slices are monotone
     /// in |x|, so bisection avoids a full 2D marching-squares grid each frame.
     func contours(width: CGFloat, height: CGFloat) -> [[CGPoint]] {
+        SymmetricContour.trace(width: width, height: height) { x, y in
+            distance(x: x, y: y, width: width, height: height)
+        }
+    }
+}
+
+/// Outline of any shape that is symmetric about the vertical centre line and whose horizontal slices are
+/// intervals around it. `distance` takes x measured from the centre line.
+enum SymmetricContour {
+    static func trace(width: CGFloat, height: CGFloat, distance: (CGFloat, CGFloat) -> CGFloat) -> [[CGPoint]] {
         let limit = width / 2 + 32
         var result: [[CGPoint]] = []
         var right: [CGPoint] = []
@@ -85,19 +95,15 @@ struct OrbLiquidGeometry: Sendable {
         var previousInside = false
         for row in 0...Int(ceil(height + 64)) {
             let y = CGFloat(row) - 32
-            let inside = distance(x: 0, y: y, width: width, height: height) <= 0
+            let inside = distance(0, y) <= 0
             if inside != previousInside {
                 // Resolve the tip between scanlines, rather than closing with a
-                // horizontal one-point-wide slice at the top/bottom of the ball.
+                // horizontal one-point-wide slice at the top/bottom of the shape.
                 var lo = previousY
                 var hi = y
                 for _ in 0..<12 {
                     let mid = (lo + hi) / 2
-                    if (distance(x: 0, y: mid, width: width, height: height) <= 0) == previousInside {
-                        lo = mid
-                    } else {
-                        hi = mid
-                    }
+                    if (distance(0, mid) <= 0) == previousInside { lo = mid } else { hi = mid }
                 }
                 right.append(CGPoint(x: width / 2, y: (lo + hi) / 2))
                 if !inside { finish() }
@@ -107,11 +113,7 @@ struct OrbLiquidGeometry: Sendable {
                 var hi = limit
                 for _ in 0..<14 {
                     let mid = (lo + hi) / 2
-                    if distance(x: mid, y: y, width: width, height: height) <= 0 {
-                        lo = mid
-                    } else {
-                        hi = mid
-                    }
+                    if distance(mid, y) <= 0 { lo = mid } else { hi = mid }
                 }
                 right.append(CGPoint(x: width / 2 + (lo + hi) / 2, y: y))
             }
@@ -120,5 +122,70 @@ struct OrbLiquidGeometry: Sendable {
         }
         finish()
         return result
+    }
+}
+
+/// The glass while the owner is speaking: the ball drawn out into a bar with round ends, and, while the finger
+/// slides up, a cancel zone that grows out of the same glass on a smooth neck. One surface, never two pieces.
+struct VoiceGeometry: Sendable, Equatable {
+    /// Width of the bar; `ballWidth` is the ball itself.
+    var barWidth: CGFloat
+    var barHeight: CGFloat = 62
+    static let ballWidth: CGFloat = 62
+    static let bulgeWidth: CGFloat = 96
+    /// Wide enough that both hands of bars show either side of a fingertip.
+    static let barWidth: CGFloat = 176
+    /// 0...1: how far the cancel zone has grown.
+    var extent: CGFloat = 0
+    /// Distance from the bar's centre to the zone's centre when fully grown.
+    static let reach: CGFloat = 122
+    static let zoneWidth: CGFloat = 132
+    static let zoneHeight: CGFloat = 60
+    static let neckWidth: CGFloat = 34
+
+    /// How far the top of the glass is above the bar's centre.
+    var topReach: CGFloat {
+        guard extent > 0.001 else { return barHeight / 2 }
+        let grow = Self.smooth(extent)
+        return max(barHeight / 2, zoneOffset + max(8, Self.zoneHeight / 2 * grow))
+    }
+
+    /// Centre of the zone above the bar's centre.
+    var zoneOffset: CGFloat { barHeight / 2 + (Self.reach - barHeight / 2) * extent }
+
+    /// Signed distance to the fused shape: inside is negative. `x` is from the centre line, `y` is downward,
+    /// `centerY` is the bar's centre in the same space.
+    func distance(x: CGFloat, y: CGFloat, centerY: CGFloat) -> CGFloat {
+        let bar = Self.pill(x: x, y: y - centerY, halfWidth: barWidth / 2, halfHeight: barHeight / 2)
+        guard extent > 0.001 else { return bar }
+        let grow = Self.smooth(extent)
+        let zoneY = centerY - zoneOffset
+        let zone = Self.pill(x: x, y: y - zoneY, halfWidth: max(8, Self.zoneWidth / 2 * grow), halfHeight: max(8, Self.zoneHeight / 2 * grow))
+        // The neck: a slim pill from the bar up to the zone, thinner the farther it stretches.
+        let neckHalf = max(3, Self.neckWidth / 2 * (1 - 0.3 * grow) * min(1, extent * 3))
+        let neckMid = (zoneY + centerY) / 2
+        let neck = Self.pill(x: x, y: y - neckMid, halfWidth: neckHalf, halfHeight: max(neckHalf, abs(centerY - zoneY) / 2))
+        return Self.smoothMin(Self.smoothMin(bar, neck, 22), zone, 22)
+    }
+
+    func contours(width: CGFloat, height: CGFloat, centerY: CGFloat) -> [[CGPoint]] {
+        SymmetricContour.trace(width: width, height: height) { x, y in distance(x: x, y: y, centerY: centerY) }
+    }
+
+    private static func pill(x: CGFloat, y: CGFloat, halfWidth: CGFloat, halfHeight: CGFloat) -> CGFloat {
+        let radius = min(halfWidth, halfHeight)
+        let dx = max(abs(x) - (halfWidth - radius), 0)
+        let dy = max(abs(y) - (halfHeight - radius), 0)
+        return hypot(dx, dy) - radius
+    }
+
+    private static func smoothMin(_ a: CGFloat, _ b: CGFloat, _ k: CGFloat) -> CGFloat {
+        let h = max(0, k - abs(a - b)) / k
+        return min(a, b) - h * h * k / 4
+    }
+
+    private static func smooth(_ value: CGFloat) -> CGFloat {
+        let x = max(0, min(1, value))
+        return x * x * (3 - 2 * x)
     }
 }

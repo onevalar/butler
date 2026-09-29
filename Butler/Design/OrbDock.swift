@@ -84,6 +84,14 @@ struct OrbDockView: View {
     @State private var cancelling = false
     @State private var travel = OrbMotion()
     @State private var moving = false
+    /// The voice glass replaces the ball from the moment a finger lands on it: width 64 is the ball, 98 the first bulge, 176 the bar.
+    @State private var voiceShown = false
+    @State private var voiceWidth: CGFloat = VoiceGeometry.ballWidth
+    /// 0...1, how far the cancel zone has grown; follows the finger while it slides up.
+    @State private var cancelExtent: CGFloat = 0
+    @State private var pressTick = 0
+    @State private var releaseTick = 0
+    @State private var pressBeganAt: TimeInterval = 0
 
     private var motionEnabled: Bool { !reduceMotion && scenePhase == .active }
 
@@ -91,6 +99,8 @@ struct OrbDockView: View {
     /// Ball centre above the bottom edge of the screen.
     static let ballLift: CGFloat = OrbPose.ballLift
     static let areaHeight: CGFloat = 170
+    /// Room above the ball for the cancel zone and everything that floats over it.
+    static let voiceAreaHeight: CGFloat = 340
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -118,16 +128,29 @@ struct OrbDockView: View {
                              hint: dock.spread ? "聚回成球" : moving ? "再次轻点可反向" : "点一下和管家对话，按住直接说话",
                              onChange: { dragChanged($0, width: width) }, onEnd: dragEnded,
                              onCancel: { cancelInteraction(animated: motionEnabled) },
-                             onActivate: activate)
+                             onActivate: activate,
+                             hidden: voiceShown)
                 }
             }
             .frame(height: Self.areaHeight)
+            if voiceShown {
+                GeometryReader { proxy in
+                    VoiceGlass(width: proxy.size.width, height: Self.voiceAreaHeight, barWidth: voiceWidth,
+                               extent: cancelExtent, level: reduceMotion ? 0 : dictation.audioLevel,
+                               recording: dock.listening && dictation.listening, cancelling: cancelling, tilt: motionEnabled ? motion.tilt : .zero)
+                }
+                .frame(height: Self.voiceAreaHeight)
+                .allowsHitTesting(false)
+                .transition(.identity)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         .ignoresSafeArea(edges: .bottom)
         .ignoresSafeArea(.keyboard)
-        .sensoryFeedback(.impact(weight: .light), trigger: dictation.listening) { _, new in new }
+        // A finger covers the ball, so the first sign that it heard you is in the hand.
+        .sensoryFeedback(.impact(weight: .light), trigger: pressTick)
         .sensoryFeedback(.selection, trigger: cancelling)
+        .sensoryFeedback(.impact(weight: .light), trigger: releaseTick)
         .onChange(of: dock.spread) { _, spread in
             cancelInteraction(animated: false)
             travel.move(to: spread, at: ProcessInfo.processInfo.systemUptime, animated: motionEnabled)
@@ -177,22 +200,30 @@ struct OrbDockView: View {
             interaction.begin(onBall: !moving && !dock.spread)
             if interaction.startedOnBall {
                 press.begin(at: contact, time: time)
+                pressBeganAt = time
+                pressTick += 1
+                ChatDiagnostics.log("voice: finger landed on the orb")
+                showVoiceGlass()
                 holdTask = Task {
                     do { try await Task.sleep(for: .seconds(OrbPress.holdDuration)) } catch { return }
                     guard !Task.isCancelled, interaction.pressing, !interaction.dragging else { return }
                     onBeginVoice?()
                     dock.listening = true
+                    setVoice(width: VoiceGeometry.barWidth)
+                    // The microphone starts at once; the recognizer catches up behind it.
                     await dictation.start(after: "")
                 }
             }
         }
         if dock.listening {
-            cancelling = value.translation.height < -60
+            // Sliding up grows the cancel zone out of the glass, and the zone follows the finger.
+            // Down and sideways do nothing: the owner keeps talking, and sliding back retracts the zone.
+            let extent = VoiceGesture.extent(forTranslation: value.translation)
             var transaction = Transaction(animation: nil)
             transaction.disablesAnimations = true
             withTransaction(transaction) {
-                press.move(to: contact)
-                interaction.drag(value.translation)
+                cancelExtent = extent
+                cancelling = VoiceGesture.cancels(extent: extent, wasCancelling: cancelling)
             }
         } else {
             // Resistance is spatial, not temporal: no spring trails the finger.
@@ -203,8 +234,41 @@ struct OrbDockView: View {
                 interaction.drag(value.translation)
             }
             if interaction.dragging {
+                // Dragged before it was a hold: this is the ball being played with, not talking.
                 holdTask?.cancel()
+                hideVoiceGlass(animated: false)
                 if press.held { press.release(at: time, animated: motionEnabled) }
+            }
+        }
+    }
+
+    private func showVoiceGlass() {
+        voiceShown = true
+        voiceWidth = VoiceGeometry.ballWidth
+        cancelExtent = 0
+        setVoice(width: VoiceGeometry.bulgeWidth)
+    }
+
+    private func setVoice(width: CGFloat) {
+        withAnimation(motionEnabled ? .spring(response: 0.22, dampingFraction: 0.72) : nil) { voiceWidth = width }
+    }
+
+    private func hideVoiceGlass(animated: Bool) {
+        guard voiceShown else { return }
+        if animated && motionEnabled {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.78)) {
+                voiceWidth = VoiceGeometry.ballWidth
+                cancelExtent = 0
+            } completion: {
+                if !interaction.pressing && !dock.listening { voiceShown = false }
+            }
+        } else {
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                voiceWidth = VoiceGeometry.ballWidth
+                cancelExtent = 0
+                voiceShown = false
             }
         }
     }
@@ -215,14 +279,26 @@ struct OrbDockView: View {
         let wasDragging = interaction.dragging
         let wasListening = dock.listening
         let wasBall = interaction.startedOnBall
-        if wasListening { finishListening(cancel: value.translation.height < -60) }
+        // A slow tap looks like a short hold. If nothing was said, it was a tap: open the conversation, don't complain.
+        let heldFor = ProcessInfo.processInfo.systemUptime - pressBeganAt
+        let slowTap = VoiceGesture.isSlowTap(listening: wasListening, cancelling: cancelling, heldFor: heldFor,
+                                             heardSomething: !dictation.text.isEmpty)
+        if slowTap {
+            dock.listening = false
+            dictation.cancel()
+        } else if wasListening {
+            releaseTick += 1
+            finishListening(cancel: cancelling)
+        }
+        hideVoiceGlass(animated: true)
         press.release(at: ProcessInfo.processInfo.systemUptime, animated: motionEnabled)
         let velocity = OrbInteraction.returnVelocity(translation: value.translation, velocity: value.velocity)
         withAnimation(motionEnabled && wasDragging ? .interpolatingSpring(stiffness: 190, damping: 12, initialVelocity: velocity) : nil) {
             interaction.reset()
         }
         cancelling = false
-        if !wasDragging && !wasListening {
+        if slowTap { onOpenChat() }
+        else if !wasDragging && !wasListening {
             if wasBall { onOpenChat() } else { dock.spread.toggle() }
         }
     }
@@ -230,7 +306,8 @@ struct OrbDockView: View {
     private func cancelInteraction(animated: Bool) {
         holdTask?.cancel()
         holdTask = nil
-        guard interaction.pressing || interaction.dragging || dock.listening else { return }
+        guard interaction.pressing || interaction.dragging || dock.listening || voiceShown else { return }
+        hideVoiceGlass(animated: false)
         var transaction = Transaction(animation: animated ? .spring(response: 0.25, dampingFraction: 1) : nil)
         transaction.disablesAnimations = !animated
         withTransaction(transaction) {
@@ -259,38 +336,64 @@ struct OrbDockView: View {
     }
 
     private var listeningOverlay: some View {
-        ZStack(alignment: .bottom) {
-            Color(.systemBackground).opacity(0.25)
+        let geometry = VoiceGeometry(barWidth: voiceWidth, extent: cancelExtent)
+        return ZStack(alignment: .bottom) {
+            Color(.systemBackground).opacity(0.55)
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
             VStack(spacing: 10) {
-                Text(transcript)
-                    .font(.title3.weight(.medium))
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(dictation.text.isEmpty ? .secondary : .primary)
-                    .padding(.horizontal, 18).padding(.vertical, 14)
-                    .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+                bubble
                 if voiceMessage != nil {
                     Button("知道了") { voiceMessage = nil }
                         .buttonStyle(.bordered)
                 } else if !finishingVoice {
-                    Text(cancelling ? "松开取消" : dictation.listening ? "松开就发给管家 · 上滑取消" : "准备好后开始说话 · 松开取消")
-                        .font(.footnote)
-                        .foregroundStyle(cancelling ? Color.red : .secondary)
+                    Text(hintText)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(cancelling ? Color.red : .primary)
+                        .padding(.horizontal, 16).frame(height: 30)
+                        .glassEffect(.regular, in: .capsule)
                 }
             }
             .padding(.horizontal, 24)
-            .padding(.bottom, Self.areaHeight - 10)
+            // Always just above the top of the glass, so it grows upward with the cancel zone.
+            .padding(.bottom, Self.ballLift + geometry.topReach + 16)
         }
         .ignoresSafeArea(edges: .bottom)
+        .animation(nil, value: cancelExtent)
+    }
+
+    @ViewBuilder
+    private var bubble: some View {
+        let waiting = voiceMessage == nil && !finishingVoice && dictation.error == nil && dictation.text.isEmpty
+        if waiting {
+            // Heard nothing yet: a small pill, not an empty box.
+            Text("…")
+                .font(.title3.weight(.medium)).foregroundStyle(.secondary)
+                .padding(.horizontal, 22).frame(height: 38)
+                .glassEffect(.regular, in: .capsule)
+        } else {
+            Text(transcript)
+                .font(.title3.weight(.medium))
+                .multilineTextAlignment(.center)
+                .lineLimit(4)
+                .foregroundStyle(cancelling ? .secondary : .primary)
+                .opacity(cancelling ? 0.6 : 1)
+                .padding(.horizontal, 18).padding(.vertical, 14)
+                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        }
+    }
+
+    private var hintText: String {
+        if cancelling { return "松开取消" }
+        if cancelExtent > 0.05 { return "继续说话 · 再上滑取消" }
+        return "松开发送 · 上滑取消"
     }
 
     private var transcript: String {
         if let voiceMessage { return voiceMessage }
         if finishingVoice { return "正在整理语音…" }
         if let error = dictation.error { return error }
-        if !dictation.listening { return "正在准备语音…" }
-        return dictation.text.isEmpty ? "正在听…" : dictation.text
+        return dictation.text
     }
 }
 
@@ -320,6 +423,8 @@ private struct OrbStage: View, Animatable {
     let onEnd: (DragGesture.Value) -> Void
     let onCancel: () -> Void
     let onActivate: () -> Void
+    /// The voice glass is drawn in its place; the touch keeps flowing through here.
+    var hidden = false
     @GestureState private var touching = false
 
     var animatableData: AnimatablePair<CGFloat, CGFloat> {
@@ -355,14 +460,17 @@ private struct OrbStage: View, Animatable {
             }
         }
         ZStack {
-            Color.clear.glassEffect(.clear, in: surface)
-            WaterLight(peak: pose.peak, tilt: tilt)
-                .opacity(pose.water)
-                .clipShape(surface)
-            surface.stroke(LinearGradient(colors: [.white.opacity(0.45), .white.opacity(0.95), .white.opacity(0.45)],
-                                           startPoint: .leading, endPoint: .trailing), lineWidth: 1.2)
-                .opacity(pose.water)
-            if pose.water < 1 {
+            Color.clear
+            if !hidden { Color.clear.glassEffect(.clear, in: surface) }
+            if !hidden {
+                WaterLight(peak: pose.peak, tilt: tilt)
+                    .opacity(pose.water)
+                    .clipShape(surface)
+                surface.stroke(LinearGradient(colors: [.white.opacity(0.45), .white.opacity(0.95), .white.opacity(0.45)],
+                                               startPoint: .leading, endPoint: .trailing), lineWidth: 1.2)
+                    .opacity(pose.water)
+            }
+            if pose.water < 1 && !hidden {
                 BallLight(size: size, deformation: deformation, active: active, tilt: tilt,
                           pressure: pressure, contact: contact)
                     .offset(x: pull.width * 0.55 * (1 - pose.water), y: pull.height * 0.55 * (1 - pose.water))
@@ -379,21 +487,6 @@ private struct OrbStage: View, Animatable {
                               y: height - OrbDockView.ballLift + contact.y * size * 0.32 + pull.height * 0.55)
                     .opacity(pressure * (1 - pose.water))
                     .clipShape(surface)
-                // Respond through the glass itself and a small voice glyph.
-                // Never add progress rings or rotating halos around the orb.
-                if holding || preparingVoice || recording {
-                    OrbVoiceFeedback(recording: recording, cancelling: cancelling, level: audioLevel)
-                        .position(x: width / 2 + pull.width * 0.55,
-                                  y: height - OrbDockView.ballLift + pull.height * 0.55)
-                        .opacity(1 - pose.water)
-                        .allowsHitTesting(false)
-                    if holding && !preparingVoice && !recording {
-                        Text("按住说话")
-                            .font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                            .position(x: width / 2, y: height - OrbDockView.ballLift - 57)
-                            .allowsHitTesting(false)
-                    }
-                }
             }
         }
         .frame(width: width, height: height)
@@ -534,32 +627,125 @@ private struct WaterLight: View {
     }
 }
 
-/// Voice feedback lives inside the glass; no ring, spinner or progress track.
-/// Bars show measured microphone energy, never simulated speech.
-private struct OrbVoiceFeedback: View {
+
+// MARK: - Voice
+
+/// What the finger's slide means while talking.
+enum VoiceGesture {
+    /// How far the finger has to travel to reach the middle of a fully grown cancel zone.
+    static let travel: CGFloat = VoiceGeometry.reach - 6
+
+    /// 0 for anything but upward. Sliding down or sideways changes nothing, and the zone retracts as the finger comes back.
+    static func extent(forTranslation translation: CGSize) -> CGFloat {
+        let up = -translation.height - 10
+        return max(0, min(1, up / travel))
+    }
+
+    /// A hold shorter than this, in which nothing was heard, is a tap that happened to be slow.
+    static let tapGrace: TimeInterval = 0.4
+
+    static func isSlowTap(listening: Bool, cancelling: Bool, heldFor: TimeInterval, heardSomething: Bool) -> Bool {
+        listening && !cancelling && !heardSomething && heldFor < tapGrace
+    }
+
+    /// The finger is in the zone. Once in, a little slack keeps it from flickering at the edge.
+    static func cancels(extent: CGFloat, wasCancelling: Bool) -> Bool {
+        wasCancelling ? extent > 0.72 : extent > 0.82
+    }
+}
+
+/// The fused outline as a shape, so the glass follows it while the width and the zone animate.
+private struct VoiceShape: Shape {
+    var barWidth: CGFloat
+    var extent: CGFloat
+    let centerY: CGFloat
+
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(barWidth, extent) }
+        set { barWidth = newValue.first; extent = newValue.second }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        let geometry = VoiceGeometry(barWidth: barWidth, extent: extent)
+        var path = Path()
+        for contour in geometry.contours(width: rect.width, height: rect.height, centerY: centerY) {
+            path.addLines(contour.map { CGPoint(x: rect.minX + $0.x, y: rect.minY + $0.y) })
+            path.closeSubpath()
+        }
+        return path
+    }
+}
+
+/// The glass while talking: the ball as a bar with round ends, voice bars on both sides of the finger,
+/// and a red cancel zone that grows out of the same glass when the finger slides up.
+private struct VoiceGlass: View {
+    let width: CGFloat
+    let height: CGFloat
+    let barWidth: CGFloat
+    let extent: CGFloat
+    let level: CGFloat
     let recording: Bool
     let cancelling: Bool
-    let level: CGFloat
-
-    private var colour: Color { cancelling ? .orange : .primary }
+    let tilt: CGSize
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
+        let centerY = height - OrbPose.ballLift
+        let geometry = VoiceGeometry(barWidth: barWidth, extent: extent)
+        let shape = VoiceShape(barWidth: barWidth, extent: extent, centerY: centerY)
+        let palette = colorScheme == .dark ? OrbPalette.night : OrbPalette.day
+        let dark = colorScheme == .dark
+        let grow = extent * extent * (3 - 2 * extent)
         ZStack {
-            if recording {
-                HStack(spacing: 3) {
-                    ForEach(0..<5) { index in
-                        Capsule().fill(colour.opacity(0.85))
-                            .frame(width: 3, height: 4 + level * (index == 2 ? 22 : index % 2 == 1 ? 15 : 9))
-                    }
+            Color.clear.glassEffect(.clear, in: shape)
+            // A little of the orb's own light, deep in the middle of the bar.
+            ZStack {
+                Ellipse().fill(palette.glow[0].0.opacity(0.36)).frame(width: 74, height: 30).offset(x: -16)
+                Ellipse().fill(palette.glow[1].0.opacity(0.36)).frame(width: 70, height: 28).offset(x: 16)
+                Ellipse().fill(palette.core.opacity(dark ? 0.55 : 0.85)).frame(width: 34, height: 15)
+            }
+            .blur(radius: 9)
+            .position(x: width / 2 + tilt.width * 5, y: centerY)
+            .opacity(Double(min(1, max(0.5, (barWidth - 64) / 40 + 0.5))))
+            .clipShape(shape)
+            // The cancel zone is the same glass turning red, brightest at its far end.
+            LinearGradient(colors: [Color(red: 1, green: 0.23, blue: 0.19).opacity(cancelling ? 0.92 : 0.7),
+                                    Color(red: 1, green: 0.27, blue: 0.23).opacity(cancelling ? 0.55 : 0.34), .clear],
+                           startPoint: UnitPoint(x: 0.5, y: max(0, (centerY - geometry.topReach) / height)),
+                           endPoint: UnitPoint(x: 0.5, y: (centerY - geometry.barHeight / 2 + 6) / height))
+                .opacity(grow)
+                .clipShape(shape)
+                .animation(.easeOut(duration: 0.15), value: cancelling)
+            shape.stroke(LinearGradient(colors: [.white.opacity(dark ? 0.3 : 0.9), .white.opacity(dark ? 0.1 : 0.35)],
+                                        startPoint: .top, endPoint: .bottom), lineWidth: 1)
+            bars(centerY: centerY)
+            Text("✕ 取消")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(.white)
+                .opacity(max(0, min(1, (extent - 0.45) / 0.35)) * (cancelling ? 1 : 0.75))
+                .position(x: width / 2, y: centerY - geometry.zoneOffset)
+        }
+        .frame(width: width, height: height)
+        .shadow(color: .black.opacity(dark ? 0.35 : 0.14), radius: 14, y: 8)
+        .accessibilityHidden(true)
+    }
+
+    /// Bars stand on both sides of the finger and follow the measured microphone level, never a simulated one.
+    private func bars(centerY: CGFloat) -> some View {
+        let show = max(0, min(1, (barWidth - 110) / 50))
+        let weights: [CGFloat] = [0.55, 0.85, 1, 0.7]
+        let ink = colorScheme == .dark ? Color.white : Color.black
+        return ZStack {
+            ForEach(0..<4, id: \.self) { index in
+                ForEach([-1, 1], id: \.self) { side in
+                    Capsule()
+                        .fill(ink.opacity(cancelling ? 0.35 : 0.78))
+                        .frame(width: 5, height: recording ? 6 + level * 32 * weights[index] : 5)
+                        .position(x: width / 2 + CGFloat(side) * (barWidth / 2 - 24 - CGFloat(index) * 11), y: centerY)
+                        .animation(.easeOut(duration: 0.08), value: level)
                 }
-                .animation(.easeOut(duration: 0.08), value: level)
-            } else {
-                Image(systemName: "mic.fill")
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(colour.opacity(0.8))
             }
         }
-        .frame(width: 28, height: 28)
-        .accessibilityHidden(true)
+        .opacity(show)
     }
 }
