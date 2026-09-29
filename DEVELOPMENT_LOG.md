@@ -477,3 +477,7 @@ Detailed fixtures, expected outcomes, and release gates are normative in [`docs/
 - 构建25使用 f58fd47，归档编译/签名导出通过，测试被同一用例的两条时间断言拦截，未运行内外部测试分发。
 - 根因：clockTime 跟随区域的12小时制却省略AM/PM，美国环境把15:00/21:00显示为03:00/09:00。本机指定英文、美国区域精确复现；改为 en_US_POSIX + HH:mm，继续使用当前本地时区。
 - 同时修正提醒工具测试的输入时间格式，直接生成未来完整日期，移除跨午夜跳过断言。美国区域全量348项，1项既有跳过，0失败（/private/tmp/butler-release-us-final-tests.log）。测试门槛保留，修复后重新手动构建。
+
+### 2026-09-29 TestFlight 1.0（26）
+- 构建26使用 main 的85f14df，云端Test/Archive成功，内部测试分发成功，外部分发已进入Pending Beta Review。版本已上传，中文测试说明与内部test组关联已核对。
+- 发布记录见docs/XCODE_CLOUD.md；外部仍待Apple审核，不宣称通知已送达或测试者已安装。结果文档另提交推送，不额外构建。
