@@ -104,7 +104,12 @@ struct ButlerBrief: Equatable, Codable {
 
 /// One thing that might deserve the butler's attention right now.
 struct BriefCandidate: Equatable {
-    enum Kind: String { case expired, dueTask = "due_task", upcomingTask = "upcoming_task", expiringSoon = "expiring_soon", lowStock = "low_stock" }
+    enum Kind: String {
+        case expired, dueTask = "due_task", upcomingTask = "upcoming_task", comingDays = "coming_days"
+        case expiringSoon = "expiring_soon", lowStock = "low_stock"
+        /// Material for the overview only: never the thing the buttons act on.
+        var isContext: Bool { self == .upcomingTask || self == .comingDays }
+    }
 
     let target: BriefTarget
     let kind: Kind
@@ -142,8 +147,10 @@ enum BriefCandidates {
         var seenTasks = Set<UUID>()
         for entry in agenda.pending(on: agenda.today, at: now) {
             guard case .reminder(let id) = entry.target, seenTasks.insert(id).inserted else { continue }
+            let leftOver = entry.day < agenda.today
             out.append(BriefCandidate(target: .task(id), kind: .dueTask, name: entry.title,
-                                      detail: "已到时间，还没完成" + (entry.start.map { "（\($0.clockTime)）" } ?? ""),
+                                      detail: leftOver ? "\(entry.day.monthDay) 的事，还没完成"
+                                          : "已到时间，还没完成" + (entry.start.map { "（\($0.clockTime)）" } ?? ""),
                                       quantity: nil, unit: nil, daysLeft: nil, location: nil, isMedicine: false))
         }
         for lot in facts.filter({ !$0.quantityOnly && ($0.daysLeft ?? 99) >= 0 && ($0.daysLeft ?? 99) <= 3 })
@@ -167,7 +174,23 @@ enum BriefCandidates {
             return BriefCandidate(target: .task(id), kind: .upcomingTask, name: entry.title, detail: "今天 \(start.clockTime)",
                                   quantity: nil, unit: nil, daysLeft: nil, location: nil, isMedicine: false)
         }
-        return pressing + upcoming
+        // The next few days: what is worth getting ready for (trips, deliveries, food that will need eating).
+        var seenLater = Set<AgendaEntry.Target>()
+        let later = (1...6).compactMap { calendar.date(byAdding: .day, value: $0, to: agenda.today) }.flatMap { day in
+            agenda.entries(on: day).filter { !$0.isRoutine && !$0.isCompleted }
+        }.filter { seenLater.insert($0.target).inserted }.prefix(6).compactMap { entry -> BriefCandidate? in
+            let target: BriefTarget
+            switch entry.target {
+            case .reminder(let id): target = .task(id)
+            case .lot(let id): target = .lot(id)
+            case .calendarEvent: return nil
+            }
+            let when = entry.day.relativeDayName(from: agenda.today, calendar: calendar) + (entry.start.map { " \($0.clockTime)" } ?? "")
+            return BriefCandidate(target: target, kind: .comingDays, name: entry.title, detail: when,
+                                  quantity: nil, unit: nil, daysLeft: nil, location: nil, isMedicine: false)
+        }
+        let mentioned = Set((pressing + upcoming).map(\.target))
+        return pressing + upcoming + later.filter { !mentioned.contains($0.target) && !snoozed.contains($0.target.key) }
     }
 
     private static func candidate(_ lot: LotFacts, _ kind: BriefCandidate.Kind, detail: String) -> BriefCandidate {
@@ -193,7 +216,7 @@ enum BriefLocal {
                         calendar: Calendar = .current) -> ButlerBrief {
         let hour = calendar.component(.hour, from: now)
         let greeting = DailyBrief.greeting(hour: hour)
-        let pressing = candidates.filter { $0.kind != .upcomingTask }
+        let pressing = candidates.filter { !$0.kind.isContext }
         let upcoming = candidates.filter { $0.kind == .upcomingTask }
         guard !candidates.isEmpty else {
             let text = lotCount == 0 ? "家里还没记东西。买了什么跟我说一句，我来记着到期。"
@@ -202,6 +225,8 @@ enum BriefLocal {
         }
         // First the shape of the day, in a few words; the list below has the times and details.
         var text = upcoming.isEmpty ? "" : overview(upcoming, calendar: calendar)
+        let laterCount = candidates.filter { $0.kind == .comingDays }.count
+        if upcoming.isEmpty, pressing.isEmpty, laterCount > 0 { text = "今天没什么要忙的，这几天还有 \(laterCount) 件事，可以提前看一眼。" }
         guard let top = pressing.first else {
             return ButlerBrief(greeting: greeting, text: text, basis: basis, target: nil, actions: [], source: .local, hasSubject: true)
         }
@@ -221,7 +246,7 @@ enum BriefLocal {
             text += "\(top.name)\(top.detail)，尽快用掉吧。"
             actions = [BriefAction(label: "已吃完", effect: .closeLot(.depleted)),
                        BriefAction(label: "明天再说", effect: .snooze(days: 0))]
-        case .lowStock, .upcomingTask:
+        case .lowStock, .upcomingTask, .comingDays:
             text += "\(top.name)只剩 \(top.quantity ?? 0) \(top.unit ?? "")了，记得买。"
             actions = [BriefAction(label: "知道了", effect: .snooze(days: 1))]
         }
@@ -279,7 +304,7 @@ enum BriefModelReply {
         // No target, or one of today's upcoming tasks: an overview without buttons. A key that isn't a candidate is refused.
         guard let key = raw.target, !key.isEmpty, key != "null" else { return (text, nil, []) }
         guard let target = BriefTarget(key: key), let candidate = candidates.first(where: { $0.target == target }) else { return nil }
-        if candidate.kind == .upcomingTask { return (text, nil, []) }
+        if candidate.kind.isContext { return (text, nil, []) }
 
         var actions: [BriefAction] = []
         for item in raw.actions ?? [] where actions.count < 3 {
@@ -324,11 +349,20 @@ enum BriefModelReply {
     /// What is sent to the model.
     static func instructions() -> String {
         """
-        你是家庭管家“小当家”。首页顶部这张卡片是今天的总览，下面另有一张“今日提醒”清单，逐条列出每件事的时间和细节。下面给你此刻的情况（JSON）：items 里 kind 为 upcoming_task 的是今天还没到时间的安排，其余是需要处理的事（过期、到点、快到期、快用完）。
+        你是用户的贴身秘书“小当家”。首页顶部这张卡片，是你此刻对他的一段综合提醒：看完他所有的事之后，帮他理清“今天大概是什么样、有什么别忘了、该先处理什么”。它不负责细节——下面另有一张“今日提醒”清单，逐条列出每件事的时间、车次、地点等；卡片和清单不能冲突，也不重复。
 
-        用一到两句口语化的中文写总览，总共不超过 60 个字：先概括今天的安排（合并同类，例如“今天有两趟车，最早一趟一大早”“下午有三件事”），再说最需要处理的一件事和该怎么办。不要复述车次、具体时间、地点、座位等细节，也不要逐条列清单——这些在下面的清单里已经有了；时间只说大概（一大早、上午、傍晚）。像熟悉这个家的人，不要用“建议您”，不要堆数字。
+        你拿到的 items（JSON）有这几类：
+        - due_task：已经到时间还没完成的事，包括前几天遗留下来的
+        - upcoming_task：今天稍后要做的事
+        - coming_days：接下来几天要做的事（出行、取件、约定、快要吃完的东西等）
+        - expired / expiring_soon / low_stock：家里的东西已过期、快到期、快用完
 
-        target 只能是需要处理的那件事（不能是 upcoming_task）；没有需要处理的事时 target 为 null，actions 为空数组，只写总览。有 target 时，按它的实际情况给 2 到 3 个按钮，让他点一下就能处理。
+        怎么写：
+        - 先通盘看完全部事项再下笔，像秘书一早跟老板交代：今天整体忙不忙、主要有哪几类事（同类合并，例如“两趟车”“三件家务”“两样东西快过期”），有没有遗留没做的，这几天有没有要提前准备的，最后点出最该先动手的一件。
+        - 不要只挑最近的一件细说，也不要逐条复述清单；不写车次、具体钟点、地址、座位、数量这些清单里已有的细节，时间只说大概（一大早、上午、明天、周末）。
+        - 一到两句口语化的中文，总共不超过 60 个字；像熟悉他的人说话，不用“建议您”，不堆数字。事情都不急时，一句轻松的概括就够，不要硬凑。
+
+        target：只能从需要他动手处理的事里选（due_task、expired、expiring_soon、low_stock），选最该现在处理的一件，按钮只针对它；upcoming_task 和 coming_days 只用来概括，不能作 target。没有需要动手的事时，target 为 null，actions 为空数组。有 target 时，按它的实际情况给 2 到 3 个按钮，让他点一下就能处理。
 
         按钮的 effect 只能从下面选，label 是按钮上的字（2 到 6 个字）：
         - close_depleted：这件东西吃完/用完了，从库存里去掉

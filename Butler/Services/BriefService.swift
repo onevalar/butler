@@ -123,7 +123,7 @@ final class BriefService {
                                          target: parsed.target, actions: actions, source: .model, hasSubject: true)
                 if !interactionStarted { brief = result }
                 store(result, signature: sig, now: now)
-                ChatDiagnostics.log("brief model ok \(String(format: "%.1f", Date.now.timeIntervalSince(started)))s actions=\(actions.map(\.label).joined(separator: ","))")
+                ChatDiagnostics.log("brief model ok \(String(format: "%.1f", Date.now.timeIntervalSince(started)))s text=\(parsed.text) actions=\(actions.map(\.label).joined(separator: ","))")
             } else {
                 failedAt[sig] = now
                 ChatDiagnostics.log("brief model reply unusable: \(reply.prefix(200))")
