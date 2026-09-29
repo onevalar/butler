@@ -108,10 +108,6 @@ struct HomeView: View {
             Spacer(minLength: 8)
             GlassEffectContainer(spacing: 8) {
                 HStack(spacing: 0) {
-                    Button(action: onOpenOverview) {
-                        Image(systemName: "calendar").font(.system(size: 18, weight: .medium)).frame(width: 44, height: 44)
-                    }
-                    .accessibilityLabel("日程总览")
                     Button(action: onOpenInventory) {
                         Image(systemName: "cabinet").font(.system(size: 18, weight: .medium)).frame(width: 44, height: 44)
                     }
