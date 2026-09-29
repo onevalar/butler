@@ -208,13 +208,13 @@ struct HomeView: View {
                     .accessibilityAction { if isActive { onOpen(row.target) } }
             }
             if !list.completed.isEmpty {
-                if !list.rows.isEmpty { rowDivider }
+                // A small caption above the finished ones, not a row of its own between two lines.
                 Text("已完成 \(list.completed.count) 件")
-                    .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                    .font(.footnote.weight(.medium)).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 18).padding(.vertical, 13)
-                ForEach(list.completed) { row in
-                    rowDivider
+                    .padding(.horizontal, 18).padding(.top, list.rows.isEmpty ? 6 : 16).padding(.bottom, 2)
+                ForEach(Array(list.completed.enumerated()), id: \.element.id) { index, row in
+                    if index > 0 { rowDivider }
                     HomeRowView(row: row, onOpen: openListItem)
                         .accessibilityAction { if isActive { onOpen(row.target) } }
                 }
@@ -351,7 +351,8 @@ struct BriefCard: View {
                 .lineSpacing(4)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
-            if !brief.text.isEmpty {
+            // A quiet day (nothing to raise) has no buttons at all, not even 其他.
+            if brief.target != nil {
                 FlowLayout(spacing: 8, lineSpacing: 8) {
                     if let target = brief.target {
                         ForEach(Array(brief.actions.enumerated()), id: \.element.id) { index, action in
