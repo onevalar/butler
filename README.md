@@ -8,6 +8,7 @@
 |---|---|
 | 软件现在能做什么、怎么运行、Jev 什么时候参与、怎样比较效果 | [功能与工作原理](docs/FEATURES_AND_JEV_GUIDE.md) |
 | 按页面/对象分对话、自然语言复杂任务、输入框交互的实现与边界 | [上下文管家与任务](docs/CONTEXTUAL_AGENT_DESIGN.md) |
+| 接下来逐项接入哪些苹果系统能力、如何验证 | [系统能力扩展清单](docs/SYSTEM_CAPABILITIES_PLAN.md) |
 | 云端构建、TestFlight 更新与配置进度 | [Xcode Cloud](docs/XCODE_CLOUD.md) |
 | 苹果识别、自定义语音模型与 AiHubMix 实时语音配置 | [语音识别](docs/SPEECH_RECOGNITION.md) |
 | 产品方向、库存数据结构和技术约束 | [产品与技术规格](docs/BUTLER_2_SPEC.md) |
