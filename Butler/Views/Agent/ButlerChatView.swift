@@ -378,11 +378,10 @@ struct ButlerChatView: View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(pending.enumerated()), id: \.element.id) { index, change in
                 HStack(alignment: .center, spacing: 12) {
-                    KindBar(color: color(for: change), height: 36)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(change.title).font(.body)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(change.title).font(.body.weight(.medium))
                         if let detail = change.detail {
-                            Text(detail).font(.footnote).foregroundStyle(.secondary)
+                            Text(detail).font(.subheadline).foregroundStyle(.secondary)
                         }
                         switch change.check {
                         case .passed:
@@ -400,8 +399,8 @@ struct ButlerChatView: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("去掉这一条")
                 }
-                .padding(.horizontal, 14).padding(.vertical, 10)
-                if index < pending.count - 1 { RowDivider(inset: 30) }
+                .padding(.horizontal, 18).padding(.vertical, 12)
+                if index < pending.count - 1 { RowDivider(inset: 18) }
             }
             HStack(spacing: 10) {
                 Button("取消") { chat.discard() }

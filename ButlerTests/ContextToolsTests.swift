@@ -215,10 +215,13 @@ final class ContextToolsTests: XCTestCase {
         let result = try await call(tools, "propose_task_plan", fields)
         XCTAssertNil(result["error"])
         let detail = try XCTUnwrap(tools.pending.first?.detail)
-        for expected in ["阶段 1", "每 10 分钟", "最多 10 次", "阶段 2", "每天同一时间", "最多 8 次",
-                         "2099-01-04 18:00", "下一阶段不会自动结束上一阶段", "全局停止时间：2099-01-04 20:00",
-                         "2099-01-05 20:00 按约定自动标记完成", "最多 6 次预览"] {
-            XCTAssertTrue(detail.contains(expected), expected)
+        // The card says every phase and bound in plain words, and none of the internal rule text.
+        for expected in ["第 1 段：", "每 10 分钟提醒", "最多 10 次", "第 2 段：", "每天提醒", "最多 8 次",
+                         "1月4日 18:00 为止", "1月4日 20:00 之后不再提醒", "1月5日 20:00 自动标记完成"] {
+            XCTAssertTrue(detail.contains(expected), "\(expected) in \(detail)")
+        }
+        for internalText in ["阶段 1", "时区：", "下一阶段不会自动结束上一阶段", "多个时间或次数限制", "预览", "未设全局停止时间"] {
+            XCTAssertFalse(detail.contains(internalText), internalText)
         }
         let description = try XCTUnwrap(result["task"] as? [String: Any])
         XCTAssertTrue((description["rule_summary"] as? String)?.contains("阶段 2") == true)

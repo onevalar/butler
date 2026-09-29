@@ -123,7 +123,7 @@ final class ButlerBriefTests: XCTestCase {
         XCTAssertNil(parse("完全不是 JSON"))
         // A sentence that is empty or far too long.
         XCTAssertNil(parse(#"{"target":"\#(lot.target.key)","text":"好","actions":[]}"#))
-        XCTAssertNil(parse(#"{"target":"\#(lot.target.key)","text":"\#(String(repeating: "很", count: 90))","actions":[]}"#))
+        XCTAssertNil(parse(#"{"target":"\#(lot.target.key)","text":"\#(String(repeating: "很", count: 130))","actions":[]}"#))
         // Effects the thing can't take, values out of range, unknown effects.
         let mixed = try XCTUnwrap(parse("""
         {"target":"\(lot.target.key)","text":"红枣酸奶后天到期，早点喝掉吧。","actions":[
@@ -505,5 +505,69 @@ final class HomeAgendaCostTests: XCTestCase {
         XCTAssertEqual(agenda.days.count, 366)
         XCTAssertLessThan(elapsed, 3.0, "took \(elapsed)s")
         print("year agenda for 200 items and 40 tasks: \(elapsed)s")
+    }
+}
+
+/// The confirmation card speaks plainly: when it will remind, and nothing about how the rules are stored.
+final class PlainReminderSummaryTests: XCTestCase {
+    private var zone: TimeZone { .current }
+    private func date(_ dayOffset: Int, _ hour: Int, _ minute: Int = 0, from now: Date) -> Date {
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = zone
+        let start = calendar.startOfDay(for: now)
+        return calendar.date(byAdding: .day, value: dayOffset, to: calendar.date(bySettingHour: hour, minute: minute, second: 0, of: start)!)!
+    }
+
+    func testASingleReminderIsOneShortLine() {
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        var task = TimedReminder(text: "购买 Claude 订阅", fireDate: date(0, 20, from: now))
+        task.timeZoneIdentifier = zone.identifier
+        XCTAssertEqual(ReminderSchedule.friendlySummary(task, now: now), "今天 20:00 提醒一次")
+        task.fireDate = date(1, 8, 30, from: now)
+        XCTAssertEqual(ReminderSchedule.friendlySummary(task, now: now), "明天 08:30 提醒一次")
+        task.repeats = .daily
+        XCTAssertEqual(ReminderSchedule.friendlySummary(task, now: now), "明天 08:30 起，每天提醒")
+    }
+
+    func testNothingInternalLeaksIntoTheCard() {
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        var task = TimedReminder(text: "寄材料", fireDate: date(0, 18, from: now))
+        task.timeZoneIdentifier = zone.identifier
+        task.phases = [ReminderPhase(startDate: date(0, 18, from: now), intervalMinutes: 10, maxOccurrences: 6),
+                       ReminderPhase(startDate: date(2, 20, from: now), repeats: .daily)]
+        task.endDate = date(4, 20, from: now)
+        let text = ReminderSchedule.friendlySummary(task, now: now)
+        XCTAssertTrue(text.contains("第 1 段：今天 18:00 起，每 10 分钟提醒，最多 6 次"), text)
+        XCTAssertTrue(text.contains("第 2 段："), text)
+        XCTAssertTrue(text.contains("之后不再提醒"), text)
+        for internalText in ["时区", "阶段", "预览", "以最先达到的为准", "未设全局停止时间", zone.identifier] {
+            XCTAssertFalse(text.contains(internalText), internalText)
+        }
+        XCTAssertLessThanOrEqual(text.split(separator: "\n").count, 4)
+    }
+
+    func testAForeignTimeZoneIsSaidOnceAndOnlyWhenItDiffers() {
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let other = TimeZone.current.identifier == "Asia/Tokyo" ? "Europe/Paris" : "Asia/Tokyo"
+        var task = TimedReminder(text: "会议", fireDate: now.addingTimeInterval(7200))
+        task.timeZoneIdentifier = other
+        XCTAssertTrue(ReminderSchedule.friendlySummary(task, now: now).contains("按 \(other) 的时间"))
+    }
+}
+
+extension ButlerBriefTests {
+    func testTheLocalCardAlsoMentionsWhatElseNeedsALook() {
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        func item(_ name: String, _ kind: BriefCandidate.Kind) -> BriefCandidate {
+            BriefCandidate(target: .lot(UUID()), kind: kind, name: name, detail: "已过期 2 天", quantity: 2, unit: "瓶",
+                           daysLeft: -2, location: nil, isMedicine: false)
+        }
+        let one = BriefLocal.compose(candidates: [item("土鸡蛋", .expired)], lotCount: 3, basis: "", now: now)
+        XCTAssertFalse(one.text.contains("另外"))
+        let three = BriefLocal.compose(candidates: [item("土鸡蛋", .expired), item("红枣酸奶", .expiringSoon), item("纯净水", .lowStock)],
+                                       lotCount: 3, basis: "", now: now)
+        XCTAssertTrue(three.text.hasSuffix("另外红枣酸奶、纯净水也要留意。"), three.text)
+        XCTAssertEqual(three.target, one.target == nil ? nil : three.target)
+        let five = BriefLocal.compose(candidates: (1...5).map { item("物品\($0)", .expiringSoon) }, lotCount: 5, basis: "", now: now)
+        XCTAssertTrue(five.text.contains("另外物品2、物品3等 4 样也要留意"), five.text)
     }
 }

@@ -65,6 +65,47 @@ enum ReminderSchedule {
         return lines.joined(separator: "\n")
     }
 
+    /// What the confirmation card says: a few plain sentences about when it will remind. The full rules stay on the
+    /// task's own page and go to the model; the card never shows time zones, rule numbering or boilerplate.
+    static func friendlySummary(_ reminder: TimedReminder, now: Date = .now) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: reminder.timeZoneIdentifier) ?? .current
+        let clock = DateFormatter()
+        clock.locale = Locale(identifier: "en_US_POSIX")
+        clock.timeZone = calendar.timeZone
+        clock.dateFormat = "HH:mm"
+        func when(_ date: Date) -> String {
+            let time = clock.string(from: date)
+            if calendar.isDate(date, inSameDayAs: now) { return "今天 \(time)" }
+            if let tomorrow = calendar.date(byAdding: .day, value: 1, to: now), calendar.isDate(date, inSameDayAs: tomorrow) { return "明天 \(time)" }
+            let parts = calendar.dateComponents([.month, .day], from: date)
+            return "\(parts.month ?? 0)月\(parts.day ?? 0)日 \(time)"
+        }
+        let phases = reminder.phases ?? [ReminderPhase(startDate: reminder.fireDate, repeats: reminder.repeats)]
+        var lines: [String] = []
+        for (index, phase) in phases.prefix(3).enumerated() {
+            var line: String
+            if let interval = phase.intervalMinutes {
+                line = "\(when(phase.startDate)) 起，每 \(interval) 分钟提醒"
+            } else {
+                switch phase.repeats {
+                case .none: line = "\(when(phase.startDate)) 提醒一次"
+                case .daily: line = "\(when(phase.startDate)) 起，每天提醒"
+                case .weekly: line = "\(when(phase.startDate)) 起，每周提醒"
+                }
+            }
+            if let count = phase.maxOccurrences, phase.repeats != .none || phase.intervalMinutes != nil { line += "，最多 \(count) 次" }
+            if let end = phase.endDate { line += "，到 \(when(end)) 为止" }
+            lines.append(phases.count > 1 ? "第 \(index + 1) 段：" + line : line)
+        }
+        if phases.count > 3 { lines.append("…共 \(phases.count) 段") }
+        if let end = reminder.endDate { lines.append("\(when(end)) 之后不再提醒") }
+        if let completion = reminder.autoCompleteAt { lines.append("\(when(completion)) 自动标记完成") }
+        if reminder.status == .paused { lines.append("现在是暂停状态，恢复后按这个提醒") }
+        if calendar.timeZone.identifier != TimeZone.current.identifier { lines.append("按 \(calendar.timeZone.identifier) 的时间") }
+        return lines.joined(separator: "\n")
+    }
+
     static func validate(_ reminder: TimedReminder) throws {
         guard !reminder.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               reminder.text.count <= 200 else { throw InvalidRule(message: "提醒内容需为 1–200 字") }

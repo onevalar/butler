@@ -122,9 +122,7 @@ extension ButlerTools {
             previewReminder.status = .active
             let dates = ReminderSchedule.preview(previewReminder, now: .now, limit: 6)
             guard !dates.isEmpty else { throw ToolError("计划没有未来提醒，请核对日期") }
-            let f = DateFormatter(); f.locale = Locale(identifier: "zh_CN"); f.timeZone = zone; f.dateFormat = "MM-dd HH:mm"
-            let detail = ReminderSchedule.ruleSummary(reminder)
-                + "\n\(reminder.status == .paused ? "恢复后" : "接下来")最多 6 次预览：" + dates.map(f.string).joined(separator: "、")
+            let detail = ReminderSchedule.friendlySummary(reminder)
             add(.taskPlan(reminder, expectedRevision: input.expected_revision), title: "\(input.id == nil ? "新建" : "修改")任务：\(input.text)", detail: detail)
             return try encode(["status": "waiting_for_user_confirmation", "saved": false, "task": try taskDescription(reminder)] as [String: Any])
         case "propose_task_action":
@@ -133,7 +131,7 @@ extension ButlerTools {
             guard let id = UUID(uuidString: input.id), let value = reminders.reminder(id: id) else { throw ToolError("找不到任务") }
             try requireTaskRevision(id, input.expected_revision)
             try validateTaskAction(input.action, reminder: value)
-            add(.taskAction(id, input.action, expectedRevision: input.expected_revision), title: "\(input.action.title)任务：\(value.text)", detail: "将应用到这个任务，保留历史记录")
+            add(.taskAction(id, input.action, expectedRevision: input.expected_revision), title: "\(input.action.title)任务：\(value.text)", detail: nil)
         default: return nil
         }
         return try encode(["status": "waiting_for_user_confirmation", "saved": false, "pending_changes": pending.count] as [String: Any])

@@ -183,7 +183,7 @@ enum BriefLocal {
                 : evening ? "今天的事都办完了，家里的东西也都还新鲜。" : "今天没有要操心的事，家里的东西都还新鲜。"
             return ButlerBrief(greeting: greeting, text: text, basis: basis, target: nil, actions: [], source: .local)
         }
-        let text: String
+        var text: String
         var actions: [BriefAction]
         switch top.kind {
         case .expired:
@@ -203,6 +203,12 @@ enum BriefLocal {
         case .lowStock:
             text = "\(top.name)只剩 \(top.quantity ?? 0) \(top.unit ?? "")了，记得买。"
             actions = [BriefAction(label: "知道了", effect: .snooze(days: 1))]
+        }
+        // The rest that also needs a look, in a few words, so the card says everything at a glance.
+        let others = candidates.dropFirst().map(\.name).reduce(into: [String]()) { if !$1.isEmpty, !$0.contains($1) { $0.append($1) } }
+        if !others.isEmpty {
+            let shown = others.prefix(2).joined(separator: "、")
+            text += "另外\(shown)\(others.count > 2 ? "等 \(others.count) 样" : "")也要留意。"
         }
         return ButlerBrief(greeting: greeting, text: text, basis: basis, target: top.target, actions: actions, source: .local)
     }
@@ -233,7 +239,7 @@ enum BriefModelReply {
               let key = raw.target, let target = BriefTarget(key: key),
               let candidate = candidates.first(where: { $0.target == target }) else { return nil }
         let text = raw.text.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard (4...80).contains(text.count) else { return nil }
+        guard (4...120).contains(text.count) else { return nil }
 
         var actions: [BriefAction] = []
         for item in raw.actions ?? [] where actions.count < 3 {
@@ -278,7 +284,7 @@ enum BriefModelReply {
     /// What is sent to the model.
     static func instructions() -> String {
         """
-        你是家庭管家“小当家”。下面给你此刻家里最需要关心的几件事（JSON）。请只挑其中最值得现在对用户说的一件，用一句口语化的中文对他说（不超过 30 个字），像熟悉这个家的人，不要用“建议您”，不要堆数字。再根据这件事的实际情况，给 2 到 3 个按钮，让他点一下就能处理。
+        你是家庭管家“小当家”。下面给你此刻家里最需要关心的几件事（JSON）。挑其中最值得现在对用户说的一件作为重点（按钮只针对它），用一到两句口语化的中文对他说，总共不超过 60 个字：先说这件事和该怎么办，如果还有别的要留意的事，可以顺带提一句（不用给它按钮）。像熟悉这个家的人，不要用“建议您”，不要堆数字。再根据重点这件事的实际情况，给 2 到 3 个按钮，让他点一下就能处理。
 
         按钮的 effect 只能从下面选，label 是按钮上的字（2 到 6 个字）：
         - close_depleted：这件东西吃完/用完了，从库存里去掉

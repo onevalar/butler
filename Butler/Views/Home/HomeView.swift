@@ -333,7 +333,7 @@ struct BriefCard: View {
     /// The first button is solid in the brand colour; the rest are clear glass.
     @ViewBuilder
     private func briefButtonLabel(_ label: String, primary: Bool) -> some View {
-        let text = Text(label).font(.system(size: 15, weight: .semibold)).padding(.horizontal, 16).frame(height: 36)
+        let text = Text(label).font(.system(size: 15, weight: .semibold)).padding(.horizontal, 15).frame(height: 34)
         if primary {
             text.foregroundStyle(accent.onFill).background(accent.fill, in: Capsule())
         } else {
@@ -342,14 +342,30 @@ struct BriefCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Text(brief.greeting).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
                 if busy { ProgressView().controlSize(.mini) }
+                Spacer(minLength: 8)
+                // Nothing fits? Tell the butler something else: the conversation about just this thing.
+                if let target = brief.target {
+                    Button { onOther(target) } label: {
+                        HStack(spacing: 3) {
+                            Text("别的安排")
+                            Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold))
+                        }
+                        .font(.footnote).foregroundStyle(.secondary)
+                        .padding(.vertical, 6).padding(.leading, 12).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("告诉我别的安排")
+                    .accessibilityHint("打开只关于这件事的对话，可以打字，也可以说话")
+                }
             }
             Text(brief.text)
-                .font(.system(size: 22, weight: .semibold))
-                .lineSpacing(3)
+                .font(.system(size: 17, weight: .medium))
+                .lineSpacing(4)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
             if let target = brief.target {
                 FlowLayout(spacing: 8, lineSpacing: 8) {
@@ -362,21 +378,9 @@ struct BriefCard: View {
                     }
                 }
                 .opacity(busy ? 0.45 : 1)
-                // Nothing here fits? A quiet line, not another button: it opens the conversation about just this thing.
-                Button { onOther(target) } label: {
-                    HStack(spacing: 4) {
-                        Text("都不合适？告诉我你的安排")
-                        Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold))
-                    }
-                    .font(.subheadline).foregroundStyle(.secondary)
-                    .frame(minHeight: 32, alignment: .leading)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityHint("打开只关于这件事的对话，可以打字，也可以说话")
             }
         }
-        .padding(20)
+        .padding(.horizontal, 18).padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard()
         .animation(.easeInOut(duration: 0.25), value: brief.text)
@@ -389,7 +393,10 @@ struct FlowLayout: Layout {
     var lineSpacing: CGFloat = 8
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        arrange(width: proposal.width ?? .infinity, subviews: subviews).size
+        let width = proposal.width ?? .infinity
+        let arranged = arrange(width: width, subviews: subviews)
+        // Take the whole width offered, so the text above it isn't squeezed to the width of the buttons.
+        return CGSize(width: width.isFinite ? width : arranged.size.width, height: arranged.size.height)
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
