@@ -69,7 +69,7 @@ struct HomeView: View {
                 }
                 VStack(spacing: 0) {
                     HStack {
-                        Text(isToday ? "今天的清单" : Self.label(for: listDay, today: agenda.today))
+                        Text(isToday ? "今日提醒" : Self.label(for: listDay, today: agenda.today))
                             .font(.subheadline.weight(.semibold))
                         Spacer(minLength: 8)
                         if !isToday {
@@ -104,25 +104,18 @@ struct HomeView: View {
         // Global navigation stays put while only the schedule list browses dates.
         .safeAreaBar(edge: .top) { header }
         .sheet(isPresented: $showingPicker) {
-            NavigationStack {
-                ScrollView {
-                    DayPickerPanel(agenda: agenda, selected: listDay, pendingTaskCount: pendingTaskCount,
-                                   onPick: { day in
-                                       selectDay(day)
-                                       closePicker()
-                                   },
-                                   onBrowseMonth: onBrowseMonth,
-                                   onOverview: { closePicker(); onOpenOverview() },
-                                   onTasks: { closePicker(); onOpenTasks() })
-                        .padding(16)
-                }
-                .navigationTitle("日期与记录")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成", action: closePicker) } }
+            // Just the month: tap a day to see it. The overview lives at the bottom of home, tasks in settings.
+            DayPickerPanel(agenda: agenda, selected: listDay,
+                           onPick: { day in
+                               selectDay(day)
+                               closePicker()
+                           },
+                           onBrowseMonth: onBrowseMonth)
+                .padding(.horizontal, 16).padding(.top, 28)
+                .frame(maxHeight: .infinity, alignment: .top)
                 .background { ButlerBackground() }
-            }
-            .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
+                .presentationDetents([.height(470)])
+                .presentationDragIndicator(.visible)
         }
         .animation(reduceMotion ? nil : .spring(response: 0.38, dampingFraction: 0.82), value: showingPicker)
         .sensoryFeedback(.selection, trigger: listDay)
@@ -261,17 +254,13 @@ struct HomeView: View {
         listDay = calendar.startOfDay(for: day)
     }
 
-    // MARK: Two quiet lines
+    // MARK: One quiet line
 
+    /// 日程总览, with what the coming week holds; things at home are reached from the top-right icon.
     private var quietLinks: some View {
-        VStack(spacing: 0) {
-            if let week = HomeList.weekAhead(agenda: agenda) {
-                quietRow("这周还有 \(week.count) 件", week.preview, action: onOpenUpcoming)
-                Divider().padding(.horizontal, 6)
-            }
-            quietRow(facts.isEmpty ? "家里还没有东西" : "物品 \(facts.count) 样",
-                     facts.isEmpty ? "买了什么，跟管家说一句" : HomeList.places(facts: facts), action: onOpenInventory)
-        }
+        let week = HomeList.weekAhead(agenda: agenda)
+        return quietRow("日程总览", week.map { "这周还有 \($0.count) 件 · \($0.preview)" } ?? "这周没有别的安排",
+                        action: onOpenOverview)
     }
 
     private func quietRow(_ title: String, _ subtitle: String, action: @escaping () -> Void) -> some View {
@@ -424,23 +413,18 @@ struct FlowLayout: Layout {
     }
 }
 
-/// Full date sheet: month browsing, arbitrary date jump and task history.
+/// Date sheet: one month at a time; tap a day to see its list.
 struct DayPickerPanel: View {
     let agenda: HomeAgenda
     let selected: Date
-    let pendingTaskCount: Int
     let onPick: (Date) -> Void
-    let onOverview: () -> Void
-    let onTasks: () -> Void
-
     let onBrowseMonth: (Date) -> Void
     @State private var visibleDate: Date
     private var calendar: Calendar { .current }
 
-    init(agenda: HomeAgenda, selected: Date, pendingTaskCount: Int, onPick: @escaping (Date) -> Void,
-         onBrowseMonth: @escaping (Date) -> Void, onOverview: @escaping () -> Void, onTasks: @escaping () -> Void) {
-        self.agenda = agenda; self.selected = selected; self.pendingTaskCount = pendingTaskCount
-        self.onPick = onPick; self.onBrowseMonth = onBrowseMonth; self.onOverview = onOverview; self.onTasks = onTasks
+    init(agenda: HomeAgenda, selected: Date, onPick: @escaping (Date) -> Void, onBrowseMonth: @escaping (Date) -> Void) {
+        self.agenda = agenda; self.selected = selected
+        self.onPick = onPick; self.onBrowseMonth = onBrowseMonth
         _visibleDate = State(initialValue: selected)
     }
 
@@ -477,21 +461,8 @@ struct DayPickerPanel: View {
                     if let day { cell(day) } else { Color.clear.frame(height: 42) }
                 }
             }
-            Divider().padding(.top, 2)
-            DatePicker("跳到指定日期", selection: $visibleDate, displayedComponents: .date)
-                .environment(\.locale, Locale(identifier: "zh_CN"))
-                .padding(.horizontal, 8).padding(.vertical, 10)
-            door("查看选定日期", detail: visibleDate.formatted(.dateTime.year().month().day().locale(Locale(identifier: "zh_CN"))),
-                 systemImage: "calendar.badge.clock", action: { onPick(calendar.startOfDay(for: visibleDate)) })
-            door("回到今天", detail: nil, systemImage: "arrow.uturn.backward", action: { onPick(agenda.today) })
-            Divider()
-            door("日程总览", detail: "月 · 年 · 列表", systemImage: "calendar", action: onOverview)
-            door("全部任务与历史", detail: pendingTaskCount > 0 ? "\(pendingTaskCount) 件待完成" : nil,
-                 systemImage: "checklist", action: onTasks)
         }
-        .padding(14)
         .frame(maxWidth: .infinity)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
         .onChange(of: month, initial: true) { onBrowseMonth(month) }
     }
 
@@ -520,20 +491,6 @@ struct DayPickerPanel: View {
                             + (dots.isEmpty ? "" : "，有安排"))
     }
 
-    private func door(_ title: String, detail: String?, systemImage: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                Image(systemName: systemImage).font(.system(size: 16, weight: .medium)).frame(width: 24)
-                Text(title).font(.body)
-                Spacer()
-                if let detail { Text(detail).font(.subheadline).foregroundStyle(.secondary) }
-                Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(.tertiary)
-            }
-            .padding(.horizontal, 8).padding(.vertical, 8)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
 }
 
 extension AgendaEntry {
