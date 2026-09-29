@@ -208,6 +208,14 @@ final class InventoryRepository {
             try touch(lot)
             return (.lot, lot.id)
 
+        case .setItemProfile(let payload):
+            let lot = try requireLot(id: payload.lotID, pendingLots: pendingLots, in: modelContext)
+            try requireRevision(payload.expectedRevision, actual: lot.revision, kind: "lot", id: lot.id)
+            try payload.profile.validate()
+            lot.profileData = try JSONEncoder().encode(payload.profile)
+            try touch(lot)
+            return (.lot, lot.id)
+
         case .moveLot(let payload):
             let lot = try requireLot(id: payload.lotID, pendingLots: pendingLots, in: modelContext)
             try requireRevision(payload.expectedRevision, actual: lot.revision, kind: "lot", id: lot.id)
@@ -386,6 +394,7 @@ final class InventoryRepository {
         case .addLot(let value): return (.lot, value.lotID)
         case .adjustQuantity(let value): return (.lot, value.lotID)
         case .setLotDate(let value): return (.lot, value.lotID)
+        case .setItemProfile(let value): return (.lot, value.lotID)
         case .moveLot(let value): return (.lot, value.lotID)
         case .closeLot(let value): return (.lot, value.lotID)
         case .undoLot(let value): return (.lot, value.lotID)
@@ -400,6 +409,7 @@ final class InventoryRepository {
         case .addLot: return "lotAdded"
         case .adjustQuantity: return "quantityAdjusted"
         case .setLotDate: return "lotDateSet"
+        case .setItemProfile: return "itemProfileUpdated"
         case .moveLot: return "lotMoved"
         case .closeLot: return "lotClosed"
         case .undoLot: return "lotActionUndone"
@@ -423,6 +433,7 @@ final class InventoryRepository {
         case (.addLot(let value), .storageLocation): return try encode(value.storageLocation)
         case (.adjustQuantity(let value), .quantity): return try encode(value.delta)
         case (.setLotDate(let value), let field) where field == value.kind.fieldKey: return try encode(value.date)
+        case (.setItemProfile(let value), .itemProfile): return try encode(value.profile)
         case (.moveLot(let value), .storageLocation): return try encode(value.storageLocation)
         case (.closeLot(let value), .state): return try encode(value.state.rawValue)
         case (.createTemplate(let value), .templateDefaults): return try encode(value)
@@ -527,6 +538,7 @@ private extension InventoryOperation {
         case .addLot(let value): return value.evidence
         case .adjustQuantity(let value): return value.evidence
         case .setLotDate(let value): return value.evidence
+        case .setItemProfile(let value): return value.evidence
         case .moveLot(let value): return value.evidence
         case .closeLot(let value): return value.evidence
         case .undoLot(let value): return value.evidence

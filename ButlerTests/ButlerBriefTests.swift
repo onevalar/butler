@@ -80,8 +80,8 @@ final class ButlerBriefTests: XCTestCase {
         XCTAssertFalse(BriefLocal.compose(candidates: [medicine], lotCount: 1, basis: "", now: now).actions.contains { $0.effect == .closeLot(.depleted) })
 
         XCTAssertEqual(BriefLocal.compose(candidates: [], lotCount: 0, basis: "", now: now).text, "家里还没记东西。买了什么跟我说一句，我来记着到期。")
-        XCTAssertEqual(BriefLocal.compose(candidates: [], lotCount: 4, basis: "", now: now).text, "今天没有要操心的事，家里的东西都还新鲜。")
-        XCTAssertEqual(BriefLocal.compose(candidates: [], lotCount: 4, basis: "", now: at(20)).text, "今天的事都办完了，家里的东西也都还新鲜。")
+        XCTAssertEqual(BriefLocal.compose(candidates: [], lotCount: 4, basis: "", now: now).text, "暂时没有新的提醒，其他安排和记录都在下面。")
+        XCTAssertEqual(BriefLocal.compose(candidates: [], lotCount: 4, basis: "", now: at(20)).text, "暂时没有新的提醒，其他安排和记录都在下面。")
         XCTAssertTrue(BriefLocal.compose(candidates: [], lotCount: 4, basis: "", now: now).actions.isEmpty)
     }
 
@@ -294,6 +294,40 @@ final class ButlerBriefTests: XCTestCase {
         {"target":"\(candidate.target.key)","text":"\(text)","actions":[
         {"label":"喝了一瓶","effect":"adjust_quantity","value":1},{"label":"再放两天","effect":"snooze","value":2}]}
         """
+    }
+
+    func testInteractingWithLocalCardKeepsItsActionsWhileBackgroundReplyIsCached() async {
+        let storage = defaults()
+        let item = candidate()
+        let service = BriefService(defaults: storage)
+        service.attach(model: FakeModel { self.reply(for: item) })
+        let now = at(19)
+        service.update(candidates: [item], lotCount: 4, taskCount: 0, usesCalendar: false, now: now)
+        let visible = service.brief
+        service.beginInteraction()
+        await service.settle()
+        XCTAssertEqual(service.brief, visible, "background completion must not replace a touched card")
+        XCTAssertFalse(service.isThinking)
+        let reopened = BriefService(defaults: storage)
+        reopened.update(candidates: [item], lotCount: 4, taskCount: 0, usesCalendar: false, now: now)
+        XCTAssertEqual(reopened.brief.source, .model, "the background work still completes and can be reused")
+    }
+
+    func testNewSituationCanUpdateAfterUserFinishedPreviousAction() async {
+        let storage = defaults()
+        let first = candidate()
+        let second = candidate("鸡蛋")
+        let model = FakeModel { self.reply(for: first) }
+        let service = BriefService(defaults: storage)
+        service.attach(model: model)
+        service.update(candidates: [first], lotCount: 2, taskCount: 0, usesCalendar: false, now: at(19))
+        service.beginInteraction()
+        await service.settle()
+        model.reply = { self.reply(for: second, text: "鸡蛋也该处理了。") }
+        service.update(candidates: [second], lotCount: 1, taskCount: 0, usesCalendar: false, now: at(19))
+        await service.settle()
+        XCTAssertEqual(service.brief.target, second.target)
+        XCTAssertEqual(service.brief.source, .model)
     }
 
     func testTheModelChoosesTheSentenceAndTheButtonsAndItIsAskedOncePerSituation() async throws {

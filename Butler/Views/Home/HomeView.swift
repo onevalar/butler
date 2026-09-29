@@ -30,7 +30,8 @@ extension Date {
 struct HomeView: View {
     let agenda: HomeAgenda
     let facts: [LotFacts]
-    @Binding var selectedDay: Date
+    @Binding var listDay: Date
+    let isActive: Bool
     let now: Date
     let brief: ButlerBrief
     let briefBusy: Bool
@@ -42,60 +43,87 @@ struct HomeView: View {
     let onOpenButler: () -> Void
     let onOpenTasks: () -> Void
     let onBriefAction: (BriefAction, BriefTarget) -> Void
-    let onBriefOther: (BriefTarget) -> Void
+    let onBriefOther: (ButlerBrief) -> Void
+    let onBriefInteraction: () -> Void
+    let onBrowseMonth: (Date) -> Void
 
     @State private var showingPicker = false
-    @State private var expanded = false
-    @State private var completedShown = false
     @State private var slideForward = true
+    @State private var listInteraction = HomeDayInteraction()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var calendar: Calendar { .current }
-    private var isToday: Bool { selectedDay == agenda.today }
+    private var isToday: Bool { listDay == agenda.today }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 if !brief.text.isEmpty {
-                    BriefCard(brief: brief, busy: briefBusy, onAction: onBriefAction, onOther: onBriefOther)
+                    BriefCard(brief: brief, busy: briefBusy, onAction: onBriefAction, onOther: onBriefOther, onInteraction: onBriefInteraction)
                         .padding(.horizontal, 16)
                         .padding(.bottom, 16)
                 }
-                dayList
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 14)
-                quietLinks
-                    .padding(.horizontal, 20)
+                VStack(spacing: 0) {
+                    HStack {
+                        Text(isToday ? "今天的清单" : Self.label(for: listDay, today: agenda.today))
+                            .font(.subheadline.weight(.semibold))
+                        Spacer(minLength: 8)
+                        if !isToday {
+                            Button("回到今天") {
+                                if listInteraction.allowsTap { selectDay(agenda.today) }
+                            }
+                                .font(.subheadline).buttonStyle(.plain)
+                                .accessibilityAction { selectDay(agenda.today) }
+                        }
+                    }
+                    .frame(minHeight: 36)
+                    .padding(.horizontal, 22).padding(.bottom, 6)
+                    dayList
+                        .offset(x: reduceMotion ? 0 : listInteraction.offset)
+                        .padding(.horizontal, 16)
+                        .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: listDay)
+                }
+                .contentShape(Rectangle())
+                .gesture(HomeDaySwipe(interaction: listInteraction, day: listDay, isEnabled: isActive, onPick: selectDay))
+                .allowsHitTesting(isActive)
+                .accessibilityAction(named: "前一天") { step(-1) }
+                .accessibilityAction(named: "后一天") { step(1) }
+                .padding(.bottom, 14)
+                quietLinks.padding(.horizontal, 20)
             }
             .padding(.top, 4)
             .padding(.bottom, 24)
         }
         .scrollIndicators(.hidden)
-        .orbScrollTracking()
         .background { ButlerBackground() }
         .toolbar(.hidden, for: .navigationBar)
-        // The date and the entries share one pinned row; content scrolls under it.
+        // Global navigation stays put while only the schedule list browses dates.
         .safeAreaBar(edge: .top) { header }
-        .overlay(alignment: .topLeading) {
-            if showingPicker {
-                ZStack(alignment: .topLeading) {
-                    Color.black.opacity(0.14).ignoresSafeArea()
-                        .onTapGesture { closePicker() }
-                    DayPickerPanel(agenda: agenda, selected: selectedDay, pendingTaskCount: pendingTaskCount,
+        .sheet(isPresented: $showingPicker) {
+            NavigationStack {
+                ScrollView {
+                    DayPickerPanel(agenda: agenda, selected: listDay, pendingTaskCount: pendingTaskCount,
                                    onPick: { day in
-                                       selectedDay = day
-                                       expanded = false
+                                       selectDay(day)
                                        closePicker()
                                    },
+                                   onBrowseMonth: onBrowseMonth,
                                    onOverview: { closePicker(); onOpenOverview() },
                                    onTasks: { closePicker(); onOpenTasks() })
-                        .padding(.leading, 16).padding(.top, 62)
-                        .transition(.scale(scale: 0.9, anchor: .topLeading).combined(with: .opacity))
+                        .padding(16)
                 }
+                .navigationTitle("日期与记录")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成", action: closePicker) } }
+                .background { ButlerBackground() }
             }
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
         }
         .animation(reduceMotion ? nil : .spring(response: 0.38, dampingFraction: 0.82), value: showingPicker)
-        .sensoryFeedback(.selection, trigger: selectedDay)
+        .sensoryFeedback(.selection, trigger: listDay)
+        .onChange(of: isActive) { if !isActive { listInteraction.cancel() } }
+        .onDisappear { listInteraction.cancel() }
     }
 
     private func closePicker() { showingPicker = false }
@@ -128,33 +156,23 @@ struct HomeView: View {
         .padding(.bottom, 8)
     }
 
-    /// "今天 · 9月28日 周一 ⌄": tap to pick another day; on another day it reads "9月30日 周三 ×" and × comes back.
+    /// Home stays anchored to today. The sheet selects the list's date, not a different home page.
     private var dateCapsule: some View {
         HStack(spacing: 6) {
             Button { showingPicker.toggle() } label: {
                 HStack(spacing: 8) {
-                    Text(Self.label(for: selectedDay, today: agenda.today, calendar: calendar))
+                    Text(Self.label(for: agenda.today, today: agenda.today, calendar: calendar))
                         .font(.system(size: 17, weight: .semibold))
                         .lineLimit(1).minimumScaleFactor(0.8)
-                    if isToday { Image(systemName: "chevron.down").font(.system(size: 12, weight: .bold)).foregroundStyle(.secondary) }
+                    Image(systemName: "chevron.down").font(.system(size: 12, weight: .bold)).foregroundStyle(.secondary)
                 }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("选择日期，现在是\(Self.label(for: selectedDay, today: agenda.today, calendar: calendar))")
-            if !isToday {
-                Button {
-                    slideForward = false
-                    withAnimation(reduceMotion ? nil : .snappy) { selectedDay = agenda.today; expanded = false }
-                } label: {
-                    Image(systemName: "xmark").font(.system(size: 12, weight: .bold)).foregroundStyle(.secondary)
-                        .frame(width: 28, height: 28).contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("回到今天")
-            }
+            .accessibilityLabel("日期与记录")
+            .accessibilityHint("打开完整日期面板，清单当前显示\(Self.label(for: listDay, today: agenda.today, calendar: calendar))")
         }
-        .padding(.leading, 18).padding(.trailing, isToday ? 16 : 8)
+        .padding(.leading, 18).padding(.trailing, 16)
         .frame(height: 44)
         .glassEffect(.regular.interactive(), in: .capsule)
     }
@@ -162,7 +180,11 @@ struct HomeView: View {
     static func label(for day: Date, today: Date, calendar: Calendar = .current) -> String {
         let weekday = day.formatted(.dateTime.weekday(.abbreviated).locale(Locale(identifier: "zh_CN")))
         let offset = calendar.dateComponents([.day], from: today, to: day).day ?? 0
+        if calendar.component(.year, from: day) != calendar.component(.year, from: today) {
+            return day.formatted(.dateTime.year().month().day().locale(Locale(identifier: "zh_CN")))
+        }
         switch offset {
+        case -1: return "昨天 · \(day.monthDay) \(weekday)"
         case 0: return "今天 · \(day.monthDay) \(weekday)"
         case 1: return "明天 · \(day.monthDay) \(weekday)"
         default: return "\(day.monthDay) \(weekday)"
@@ -171,13 +193,9 @@ struct HomeView: View {
 
     // MARK: The day's list
 
-    private static let collapsedCount = 4
-
     private var dayList: some View {
-        let list = HomeList.build(day: selectedDay, agenda: agenda, facts: facts,
+        let list = HomeList.build(day: listDay, agenda: agenda, facts: facts,
                                   featured: isToday ? brief.target?.agendaTarget : nil, now: now)
-        let visible = expanded ? list.rows : Array(list.rows.prefix(Self.collapsedCount))
-        let hidden = list.rows.count - visible.count
         return VStack(spacing: 0) {
             if list.rows.isEmpty && list.completed.isEmpty {
                 HStack(spacing: 10) {
@@ -188,70 +206,56 @@ struct HomeView: View {
                 }
                 .padding(.horizontal, 18).frame(minHeight: 56)
             }
-            ForEach(Array(visible.enumerated()), id: \.element.id) { index, row in
+            ForEach(Array(list.rows.enumerated()), id: \.element.id) { index, row in
                 if index > 0 { rowDivider }
-                HomeRowView(row: row, onOpen: onOpen)
-            }
-            if hidden > 0 {
-                rowDivider
-                Button {
-                    withAnimation(reduceMotion ? nil : .snappy) { expanded = true }
-                } label: {
-                    HStack(spacing: 6) {
-                        Text("还有 \(hidden) 件，展开").font(.subheadline).foregroundStyle(.secondary)
-                        Image(systemName: "chevron.down").font(.system(size: 11, weight: .bold)).foregroundStyle(.tertiary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.leading, 78).padding(.vertical, 13).contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
+                HomeRowView(row: row, onOpen: openListItem)
+                    .accessibilityAction { if isActive { onOpen(row.target) } }
             }
             if !list.completed.isEmpty {
                 if !list.rows.isEmpty { rowDivider }
-                Button {
-                    withAnimation(reduceMotion ? nil : .snappy) { completedShown.toggle() }
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "checkmark").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-                        Text("已完成 \(list.completed.count) 件").font(.subheadline).foregroundStyle(.secondary)
-                        Spacer()
-                        Image(systemName: completedShown ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 11, weight: .bold)).foregroundStyle(.tertiary)
-                    }
-                    .padding(.horizontal, 18).padding(.vertical, 13).contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                if completedShown {
-                    ForEach(list.completed) { row in
-                        rowDivider
-                        HomeRowView(row: row, onOpen: onOpen)
-                    }
+                Text("已完成 \(list.completed.count) 件")
+                    .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 18).padding(.vertical, 13)
+                ForEach(list.completed) { row in
+                    rowDivider
+                    HomeRowView(row: row, onOpen: openListItem)
+                        .accessibilityAction { if isActive { onOpen(row.target) } }
                 }
             }
         }
         .padding(.vertical, 6)
         .glassCard()
-        .id(selectedDay)
+        .contentShape(Rectangle())
+        .id(listDay)
         .transition(reduceMotion ? .opacity : .asymmetric(
             insertion: .move(edge: slideForward ? .trailing : .leading).combined(with: .opacity),
             removal: .move(edge: slideForward ? .leading : .trailing).combined(with: .opacity)))
-        // Swipe the list sideways for the next or the previous day.
-        .simultaneousGesture(DragGesture(minimumDistance: 28).onEnded { value in
-            let dx = value.translation.width, dy = value.translation.height
-            guard abs(dx) > 70, abs(dx) > abs(dy) * 1.6 else { return }
-            step(dx < 0 ? 1 : -1)
-        })
+    }
+
+    private func openListItem(_ target: AgendaEntry.Target) {
+        guard isActive, listInteraction.allowsTap else {
+            ChatDiagnostics.log("home row tap suppressed during browsing")
+            return
+        }
+        ChatDiagnostics.log("home row opened by tap")
+        onOpen(target)
     }
 
     private var rowDivider: some View {
-        Divider().padding(.leading, 78).padding(.trailing, 16)
+        Divider().padding(.leading, 16).padding(.trailing, 16)
     }
 
     private func step(_ direction: Int) {
-        guard let next = calendar.date(byAdding: .day, value: direction, to: selectedDay), next >= agenda.today,
-              let last = agenda.days.last, next <= last else { return }
-        slideForward = direction > 0
-        withAnimation(reduceMotion ? nil : .snappy(duration: 0.32)) { selectedDay = next; expanded = false }
+        guard isActive else { return }
+        guard let next = calendar.date(byAdding: .day, value: direction, to: listDay) else { return }
+        selectDay(next)
+    }
+
+    private func selectDay(_ day: Date) {
+        guard isActive else { return }
+        slideForward = day > listDay
+        listDay = calendar.startOfDay(for: day)
     }
 
     // MARK: Two quiet lines
@@ -292,10 +296,12 @@ struct HomeRowView: View {
     var body: some View {
         Button { onOpen(row.target) } label: {
             HStack(spacing: 14) {
-                Text(row.lead)
-                    .font(.system(size: 15, weight: .semibold)).monospacedDigit()
-                    .foregroundStyle(row.isCompleted ? .secondary : .primary)
-                    .frame(width: 48, alignment: .leading)
+                if !row.lead.isEmpty {
+                    Text(row.lead)
+                        .font(.system(size: 15, weight: .semibold)).monospacedDigit()
+                        .foregroundStyle(row.isCompleted ? .secondary : .primary)
+                        .frame(minWidth: 44, alignment: .leading)
+                }
                 if row.isCompleted {
                     Image(systemName: "checkmark").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary).frame(width: 6)
                 } else {
@@ -304,10 +310,10 @@ struct HomeRowView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(row.title).font(.body)
                         .strikethrough(row.isCompleted)
-                        .foregroundStyle(row.isCompleted ? Color.secondary : Color.primary).lineLimit(1)
+                        .foregroundStyle(row.isCompleted ? Color.secondary : Color.primary).fixedSize(horizontal: false, vertical: true)
                     if let subtitle = row.subtitle {
                         Text(subtitle).font(.subheadline)
-                            .foregroundStyle(row.isAlert ? Color.red : .secondary).lineLimit(1)
+                            .foregroundStyle(row.isAlert ? Color.red : .secondary).fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 Spacer(minLength: 8)
@@ -321,13 +327,13 @@ struct HomeRowView: View {
     }
 }
 
-/// The butler's one sentence. The buttons are what the model judged fit this particular thing; the last one,
-/// 其他…, opens a conversation about just this thing, for anything the buttons don't cover.
+/// Quick actions apply to their target; “其他安排” discusses the entire visible reminder.
 struct BriefCard: View {
     let brief: ButlerBrief
     let busy: Bool
     let onAction: (BriefAction, BriefTarget) -> Void
-    let onOther: (BriefTarget) -> Void
+    let onOther: (ButlerBrief) -> Void
+    let onInteraction: () -> Void
     @Environment(\.butlerAccent) private var accent
 
     /// The first button is solid in the brand colour; the rest are clear glass.
@@ -344,22 +350,21 @@ struct BriefCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                Text(brief.greeting).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-                if busy { ProgressView().controlSize(.mini) }
+                WeatherGreeting(greeting: brief.greeting)
+                if busy { Text("小当家正在更新…").font(.caption).foregroundStyle(.secondary).accessibilityAddTraits(.updatesFrequently) }
                 Spacer(minLength: 8)
-                // Nothing fits? Tell the butler something else: the conversation about just this thing.
-                if let target = brief.target {
-                    Button { onOther(target) } label: {
+                if !brief.text.isEmpty {
+                    Button { onOther(brief) } label: {
                         HStack(spacing: 3) {
-                            Text("别的安排")
+                            Text("其他安排")
                             Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold))
                         }
                         .font(.footnote).foregroundStyle(.secondary)
                         .padding(.vertical, 6).padding(.leading, 12).contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("告诉我别的安排")
-                    .accessibilityHint("打开只关于这件事的对话，可以打字，也可以说话")
+                    .accessibilityLabel("其他安排")
+                    .accessibilityHint("讨论当前整张管家提醒，包含其中提到的所有事情")
                 }
             }
             Text(brief.text)
@@ -374,15 +379,14 @@ struct BriefCard: View {
                             briefButtonLabel(action.label, primary: index == 0)
                         }
                         .buttonStyle(.plain)
-                        .disabled(busy)
                     }
                 }
-                .opacity(busy ? 0.45 : 1)
             }
         }
         .padding(.horizontal, 18).padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard()
+        .simultaneousGesture(DragGesture(minimumDistance: 0).onChanged { _ in onInteraction() })
         .animation(.easeInOut(duration: 0.25), value: brief.text)
     }
 }
@@ -421,7 +425,7 @@ struct FlowLayout: Layout {
     }
 }
 
-/// The panel under the date capsule: a month with dots on days that have something, and two doors to the rest.
+/// Full date sheet: month browsing, arbitrary date jump and task history.
 struct DayPickerPanel: View {
     let agenda: HomeAgenda
     let selected: Date
@@ -430,13 +434,18 @@ struct DayPickerPanel: View {
     let onOverview: () -> Void
     let onTasks: () -> Void
 
-    @State private var monthOffset = 0
+    let onBrowseMonth: (Date) -> Void
+    @State private var visibleDate: Date
     private var calendar: Calendar { .current }
 
-    private var month: Date {
-        let start = calendar.dateInterval(of: .month, for: agenda.today)?.start ?? agenda.today
-        return calendar.date(byAdding: .month, value: monthOffset, to: start) ?? start
+    init(agenda: HomeAgenda, selected: Date, pendingTaskCount: Int, onPick: @escaping (Date) -> Void,
+         onBrowseMonth: @escaping (Date) -> Void, onOverview: @escaping () -> Void, onTasks: @escaping () -> Void) {
+        self.agenda = agenda; self.selected = selected; self.pendingTaskCount = pendingTaskCount
+        self.onPick = onPick; self.onBrowseMonth = onBrowseMonth; self.onOverview = onOverview; self.onTasks = onTasks
+        _visibleDate = State(initialValue: selected)
     }
+
+    private var month: Date { calendar.dateInterval(of: .month, for: visibleDate)?.start ?? visibleDate }
 
     private var cells: [Date?] {
         guard let range = calendar.range(of: .day, in: .month, for: month) else { return [] }
@@ -451,10 +460,10 @@ struct DayPickerPanel: View {
                 Text(month.formatted(.dateTime.year().month(.wide).locale(Locale(identifier: "zh_CN")))).font(.headline)
                 Spacer()
                 HStack(spacing: 6) {
-                    Button { monthOffset -= 1 } label: { Image(systemName: "chevron.left").frame(width: 34, height: 34) }
-                        .disabled(monthOffset <= 0).accessibilityLabel("上个月")
-                    Button { monthOffset += 1 } label: { Image(systemName: "chevron.right").frame(width: 34, height: 34) }
-                        .disabled(monthOffset >= 11).accessibilityLabel("下个月")
+                    Button { visibleDate = calendar.date(byAdding: .month, value: -1, to: month) ?? month } label: { Image(systemName: "chevron.left").frame(width: 34, height: 34) }
+                        .accessibilityLabel("上个月")
+                    Button { visibleDate = calendar.date(byAdding: .month, value: 1, to: month) ?? month } label: { Image(systemName: "chevron.right").frame(width: 34, height: 34) }
+                        .accessibilityLabel("下个月")
                 }
                 .font(.system(size: 15, weight: .semibold)).buttonStyle(.plain)
             }
@@ -470,26 +479,33 @@ struct DayPickerPanel: View {
                 }
             }
             Divider().padding(.top, 2)
+            DatePicker("跳到指定日期", selection: $visibleDate, displayedComponents: .date)
+                .environment(\.locale, Locale(identifier: "zh_CN"))
+                .padding(.horizontal, 8).padding(.vertical, 10)
+            door("查看选定日期", detail: visibleDate.formatted(.dateTime.year().month().day().locale(Locale(identifier: "zh_CN"))),
+                 systemImage: "calendar.badge.clock", action: { onPick(calendar.startOfDay(for: visibleDate)) })
+            door("回到今天", detail: nil, systemImage: "arrow.uturn.backward", action: { onPick(agenda.today) })
+            Divider()
             door("日程总览", detail: "月 · 年 · 列表", systemImage: "calendar", action: onOverview)
-            door("任务与历史", detail: pendingTaskCount > 0 ? "\(pendingTaskCount) 件待完成" : nil,
+            door("全部任务与历史", detail: pendingTaskCount > 0 ? "\(pendingTaskCount) 件待完成" : nil,
                  systemImage: "checklist", action: onTasks)
         }
         .padding(14)
-        .frame(width: 330)
+        .frame(maxWidth: .infinity)
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .shadow(color: .black.opacity(0.16), radius: 24, y: 12)
+        .onChange(of: month, initial: true) { onBrowseMonth(month) }
     }
 
     private func cell(_ day: Date) -> some View {
         let isToday = day == agenda.today
         let isPast = day < agenda.today
         let isSelected = calendar.isDate(day, inSameDayAs: selected)
-        let dots = isPast ? [] : Array(agenda.dots(on: day).prefix(3))
+        let dots = Array(agenda.dots(on: day).prefix(3))
         return Button { onPick(day) } label: {
             VStack(spacing: 2) {
                 Text("\(calendar.component(.day, from: day))")
                     .font(.system(size: 16, weight: isToday || isSelected ? .semibold : .regular)).monospacedDigit()
-                    .foregroundStyle(isSelected ? Color(.systemBackground) : isToday ? Color.red : isPast ? Color(.tertiaryLabel) : Color.primary)
+                    .foregroundStyle(isSelected ? Color(.systemBackground) : isToday ? Color.red : isPast ? Color.secondary : Color.primary)
                     .frame(width: 32, height: 32)
                     .background { if isSelected { Circle().fill(Color.primary) } }
                 HStack(spacing: 2) {
@@ -501,7 +517,6 @@ struct DayPickerPanel: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(isPast)
         .accessibilityLabel(day.formatted(.dateTime.month().day().weekday(.wide).locale(Locale(identifier: "zh_CN")))
                             + (dots.isEmpty ? "" : "，有安排"))
     }

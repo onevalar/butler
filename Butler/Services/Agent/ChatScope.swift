@@ -1,4 +1,31 @@
 import Foundation
+import CryptoKit
+
+/// The exact reminder the user opened, not the single object used by its quick-action buttons.
+/// Reopening identical content on the same day resumes its history; later reminders cannot
+/// silently replace the context of an existing conversation.
+struct BriefConversation: Hashable, Codable {
+    let day: String
+    let text: String
+    let actionTarget: BriefTarget?
+    let actions: [BriefAction]
+
+    init(brief: ButlerBrief, day: String) {
+        self.day = day
+        text = brief.text
+        actionTarget = brief.target
+        actions = brief.actions
+    }
+
+    var key: String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        // All stored fields are plain Codable values. Hashing prevents reminder text from
+        // entering a path, and stays stable across launches (unlike Swift's randomized hash).
+        let data = try! encoder.encode(self)
+        return "brief-" + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+}
 
 /// A stable conversation owner. Names and navigation paths never identify stored history.
 enum ChatScope: Hashable, Codable {
@@ -8,6 +35,7 @@ enum ChatScope: Hashable, Codable {
     case task(UUID)
     case settings
     case day(String)
+    case brief(BriefConversation)
 
     var key: String {
         switch self {
@@ -18,6 +46,7 @@ enum ChatScope: Hashable, Codable {
         case .settings: "settings"
         // Encoding also keeps arbitrary day strings from becoming filesystem paths.
         case .day(let day): "day-" + day.utf8.map { String(format: "%02x", $0) }.joined()
+        case .brief(let reminder): reminder.key
         }
     }
 
@@ -29,6 +58,7 @@ enum ChatScope: Hashable, Codable {
         case .task: "关于这个任务"
         case .settings: "管家与设置"
         case .day(let day): "关于 \(day)"
+        case .brief: "关于这条管家提醒"
         }
     }
 }
@@ -45,6 +75,7 @@ struct ChatSessionFiles {
     var transcript: URL { directory.appendingPathComponent(scope == .general ? "butler-chat.json" : "chat.json") }
     var summary: URL { directory.appendingPathComponent(scope == .general ? "butler-chat-summary.json" : "summary.json") }
     var draft: URL { directory.appendingPathComponent(scope == .general ? "butler-chat-draft.json" : "draft.json") }
+    var pending: URL { directory.appendingPathComponent("pending-changes.json") }
     var photos: URL { directory.appendingPathComponent(scope == .general ? "chat-photos" : "photos", isDirectory: true) }
 
     func prepare() throws {

@@ -29,6 +29,7 @@ struct AgendaKey: Hashable {
     let tasks: [String]
     let events: Int
     let minute: Int
+    let browsingMonths: [Date]
 }
 
 struct ContentView: View {
@@ -57,7 +58,9 @@ struct ContentView: View {
     /// Shared by home (to show reminders) and the chat (to set them).
     @State private var reminders = ReminderStore.openOnDevice()
     @State private var calendarFeed = CalendarFeed()
-    @State private var selectedDay = Calendar.current.startOfDay(for: .now)
+    @State private var listDay = Calendar.current.startOfDay(for: .now)
+    @State private var browsingMonth = Calendar.current.startOfDay(for: .now)
+    @State private var snoozingTarget: BriefTarget?
     @State private var agendaCache = AgendaCache()
     @State private var briefService = BriefService()
     @State private var snoozeRevision = 0
@@ -100,7 +103,8 @@ struct ContentView: View {
             HomeView(
                 agenda: agenda,
                 facts: facts,
-                selectedDay: $selectedDay,
+                listDay: $listDay,
+                isActive: path.isEmpty && scenePhase == .active,
                 now: agendaNow,
                 brief: briefService.brief,
                 briefBusy: briefService.isThinking,
@@ -112,13 +116,36 @@ struct ContentView: View {
                 onOpenButler: { path.append(.butler) },
                 onOpenTasks: { path.append(.tasks) },
                 onBriefAction: { action, target in briefTapped(action, target, facts: facts) },
-                onBriefOther: { target in openChat(scope: target.scope, .typing) }
+                onBriefOther: { visibleBrief in
+                    briefService.beginInteraction()
+                    openChat(scope: .brief(BriefConversation(brief: visibleBrief, day: agendaNow.isoDay)), .typing)
+                },
+                onBriefInteraction: { briefService.beginInteraction() },
+                onBrowseMonth: { browsingMonth = $0 }
             )
             .navigationDestination(for: Route.self) { destination($0, facts: facts) }
         }
-        .onChange(of: briefKey + "|\(snoozeRevision)", initial: true) {
+        .onChange(of: briefKey + "|\(snoozeRevision)|\(WeatherStore.shared.snapshot?.fetchedAt.timeIntervalSince1970 ?? 0)", initial: true) {
             briefService.update(candidates: candidates, lotCount: facts.count, taskCount: reminders.active.count,
-                                usesCalendar: calendarFeed.enabled && calendarFeed.canRead, now: agendaNow)
+                                usesCalendar: calendarFeed.enabled && calendarFeed.canRead, now: agendaNow, weather: WeatherStore.shared.snapshot)
+        }
+        .sheet(isPresented: Binding(get: { snoozingTarget != nil }, set: { if !$0 { snoozingTarget = nil } })) {
+            if let target = snoozingTarget {
+                BriefSnoozeSheet(onChoose: { date in
+                    guard date > Date.now else { return }
+                    BriefSnoozes.snooze(target, until: date)
+                    snoozingTarget = nil
+                    agendaNow = .now
+                    snoozeRevision += 1
+                })
+            }
+        }
+        .onChange(of: listDay) {
+            browsingMonth = listDay
+        }
+        .onChange(of: browsingMonth, initial: true) {
+            calendarFeed.focusedDate = browsingMonth
+            Task { await calendarFeed.refresh() }
         }
         .alert("\(confirmingBrief?.action.label ?? "")？", isPresented: Binding(get: { confirmingBrief != nil }, set: { if !$0 { confirmingBrief = nil } })) {
             Button("确认") {
@@ -149,7 +176,9 @@ struct ContentView: View {
                     showingChat = false
                     Task { try? await Task.sleep(for: .milliseconds(450)); capturing = true }
                 }, onGeneralChat: { selectChat(.general) },
-                onSettingsChat: { selectChat(.settings) }, hasOtherWork: sessions?.working ?? false,
+                onSettingsChat: { selectChat(.settings) }, onOpenLot: { id in
+                    showingChat = false; path.append(.lot(id))
+                }, hasOtherWork: sessions?.working ?? false,
                 diaryTurns: sessions?.allTurns, onClose: { showingChat = false })
                 .id(chat.scope.key)
                 .environment(calendarFeed)
@@ -208,7 +237,7 @@ struct ContentView: View {
             let previousDay = Calendar.current.startOfDay(for: agendaNow)
             agendaNow = now
             if !Calendar.current.isDate(previousDay, inSameDayAs: now) {
-                if selectedDay == previousDay { selectedDay = Calendar.current.startOfDay(for: now) }
+                if listDay == previousDay { listDay = Calendar.current.startOfDay(for: now) }
                 reminders.rescheduleAll()
                 Task { await calendarFeed.refresh() }
             }
@@ -216,11 +245,12 @@ struct ContentView: View {
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
             refreshID = UUID()
+            let wasToday = Calendar.current.isDate(listDay, inSameDayAs: agendaNow)
             agendaNow = .now
+            if wasToday { listDay = Calendar.current.startOfDay(for: agendaNow) }
             reminders.rescheduleAll()
-            // A new day since the app was last open: start from today again.
-            let today = Calendar.current.startOfDay(for: .now)
-            if selectedDay < today { selectedDay = today }
+            Task { await WeatherStore.shared.refresh() }
+            // Preserve a deliberately selected history date when returning to the app.
             Task { await calendarFeed.refresh() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .butlerSettingsChanged)) { _ in
@@ -230,6 +260,8 @@ struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .butlerBackupRestored)) { _ in
             sessions?.reloadFromDisk()
+            let weatherLocation = UserDefaults.standard.data(forKey: "weatherLocation").flatMap { try? JSONDecoder().decode(WeatherLocation.self, from: $0) } ?? WeatherLocation()
+            try? WeatherStore.shared.setLocation(weatherLocation)
             reminders.reload()
             calendarFeed.enabled = UserDefaults.standard.bool(forKey: "showSystemCalendar")
             refreshID = UUID()
@@ -307,14 +339,16 @@ struct ContentView: View {
 
     /// A year ahead, for home, the overview and the days opened from it. Rebuilt only when its inputs change.
     private func yearAgenda(facts: [LotFacts]) -> HomeAgenda {
+        let calendar = Calendar.current
+        let months = Array(Set([listDay, browsingMonth].map { calendar.dateInterval(of: .month, for: $0)?.start ?? $0 })).sorted()
         let key = AgendaKey(
             lots: lots.map { "\($0.id)|\($0.revision)|\($0.stateRawValue)|\($0.storageLocation ?? "")" },
             products: products.map { "\($0.id)|\($0.revision)" },
             tasks: reminders.reminders.map { "\($0.id)|\($0.revision)|\($0.status)|\($0.activity.count)" },
             events: calendarFeed.events.hashValue,
-            minute: Int(agendaNow.timeIntervalSince1970 / 60))
+            minute: Int(agendaNow.timeIntervalSince1970 / 60), browsingMonths: months)
         if agendaCache.key == key, let cached = agendaCache.agenda { return cached }
-        let built = HomeAgenda.build(lots: facts, reminders: reminders.reminders, events: calendarFeed.events, now: agendaNow, dayCount: 366)
+        let built = HomeAgenda.build(lots: facts, reminders: reminders.reminders, events: calendarFeed.events, now: agendaNow, dayCount: 366, additionalDays: months.flatMap { HomeAgenda.browsingDays(around: $0) })
         agendaCache.key = key
         agendaCache.agenda = built
         return built
@@ -332,6 +366,11 @@ struct ContentView: View {
     }
 
     private func briefTapped(_ action: BriefAction, _ target: BriefTarget, facts: [LotFacts]) {
+        briefService.beginInteraction()
+        if case .snooze = action.effect {
+            snoozingTarget = target
+            return
+        }
         if action.effect.changesData, case .lot(let id) = target, facts.first(where: { $0.id == id })?.isMedicine == true {
             confirmingBrief = (action, target)
         } else {
@@ -383,7 +422,7 @@ struct ContentView: View {
         case .lot(let id): path.append(.lot(id))
         case .reminder(let id): path.append(.task(id))
         case .calendarEvent:
-            if let url = URL(string: "calshow:\(selectedDay.timeIntervalSinceReferenceDate)") { openURL(url) }
+            if let url = URL(string: "calshow:\(listDay.timeIntervalSinceReferenceDate)") { openURL(url) }
         }
     }
 
@@ -435,4 +474,41 @@ struct ContentView: View {
     }
 
     private static var isTesting: Bool { ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil }
+}
+
+/// Explicitly snoozes the home suggestion; it does not alter task notifications or expiry dates.
+private struct BriefSnoozeSheet: View {
+    let onChoose: (Date) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var customDate = Date.now.addingTimeInterval(3600)
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Button("1 小时后") { onChoose(Date.now.addingTimeInterval(3600)) }
+                    Button("明天上午 9 点") { choose(days: 1) }
+                    Button("3 天后上午 9 点") { choose(days: 3) }
+                } header: { Text("什么时候再提这件事？") }
+                footer: { Text("仅暂停首页建议，清单仍保留。任务通知照常，物品日期不变。") }
+                Section("自己选时间") {
+                    DatePicker("再次提示", selection: $customDate, in: Date.now..., displayedComponents: [.date, .hourAndMinute])
+                        .environment(\.locale, Locale(identifier: "zh_CN"))
+                    Button("按这个时间") { onChoose(customDate) }.disabled(customDate <= Date.now)
+                }
+            }
+            .navigationTitle("先放放")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } } }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+    }
+
+    private func choose(days: Int) {
+        let calendar = Calendar.current
+        guard let day = calendar.date(byAdding: .day, value: days, to: Date.now),
+              let date = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: day) else { return }
+        onChoose(date)
+    }
 }

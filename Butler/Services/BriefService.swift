@@ -28,11 +28,13 @@ struct CloudBriefModel: BriefModel {
 @MainActor @Observable
 final class BriefService {
     private(set) var brief: ButlerBrief
-    /// The model is being asked: the local buttons are shown but held back, so they can't change under a finger.
+    /// Background update; the visible card remains usable.
     private(set) var isThinking = false
 
     @ObservationIgnored private var model: BriefModel?
     @ObservationIgnored private var signature = ""
+    @ObservationIgnored private var candidateSignature = ""
+    @ObservationIgnored private var interactionStarted = false
     @ObservationIgnored private var task: Task<Void, Never>?
     @ObservationIgnored private var failedAt: [String: Date] = [:]
     @ObservationIgnored private let defaults: UserDefaults
@@ -52,32 +54,37 @@ final class BriefService {
 
     nonisolated deinit {}
 
+    func beginInteraction() { interactionStarted = true }
+
     func attach(_ connection: SubscriptionConnection) { model = CloudBriefModel(connection: connection) }
     func attach(model: BriefModel) { self.model = model }
 
-    func update(candidates: [BriefCandidate], lotCount: Int, taskCount: Int, usesCalendar: Bool, now: Date) {
+    func update(candidates: [BriefCandidate], lotCount: Int, taskCount: Int, usesCalendar: Bool, now: Date, weather: WeatherSnapshot? = nil) {
         let basis = BriefLocal.basis(lotCount: lotCount, taskCount: taskCount, usesCalendar: usesCalendar)
-        let sig = BriefCandidates.signature(candidates, now: now, calendar: calendar)
+        let base = BriefCandidates.signature(candidates, now: now, calendar: calendar)
+        let sig = "optional-weather-v3|" + base + "|" + (weather?.briefSignature(at: now) ?? "")
         if sig == signature {
             if brief.basis != basis { brief.basis = basis }
             return
         }
         signature = sig
+        if candidateSignature != base { interactionStarted = false }
+        candidateSignature = base
         task?.cancel()
         isThinking = false
         let local = BriefLocal.compose(candidates: candidates, lotCount: lotCount, basis: basis, now: now, calendar: calendar)
         guard !candidates.isEmpty else { brief = local; return }
         if var cached = cachedBrief(for: sig, now: now) {
             cached.basis = basis
-            brief = cached
+            if !interactionStarted { brief = cached }
             return
         }
-        brief = local
+        if !interactionStarted { brief = local }
         guard let model, model.isAvailable else { return }
         if let failed = failedAt[sig], now.timeIntervalSince(failed) < Self.retryAfter { return }
         isThinking = true
         task = Task { [weak self] in
-            await self?.ask(model, candidates: candidates, local: local, signature: sig, now: now)
+            await self?.ask(model, candidates: candidates, local: local, signature: sig, now: now, weather: weather)
         }
     }
 
@@ -85,8 +92,8 @@ final class BriefService {
     func settle() async { await task?.value }
 
     private func ask(_ model: BriefModel, candidates: [BriefCandidate], local: ButlerBrief,
-                     signature sig: String, now: Date) async {
-        let request = BriefModelReply.request(candidates: candidates, greeting: local.greeting, now: now, calendar: calendar)
+                     signature sig: String, now: Date, weather: WeatherSnapshot?) async {
+        let request = BriefModelReply.request(candidates: candidates, greeting: local.greeting, now: now, calendar: calendar, weather: weather)
         let started = Date.now
         do {
             let reply = try await Self.withTimeout(seconds: timeout) { try await model.answer(request) }
@@ -99,7 +106,7 @@ final class BriefService {
                 }
                 let result = ButlerBrief(greeting: local.greeting, text: parsed.text, basis: local.basis,
                                          target: parsed.target, actions: actions, source: .model)
-                brief = result
+                if !interactionStarted { brief = result }
                 store(result, signature: sig, now: now)
                 ChatDiagnostics.log("brief model ok \(String(format: "%.1f", Date.now.timeIntervalSince(started)))s actions=\(actions.map(\.label).joined(separator: ","))")
             } else {

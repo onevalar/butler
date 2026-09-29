@@ -159,6 +159,23 @@ final class HomeAgendaTests: XCTestCase {
         }
     }
 
+    func testBrowsingPastAndFarFutureDoesNotTurnThoseDaysIntoTodayOrUpcoming() {
+        let past = calendar.date(byAdding: .year, value: -2, to: day(0))!
+        let future = calendar.date(byAdding: .year, value: 3, to: day(0))!
+        let old = TimedReminder(text: "旧任务", fireDate: past.addingTimeInterval(3600), createdAt: past)
+        let later = TimedReminder(text: "远期任务", fireDate: future.addingTimeInterval(3600))
+        let event = CalendarEventInfo(id: "old", title: "历史会议", location: nil, calendarName: "日历",
+                                      start: past.addingTimeInterval(7200), end: past.addingTimeInterval(10800), isAllDay: false)
+        let extra = HomeAgenda.browsingDays(around: past) + HomeAgenda.browsingDays(around: future)
+        let agenda = HomeAgenda.build(lots: [], reminders: [old, later], events: [event], now: now, additionalDays: extra)
+        XCTAssertEqual(agenda.today, day(0))
+        XCTAssertEqual(agenda.entries(on: past).map(\.title), ["旧任务", "历史会议"])
+        XCTAssertEqual(agenda.entries(on: future).map(\.title), ["远期任务"])
+        XCTAssertEqual(agenda.pending(on: day(0), at: now).map(\.title), ["旧任务"])
+        XCTAssertTrue(agenda.upcoming(after: day(0)).isEmpty)
+        XCTAssertLessThanOrEqual(extra.count, 90, "jumping years away only expands two month windows")
+    }
+
     func testCompactWindowFollowsNowOrTheFirstEvent() {
         let items = [TimelineItem(id: "a", title: "开会", startDate: calendar.date(bySettingHour: 15, minute: 0, second: 0, of: day(2))!,
                                   endDate: calendar.date(bySettingHour: 16, minute: 0, second: 0, of: day(2))!, color: .blue)]

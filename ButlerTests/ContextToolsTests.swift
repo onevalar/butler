@@ -175,6 +175,38 @@ final class ContextToolsTests: XCTestCase {
         XCTAssertTrue(tools.reminders.upcoming.isEmpty)
     }
 
+    func testDeleteRequiresConfirmationAndRejectsStaleRevision() async throws {
+        let tools = try makeTools()
+        _ = try await call(tools, "propose_task_plan", plan())
+        _ = tools.confirmAll()
+        let original = try XCTUnwrap(tools.reminders.reminders.first)
+        _ = try await call(tools, "propose_task_action", action(original, "delete"))
+        XCTAssertNotNil(tools.reminders.reminder(id: original.id))
+        XCTAssertTrue(tools.pending.first?.detail?.contains("不能撤销") == true)
+        try tools.reminders.pause(original.id)
+        XCTAssertTrue(tools.confirmAll().first?.hasPrefix("✗") == true)
+        XCTAssertNotNil(tools.reminders.reminder(id: original.id))
+        let current = try XCTUnwrap(tools.reminders.reminder(id: original.id))
+        _ = try await call(tools, "propose_task_action", action(current, "delete"))
+        XCTAssertTrue(tools.confirmAll().first?.hasPrefix("✓") == true)
+        XCTAssertNil(tools.reminders.reminder(id: original.id))
+        tools.reminders.reload()
+        XCTAssertNil(tools.reminders.reminder(id: original.id), "Deletion persists after reopening the store")
+    }
+
+    func testFinishedTasksCanBeDeletedWithoutReopening() async throws {
+        for status in [TimedReminder.Status.completed, .cancelled] {
+            var task = TimedReminder(text: "已结束的测试任务", fireDate: .distantFuture)
+            task.status = status
+            let tools = try makeTools(initialReminders: [task])
+            let result = try await call(tools, "propose_task_action", action(task, "delete"))
+            XCTAssertNil(result["error"])
+            XCTAssertNotNil(tools.reminders.reminder(id: task.id))
+            XCTAssertTrue(tools.confirmAll().first?.hasPrefix("✓") == true)
+            XCTAssertTrue(tools.reminders.reminders.isEmpty)
+        }
+    }
+
     func testCompletedTaskCannotProduceMisleadingResumeProposal() async throws {
         let tools = try makeTools()
         _ = try await call(tools, "propose_task_plan", plan())

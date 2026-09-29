@@ -163,3 +163,16 @@ final class LotPresentationTests: XCTestCase {
         XCTAssertThrowsError(try actions.close(facts, as: .discarded))
     }
 }
+
+@MainActor final class ItemClassificationTests: XCTestCase {
+    func testClothesWithoutProfileDoNotTriggerConsumableAlerts() {
+        let product = CatalogProduct(canonicalName: "外套", categoryRawValue: "household")
+        let lot = InventoryLot(productID: product.id, quantity: 1, unit: "件")
+        let facts = LotFacts(lot: lot, product: product)
+        XCTAssertEqual(facts.category, .clothing)
+        XCTAssertFalse(facts.needsDate)
+        XCTAssertFalse(facts.isRunningLow)
+        XCTAssertEqual(ItemProfile.inferred(name: "洗衣液", legacyCategory: nil).category, .household)
+        XCTAssertEqual(ItemProfile.inferred(name: "创可贴", legacyCategory: nil).category, .medicine)
+    }
+}

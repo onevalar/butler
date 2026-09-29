@@ -30,7 +30,6 @@ struct DayScheduleView: View {
                     .padding(.horizontal, 16)
                     .padding(.bottom, 24)
             }
-            .orbScrollTracking()
             .background { ButlerBackground() }
             .safeAreaBar(edge: .top) {
                 VStack(spacing: 12) {

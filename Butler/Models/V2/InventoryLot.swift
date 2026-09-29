@@ -25,6 +25,11 @@ final class InventoryLot {
     var createdAt: Date
     var updatedAt: Date
     var revision: Int
+    @Attribute(.externalStorage) var profileData: Data?
+
+    @MainActor var itemProfile: ItemProfile? {
+        profileData.flatMap { try? JSONDecoder().decode(ItemProfile.self, from: $0) }
+    }
 
     var state: InventoryLotState {
         get { InventoryLotState(rawValue: stateRawValue) ?? .active }

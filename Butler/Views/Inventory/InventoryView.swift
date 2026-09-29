@@ -9,15 +9,15 @@ struct InventoryView: View {
     /// Opens the conversation with a sentence already started.
     let onAsk: (String) -> Void
 
-    enum Scope: String, CaseIterable { case place = "按位置", expiry = "按到期", history = "已处理" }
+    enum Scope: String, CaseIterable { case category = "按分类", place = "按位置", expiry = "按到期", history = "已处理" }
 
-    @State private var scope: Scope = .place
+    @State private var scope: Scope = .category
     @State private var query = ""
     @State private var showingSearch = false
     @FocusState private var searching: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private static let quickAsks = ["买了", "用完了", "放哪了？", "什么快过期了？", "还剩多少"]
+    private static let quickAsks = ["买了", "用完了", "放哪了？", "什么快过期了？", "今天穿什么？", "家里有适合修东西的工具吗？"]
 
     private var dueThisWeek: Int {
         facts.filter { !$0.quantityOnly && (0...7).contains($0.daysLeft ?? -1) }.count
@@ -30,12 +30,17 @@ struct InventoryView: View {
     private var groups: [(title: String, lots: [LotFacts])] {
         let lots = filtered
         switch scope {
+        case .category:
+            return ItemCategory.allCases.compactMap { category in
+                let found = lots.filter { $0.category == category }.sorted(by: Self.urgencyOrder)
+                return found.isEmpty ? nil : (category.title, found)
+            }
         case .history:
             return lots.isEmpty ? [] : [("已处理", lots)]
         case .place:
             return Dictionary(grouping: lots) { lot in
                 let place = StorageLocation.groupName(for: lot.storageLocation)
-                return lot.quantityOnly ? "\(place) · 只记数量" : place
+                return place
             }
             .map { ($0.key, $0.value.sorted(by: Self.urgencyOrder)) }
             .sorted { StorageLocation.sortKey($0.title) < StorageLocation.sortKey($1.title) }
@@ -110,7 +115,6 @@ struct InventoryView: View {
             .padding(.bottom, 24)
         }
         .scrollDismissesKeyboard(.immediately)
-        .orbScrollTracking()
         .background { ButlerBackground() }
         .navigationTitle("家里")
         .navigationSubtitle(dueThisWeek > 0 ? "\(facts.count) 样在家 · 本周 \(dueThisWeek) 样到期" : "\(facts.count) 样在家")
@@ -140,7 +144,7 @@ struct InventoryView: View {
     private var searchField: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-            TextField("搜索名称、品牌或位置", text: $query)
+            TextField("搜索名称、位置、用途或属性", text: $query)
                 .focused($searching)
                 .submitLabel(.search)
             if !query.isEmpty {
@@ -167,9 +171,11 @@ struct InventoryRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 14) {
-                KindBar(color: barColor, height: 34)
+                if lot.isDurable || lot.profile?.photo != nil {
+                    ItemPhoto(profile: lot.profile ?? ItemProfile(category: lot.category), size: 44)
+                } else { KindBar(color: barColor, height: 34) }
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(lot.name).font(.body).foregroundStyle(.primary).lineLimit(1)
+                    Text(lot.name).font(.body).foregroundStyle(.primary).fixedSize(horizontal: false, vertical: true)
                     Text(detail).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer(minLength: 8)

@@ -1,40 +1,10 @@
 import CoreMotion
 import SwiftUI
 
-/// The butler's one entry point: a glass ball floating over every screen.
-/// Scrolling down lets it fall and spread along the bottom edge like water; tapping the
-/// water (or scrolling back to the top) gathers it into a ball again.
+/// A stable entry point across screens. Scrolling never changes its shape or location.
 @Observable
 final class OrbDock {
-    var spread = false
     var listening = false
-
-    /// Called by scroll views with their offset from the top.
-    func scrolled(from old: CGFloat, to new: CGFloat) {
-        if new <= 12 {
-            if spread { spread = false }
-        } else if new - old > 4, new > 48, !spread {
-            spread = true
-        }
-    }
-}
-
-extension View {
-    /// Lets the orb spread while this scroll view is read further down, and gather at the top.
-    func orbScrollTracking() -> some View { modifier(OrbScrollTracking()) }
-}
-
-private struct OrbScrollTracking: ViewModifier {
-    @Environment(OrbDock.self) private var dock: OrbDock?
-
-    func body(content: Content) -> some View {
-        content
-            .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y + $0.contentInsets.top } action: { old, new in
-                dock?.scrolled(from: old, to: new)
-            }
-            // A newly opened page starts at its top.
-            .onAppear { if dock?.spread == true { dock?.spread = false } }
-    }
 }
 
 /// Phone tilt, smoothed, for the orb's parallax.
@@ -61,8 +31,7 @@ final class MotionTilt {
 
 // MARK: - Dock
 
-/// Sits over the whole app. Tap the ball: talk to the butler. Hold it: speak, release to send, slide up to cancel.
-/// Tap the spread water: it gathers back into a ball.
+/// One stable control: short press opens typing; a committed hold records speech.
 struct OrbDockView: View {
     var working: Bool
     var safeBottom: CGFloat = 34
@@ -74,318 +43,239 @@ struct OrbDockView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @State private var motion = MotionTilt()
-    @State private var dictation = LiveDictation()
-    @State private var holdTask: Task<Void, Never>?
-    @State private var finishTask: Task<Void, Never>?
+    @State private var recorder: LiveVoicePressRecorder
+    @State private var feedback: ContinuousPressFeedback
+    @State private var interaction: VoicePressInteraction
+    @State private var handsFree = false
     @State private var press = OrbPress()
-    @State private var finishingVoice = false
-    @State private var voiceMessage: String?
-    @State private var interaction = OrbInteraction()
-    @State private var cancelling = false
-    @State private var travel = OrbMotion()
-    @State private var moving = false
-    /// The voice glass replaces the ball from the moment a finger lands on it: width 64 is the ball, 98 the first bulge, 176 the bar.
     @State private var voiceShown = false
     @State private var voiceWidth: CGFloat = VoiceGeometry.ballWidth
-    /// 0...1, how far the cancel zone has grown; follows the finger while it slides up.
     @State private var cancelExtent: CGFloat = 0
-    @State private var pressTick = 0
-    @State private var releaseTick = 0
-    @State private var pressBeganAt: TimeInterval = 0
+    @State private var visualSession = UUID()
 
     private var motionEnabled: Bool { !reduceMotion && scenePhase == .active }
 
     static let ballSize: CGFloat = 64
-    /// Ball centre above the bottom edge of the screen.
     static let ballLift: CGFloat = OrbPose.ballLift
-    static let areaHeight: CGFloat = 170
-    /// Room above the ball for the cancel zone and everything that floats over it.
-    static let voiceAreaHeight: CGFloat = 340
+
+    init(working: Bool, safeBottom: CGFloat = 34, onOpenChat: @escaping () -> Void,
+         onSend: @escaping (String) -> Void, onBeginVoice: (() -> Void)? = nil) {
+        self.working = working
+        self.safeBottom = safeBottom
+        self.onOpenChat = onOpenChat
+        self.onSend = onSend
+        self.onBeginVoice = onBeginVoice
+        let recorder = LiveVoicePressRecorder()
+        let feedback = ContinuousPressFeedback()
+        _recorder = State(initialValue: recorder)
+        _feedback = State(initialValue: feedback)
+        _interaction = State(initialValue: VoicePressInteraction(recorder: recorder, feedback: feedback))
+    }
+
+    private var presentingVoice: Bool {
+        interaction.voiceCommitted && interaction.held || interaction.phase == .finishing || interaction.issue != nil
+    }
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            if dock.listening || finishingVoice || voiceMessage != nil {
-                listeningOverlay.transition(.opacity)
+            if presentingVoice {
+                Color(.systemBackground).opacity(0.55)
+                    .ignoresSafeArea().allowsHitTesting(false)
+                VStack(spacing: 10) {
+                    if !interaction.cancelling || !recorder.dictation.text.isEmpty || interaction.issue != nil {
+                        Text(status)
+                            .font(recorder.dictation.text.isEmpty ? .subheadline.weight(.medium) : .title3.weight(.medium))
+                            .multilineTextAlignment(.center)
+                            .lineLimit(5)
+                            .foregroundStyle(interaction.cancelling ? Color.secondary : Color.primary)
+                            .padding(.horizontal, 18).padding(.vertical, 12)
+                            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 24))
+                    }
+                    if interaction.issue != nil {
+                        Button("知道了") { interaction.dismissIssue() }
+                            .buttonStyle(.bordered)
+                    } else if interaction.phase == .finishing && recorder.dictation.usesCustomService {
+                        Button("取消识别") { reset() }
+                            .buttonStyle(.bordered)
+                    }
+                }
+                .padding(.horizontal, 24)
+                .padding(.bottom, Self.ballLift + VoiceGeometry(barWidth: voiceWidth, extent: cancelExtent).topReach + 16)
             }
+
             GeometryReader { proxy in
-                let width = proxy.size.width
-                TimelineView(.animation(minimumInterval: 1.0 / 60, paused: !motionEnabled || (!moving && dock.spread))) { _ in
+                TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !motionEnabled)) { _ in
                     let time = ProcessInfo.processInfo.systemUptime
-                    OrbStage(progress: travel.progress(at: time),
-                             width: width, height: Self.areaHeight,
-                             safeBottom: safeBottom,
-                             pressure: press.depth(at: time) * (reduceMotion ? 0.3 : 1),
-                             contact: press.contact,
-                             holding: press.held && !interaction.dragging,
-                             preparingVoice: dock.listening && !dictation.listening && dictation.error == nil,
-                             recording: dock.listening && dictation.listening,
-                             audioLevel: reduceMotion || cancelling ? 0 : dictation.audioLevel,
-                             cancelling: cancelling,
-                             pull: interaction.pull,
-                             breath: motionEnabled ? (sin(time * .pi / 2.4) + 1) / 2 : 0.5,
-                             active: working || dictation.listening, tilt: motionEnabled ? motion.tilt : .zero,
-                             feedbackEnabled: motionEnabled && moving,
-                             hint: dock.spread ? "聚回成球" : moving ? "再次轻点可反向" : "点一下和管家对话，按住直接说话",
-                             onChange: { dragChanged($0, width: width) }, onEnd: dragEnded,
-                             onCancel: { cancelInteraction(animated: motionEnabled) },
-                             onActivate: activate,
-                             hidden: voiceShown)
+                    OrbStage(progress: 0, width: proxy.size.width, height: 170, safeBottom: safeBottom,
+                             pressure: press.depth(at: time) * (reduceMotion ? 0.3 : 1), contact: press.contact,
+                             pull: .zero, breath: motionEnabled ? (sin(time * .pi / 2.4) + 1) / 2 : 0.5,
+                             active: working || recorder.dictation.listening,
+                             tilt: motionEnabled ? motion.tilt : .zero, hidden: voiceShown)
                 }
             }
-            .frame(height: Self.areaHeight)
+            .frame(height: 170)
+            .allowsHitTesting(false)
             if voiceShown {
                 GeometryReader { proxy in
-                    VoiceGlass(width: proxy.size.width, height: Self.voiceAreaHeight, barWidth: voiceWidth,
-                               extent: cancelExtent, level: reduceMotion ? 0 : dictation.audioLevel,
-                               recording: dock.listening && dictation.listening, cancelling: cancelling, tilt: motionEnabled ? motion.tilt : .zero)
+                    VoiceGlass(width: proxy.size.width, height: 340, barWidth: voiceWidth, extent: cancelExtent,
+                               level: recorder.dictation.audioLevel, recording: interaction.phase == .recording,
+                               cancelling: interaction.cancelling, tilt: motionEnabled ? motion.tilt : .zero)
                 }
-                .frame(height: Self.voiceAreaHeight)
+                .frame(height: 340)
                 .allowsHitTesting(false)
                 .transition(.identity)
             }
+
+            // The control remains mounted and stationary through every glass animation.
+            // The visual layer cannot delay feedback or cancel a tracked finger.
+            VoicePressControl(label: "管家", hint: "短按打开文字输入，长按说话，松开发送，上滑取消",
+                onDown: {
+                    if handsFree { interaction.cancel(); handsFree = false }
+                    beginPress()
+                    return interaction.held
+                },
+                onMove: { movePress($0) },
+                onUp: { interaction.release() },
+                onCancel: { reset() },
+                onActivate: {
+                    reset()
+                    onOpenChat()
+                },
+                onVoiceActivate: {
+                    if handsFree { interaction.release(); handsFree = false }
+                    else { beginPress(); handsFree = interaction.held }
+                })
+                .frame(width: 96, height: 96)
+                .padding(.bottom, Self.ballLift - 48)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         .ignoresSafeArea(edges: .bottom)
         .ignoresSafeArea(.keyboard)
-        // A finger covers the ball, so the first sign that it heard you is in the hand.
-        .sensoryFeedback(.impact(weight: .light), trigger: pressTick)
-        .sensoryFeedback(.selection, trigger: cancelling)
-        .sensoryFeedback(.impact(weight: .light), trigger: releaseTick)
-        .onChange(of: dock.spread) { _, spread in
-            cancelInteraction(animated: false)
-            travel.move(to: spread, at: ProcessInfo.processInfo.systemUptime, animated: motionEnabled)
-            moving = travel.duration > 0
-        }
-        .task(id: travel) {
-            // Only stops the display clock. Feedback comes from the displayed
-            // surface connecting/disconnecting, never from a delayed timer.
-            do { try await Task.sleep(for: .seconds(travel.duration)) } catch { return }
-            guard !Task.isCancelled else { return }
-            moving = false
-        }
-        .onChange(of: motionEnabled) { _, enabled in
-            if enabled { motion.start() } else {
-                motion.stop()
-                cancelInteraction(animated: false)
-                travel.move(to: dock.spread, at: ProcessInfo.processInfo.systemUptime, animated: false)
-                moving = false
-            }
-        }
         .onAppear {
-            travel.move(to: dock.spread, at: ProcessInfo.processInfo.systemUptime, animated: false)
-            moving = false
-            if motionEnabled { motion.start() }
+            feedback.prepare()
+            if !reduceMotion { motion.start() }
         }
         .onDisappear {
+            reset()
+            feedback.suspend()
             motion.stop()
-            cancelInteraction(animated: false)
-            finishTask?.cancel()
-            dictation.cancel()
-            finishingVoice = false
-            voiceMessage = nil
         }
-    }
-
-    private func activate() {
-        guard !finishingVoice, voiceMessage == nil else { return }
-        if moving || dock.spread { dock.spread.toggle() } else { onOpenChat() }
-    }
-
-    private func dragChanged(_ value: DragGesture.Value, width: CGFloat) {
-        guard !finishingVoice, voiceMessage == nil else { return }
-        let time = ProcessInfo.processInfo.systemUptime
-        let contact = CGPoint(x: (value.location.x - width / 2) / (Self.ballSize / 2),
-                              y: (value.location.y - (Self.areaHeight - Self.ballLift)) / (Self.ballSize / 2))
-        if !interaction.pressing {
-            interaction.begin(onBall: !moving && !dock.spread)
-            if interaction.startedOnBall {
-                press.begin(at: contact, time: time)
-                pressBeganAt = time
-                pressTick += 1
-                ChatDiagnostics.log("voice: finger landed on the orb")
-                showVoiceGlass()
-                holdTask = Task {
-                    do { try await Task.sleep(for: .seconds(OrbPress.holdDuration)) } catch { return }
-                    guard !Task.isCancelled, interaction.pressing, !interaction.dragging else { return }
-                    onBeginVoice?()
-                    dock.listening = true
-                    setVoice(width: VoiceGeometry.barWidth)
-                    // The microphone starts at once; the recognizer catches up behind it.
-                    await dictation.start(after: "")
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                feedback.prepare()
+                if !reduceMotion { motion.start() }
+            } else {
+                reset()
+                feedback.suspend()
+                motion.stop()
+            }
+        }
+        .onChange(of: reduceMotion) { _, reduced in
+            if reduced { motion.stop() } else if scenePhase == .active { motion.start() }
+        }
+        .onChange(of: interaction.held) { _, held in
+            if held { showVoiceGlass() } else { hideVoiceGlass(animated: motionEnabled) }
+        }
+        .onChange(of: interaction.voiceCommitted) { _, committed in
+            if committed && interaction.held {
+                withAnimation(motionEnabled ? .spring(response: 0.22, dampingFraction: 0.72) : nil) {
+                    voiceWidth = VoiceGeometry.barWidth
                 }
             }
         }
-        if dock.listening {
-            // Sliding up grows the cancel zone out of the glass, and the zone follows the finger.
-            // Down and sideways do nothing: the owner keeps talking, and sliding back retracts the zone.
-            let extent = VoiceGesture.extent(forTranslation: value.translation)
-            var transaction = Transaction(animation: nil)
-            transaction.disablesAnimations = true
-            withTransaction(transaction) {
-                cancelExtent = extent
-                cancelling = VoiceGesture.cancels(extent: extent, wasCancelling: cancelling)
-            }
-        } else {
-            // Resistance is spatial, not temporal: no spring trails the finger.
-            var transaction = Transaction(animation: nil)
-            transaction.disablesAnimations = true
-            withTransaction(transaction) {
-                press.move(to: contact)
-                interaction.drag(value.translation)
-            }
-            if interaction.dragging {
-                // Dragged before it was a hold: this is the ball being played with, not talking.
-                holdTask?.cancel()
-                hideVoiceGlass(animated: false)
-                if press.held { press.release(at: time, animated: motionEnabled) }
-            }
+        .onChange(of: interaction.voiceCommitted && interaction.held) { _, listening in
+            dock.listening = listening
+        }
+        .onChange(of: recorder.dictation.error) { _, error in
+            if let error, interaction.held { interaction.cancel(message: error) }
+        }
+    }
+
+    private func beginPress() {
+        interaction.begin(onTap: onOpenChat, onVoice: onBeginVoice, onTranscript: onSend)
+    }
+
+    private func reset() {
+        interaction.cancel()
+        handsFree = false
+        dock.listening = false
+        hideVoiceGlass(animated: false)
+    }
+
+    private var status: String {
+        if let issue = interaction.issue { return issue }
+        if interaction.cancelling { return recorder.dictation.text }
+        if interaction.phase == .finishing { return "正在整理语音…" }
+        if interaction.phase == .recording {
+            return recorder.dictation.text.isEmpty ? "松开发送，上滑取消" : recorder.dictation.text
+        }
+        return "正在开启麦克风…"
+    }
+
+    private func movePress(_ translation: CGSize) {
+        interaction.move(translation: translation)
+        guard interaction.held else { return }
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            cancelExtent = VoiceGesture.extent(forTranslation: translation)
         }
     }
 
     private func showVoiceGlass() {
+        visualSession = UUID()
+        press.begin(at: CGPoint(x: 0, y: -1), time: ProcessInfo.processInfo.systemUptime)
         voiceShown = true
-        voiceWidth = VoiceGeometry.ballWidth
+        // Continue from the current width if a new press interrupts the return animation.
         cancelExtent = 0
-        setVoice(width: VoiceGeometry.bulgeWidth)
-    }
-
-    private func setVoice(width: CGFloat) {
-        withAnimation(motionEnabled ? .spring(response: 0.22, dampingFraction: 0.72) : nil) { voiceWidth = width }
+        withAnimation(motionEnabled ? .spring(response: 0.22, dampingFraction: 0.72) : nil) {
+            voiceWidth = interaction.voiceCommitted ? VoiceGeometry.barWidth : VoiceGeometry.bulgeWidth
+        }
     }
 
     private func hideVoiceGlass(animated: Bool) {
+        let ending = UUID()
+        visualSession = ending
+        press.release(at: ProcessInfo.processInfo.systemUptime, animated: animated)
         guard voiceShown else { return }
-        if animated && motionEnabled {
+        if animated {
             withAnimation(.spring(response: 0.3, dampingFraction: 0.78)) {
                 voiceWidth = VoiceGeometry.ballWidth
                 cancelExtent = 0
             } completion: {
-                if !interaction.pressing && !dock.listening { voiceShown = false }
-            }
-        } else {
-            var transaction = Transaction(animation: nil)
-            transaction.disablesAnimations = true
-            withTransaction(transaction) {
-                voiceWidth = VoiceGeometry.ballWidth
-                cancelExtent = 0
+                guard visualSession == ending, !interaction.held else { return }
                 voiceShown = false
             }
-        }
-    }
-
-    private func dragEnded(_ value: DragGesture.Value) {
-        guard interaction.pressing else { return }
-        if !dock.listening || dictation.preparing { holdTask?.cancel() }
-        let wasDragging = interaction.dragging
-        let wasListening = dock.listening
-        let wasBall = interaction.startedOnBall
-        // A slow tap looks like a short hold. If nothing was said, it was a tap: open the conversation, don't complain.
-        let heldFor = ProcessInfo.processInfo.systemUptime - pressBeganAt
-        let slowTap = VoiceGesture.isSlowTap(listening: wasListening, cancelling: cancelling, heldFor: heldFor,
-                                             heardSomething: !dictation.text.isEmpty)
-        if slowTap {
-            dock.listening = false
-            dictation.cancel()
-        } else if wasListening {
-            releaseTick += 1
-            finishListening(cancel: cancelling)
-        }
-        hideVoiceGlass(animated: true)
-        press.release(at: ProcessInfo.processInfo.systemUptime, animated: motionEnabled)
-        let velocity = OrbInteraction.returnVelocity(translation: value.translation, velocity: value.velocity)
-        withAnimation(motionEnabled && wasDragging ? .interpolatingSpring(stiffness: 190, damping: 12, initialVelocity: velocity) : nil) {
-            interaction.reset()
-        }
-        cancelling = false
-        if slowTap { onOpenChat() }
-        else if !wasDragging && !wasListening {
-            if wasBall { onOpenChat() } else { dock.spread.toggle() }
-        }
-    }
-
-    private func cancelInteraction(animated: Bool) {
-        holdTask?.cancel()
-        holdTask = nil
-        guard interaction.pressing || interaction.dragging || dock.listening || voiceShown else { return }
-        hideVoiceGlass(animated: false)
-        var transaction = Transaction(animation: animated ? .spring(response: 0.25, dampingFraction: 1) : nil)
-        transaction.disablesAnimations = !animated
-        withTransaction(transaction) {
-            if dock.listening { finishListening(cancel: true) }
-            interaction.reset()
-            press.release(at: ProcessInfo.processInfo.systemUptime, animated: animated)
-        }
-        cancelling = false
-    }
-
-    private func finishListening(cancel: Bool) {
-        dock.listening = false
-        if cancel || !dictation.listening {
-            if !cancel { voiceMessage = dictation.error ?? "语音还没准备好，请再次按住说话。" }
-            dictation.cancel()
-            return
-        }
-        finishingVoice = true
-        finishTask = Task {
-            let text = await dictation.stop().trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !Task.isCancelled else { return }
-            finishingVoice = false
-            if !text.isEmpty { onSend(text) }
-            else { voiceMessage = dictation.error ?? "没有听清，请再次按住说话。" }
-        }
-    }
-
-    private var listeningOverlay: some View {
-        let geometry = VoiceGeometry(barWidth: voiceWidth, extent: cancelExtent)
-        return ZStack(alignment: .bottom) {
-            Color(.systemBackground).opacity(0.55)
-                .ignoresSafeArea()
-                .allowsHitTesting(false)
-            // One piece of text at a time: what is being heard. Cancelling is written on the cancel zone itself.
-            VStack(spacing: 10) {
-                bubble
-                if voiceMessage != nil {
-                    Button("知道了") { voiceMessage = nil }
-                        .buttonStyle(.bordered)
-                }
-            }
-            .padding(.horizontal, 24)
-            // Always just above the top of the glass, so it grows upward with the cancel zone.
-            .padding(.bottom, Self.ballLift + geometry.topReach + 16)
-        }
-        .ignoresSafeArea(edges: .bottom)
-        .animation(nil, value: cancelExtent)
-    }
-
-    @ViewBuilder
-    private var bubble: some View {
-        let waiting = voiceMessage == nil && !finishingVoice && dictation.error == nil && dictation.text.isEmpty
-        if waiting && cancelling {
-            // The cancel zone already says what happens on release; a second line would only contradict it.
-            EmptyView()
-        } else if waiting {
-            // Heard nothing yet: say what to do, once, in a small pill instead of an empty box.
-            Text(dictation.listening ? "说吧，松手就发送" : "…")
-                .font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
-                .padding(.horizontal, 18).frame(height: 36)
-                .glassEffect(.regular, in: .capsule)
         } else {
-            Text(transcript)
-                .font(.title3.weight(.medium))
-                .multilineTextAlignment(.center)
-                .lineLimit(4)
-                .foregroundStyle(cancelling ? .secondary : .primary)
-                .opacity(cancelling ? 0.6 : 1)
-                .padding(.horizontal, 18).padding(.vertical, 14)
-                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            voiceWidth = VoiceGeometry.ballWidth
+            cancelExtent = 0
+            voiceShown = false
         }
     }
+}
 
-    private var transcript: String {
-        if let voiceMessage { return voiceMessage }
-        if finishingVoice { return "正在整理语音…" }
-        if let error = dictation.error { return error }
-        return dictation.text
+// Geometry of the restored flowing cancellation surface.
+/// What the finger's slide means while talking.
+enum VoiceGesture {
+    /// How far the finger has to travel to reach the middle of a fully grown cancel zone.
+    static let travel: CGFloat = VoiceGeometry.reach - 6
+
+    /// 0 for anything but upward. Sliding down or sideways changes nothing, and the zone retracts as the finger comes back.
+    static func extent(forTranslation translation: CGSize) -> CGFloat {
+        let up = -translation.height - 10
+        return max(0, min(1, up / travel))
+    }
+
+    /// A hold shorter than this, in which nothing was heard, is a tap that happened to be slow.
+    static let tapGrace: TimeInterval = 0.4
+
+    static func isSlowTap(listening: Bool, cancelling: Bool, heldFor: TimeInterval, heardSomething: Bool) -> Bool {
+        listening && !cancelling && !heardSomething && heldFor < tapGrace
+    }
+
+    /// The finger is in the zone. Once in, a little slack keeps it from flickering at the edge.
+    static func cancels(extent: CGFloat, wasCancelling: Bool) -> Bool {
+        wasCancelling ? extent > 0.72 : extent > 0.82
     }
 }
 
@@ -400,24 +290,12 @@ private struct OrbStage: View, Animatable {
     let safeBottom: CGFloat
     let pressure: CGFloat
     let contact: CGPoint
-    let holding: Bool
-    let preparingVoice: Bool
-    let recording: Bool
-    let audioLevel: CGFloat
-    let cancelling: Bool
     var pull: CGSize
     let breath: CGFloat
     let active: Bool
     let tilt: CGSize
-    let feedbackEnabled: Bool
-    let hint: String
-    let onChange: (DragGesture.Value) -> Void
-    let onEnd: (DragGesture.Value) -> Void
-    let onCancel: () -> Void
-    let onActivate: () -> Void
-    /// The voice glass is drawn in its place; the touch keeps flowing through here.
+    /// The voice glass is drawn in its place; the independent control keeps tracking.
     var hidden = false
-    @GestureState private var touching = false
 
     var animatableData: AnimatablePair<CGFloat, CGFloat> {
         get { AnimatablePair(pull.width, pull.height) }
@@ -437,20 +315,10 @@ private struct OrbStage: View, Animatable {
                                           stretch: reach / 44 * 0.34,
                                           angle: Angle(radians: reach > 0 ? atan2(pull.height, pull.width) : 0))
         let contours = pose.peak == -18 ? [] : OrbLiquidGeometry(pose: pose, radius: size * 0.485).contours(width: width, height: height)
-        // Drawing, hit testing and feedback all use this displayed frame. Extend
-        // the outline by 16pt for a forgiving target, including the thin water edge.
+        // Original liquid surface and reflections; this layer never receives touches.
         let surface = LiquidSurface(pose: pose, radius: size * 0.485, contours: contours,
                                     deformation: deformation, pull: pull, pressure: pressure, contact: contact)
             .path(in: CGRect(x: 0, y: 0, width: width, height: height))
-        let hitArea = Path { path in
-            path.addPath(surface)
-            path.addPath(surface.strokedPath(StrokeStyle(lineWidth: 32 * (1 - pose.water) + 8 * pose.water)))
-            if progress == 1 {
-                // A local 44pt target, not an invisible full-width band over content.
-                path.addRoundedRect(in: CGRect(x: width / 2 - 30, y: height - 44, width: 60, height: 44),
-                                    cornerSize: CGSize(width: 16, height: 16))
-            }
-        }
         ZStack {
             Color.clear
             if !hidden { Color.clear.glassEffect(.clear, in: surface) }
@@ -482,20 +350,8 @@ private struct OrbStage: View, Animatable {
             }
         }
         .frame(width: width, height: height)
-        .contentShape(.interaction, hitArea)
-        .gesture(DragGesture(minimumDistance: 0)
-            .updating($touching) { _, state, _ in state = true }
-            .onChanged(onChange)
-            .onEnded(onEnd))
-        .onChange(of: touching) { _, now in if !now { onCancel() } }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("管家")
-        .accessibilityHint(hint)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction { onActivate() }
-        .sensoryFeedback(.impact(flexibility: .soft, intensity: 0.45), trigger: contours.count == 1) { _, _ in
-            feedbackEnabled
-        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 
@@ -616,33 +472,6 @@ private struct WaterLight: View {
             }
             .shadow(color: .black.opacity(0.08), radius: 6, y: -2)
         }
-    }
-}
-
-
-// MARK: - Voice
-
-/// What the finger's slide means while talking.
-enum VoiceGesture {
-    /// How far the finger has to travel to reach the middle of a fully grown cancel zone.
-    static let travel: CGFloat = VoiceGeometry.reach - 6
-
-    /// 0 for anything but upward. Sliding down or sideways changes nothing, and the zone retracts as the finger comes back.
-    static func extent(forTranslation translation: CGSize) -> CGFloat {
-        let up = -translation.height - 10
-        return max(0, min(1, up / travel))
-    }
-
-    /// A hold shorter than this, in which nothing was heard, is a tap that happened to be slow.
-    static let tapGrace: TimeInterval = 0.4
-
-    static func isSlowTap(listening: Bool, cancelling: Bool, heldFor: TimeInterval, heardSomething: Bool) -> Bool {
-        listening && !cancelling && !heardSomething && heldFor < tapGrace
-    }
-
-    /// The finger is in the zone. Once in, a little slack keeps it from flickering at the edge.
-    static func cancels(extent: CGFloat, wasCancelling: Bool) -> Bool {
-        wasCancelling ? extent > 0.72 : extent > 0.82
     }
 }
 

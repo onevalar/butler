@@ -268,6 +268,7 @@ final class ButlerToolsTests: XCTestCase {
         XCTAssertEqual(insisted["status"] as? String, "waiting_for_user_confirmation")
         guard case .concern? = tools.pending.first?.check else { return XCTFail("owner must see Jev's concern") }
 
+        tools.clearPending() // Explicitly discard the incorrect proposal before this separate scenario.
         tools.beginTurn(request: "冷冻那箱奶喝完了", previous: nil)
         let right = await call(tools, "propose_close", #"{"lot_id":"\#(milks.freezer.id.uuidString)","reason":"used_up"}"#)
         XCTAssertEqual(right["status"] as? String, "waiting_for_user_confirmation")

@@ -61,7 +61,6 @@ struct CalendarOverviewView: View {
                 }
             }
             .contentMargins(.vertical, 12, for: .scrollContent)
-            .orbScrollTracking()
             .onChange(of: mode) { _, newMode in
                 guard newMode == .month, let month = jumpTo else { return }
                 Task { @MainActor in

@@ -53,6 +53,18 @@ final class SubscriptionModelTests: XCTestCase {
         XCTAssertEqual(try stream.finish().text, "你好")
     }
 
+    func testStreamingPreviewExcludesToolArgumentsAndReasoning() throws {
+        var stream = SubscriptionStream()
+        try event(["type": "response.reasoning_text.delta", "delta": "private"], into: &stream)
+        try event(["type": "response.function_call_arguments.delta", "delta": "partial tool"], into: &stream)
+        XCTAssertEqual(stream.visibleText, "")
+        try event(["type": "response.output_text.delta", "delta": "正在"], into: &stream)
+        XCTAssertEqual(stream.visibleText, "正在")
+        try event(["type": "response.output_text.delta", "delta": "查找"], into: &stream)
+        XCTAssertEqual(stream.visibleText, "正在查找")
+        XCTAssertThrowsError(try stream.finish(), "A preview is never a completed response or executable tool call")
+    }
+
     private func jwt(_ object: [String: Any]) throws -> String {
         let payload = try JSONSerialization.data(withJSONObject: object).base64EncodedString()
             .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
@@ -117,7 +129,7 @@ final class SubscriptionModelTests: XCTestCase {
                 return (200, try JSONSerialization.data(withJSONObject: ["access_token": newAccess, "refresh_token": "rotated-test"]))
             }
             XCTAssertEqual(request.url?.host, "chatgpt.com")
-            // Before the first model call the service is checked with a quick HEAD request.
+            // A healthy first request must not wait for an extra connectivity probe.
             if request.httpMethod == "HEAD" {
                 probed = true
                 return (200, Data())
@@ -133,11 +145,14 @@ final class SubscriptionModelTests: XCTestCase {
         XCTAssertNil(connection.error)
         XCTAssertTrue(connection.isLoggedIn)
         XCTAssertEqual(polls, 2)
-        let model = SubscriptionModel(connection: connection, network: network)
+        var streamed: [String] = []
+        let model = SubscriptionModel(connection: connection, network: network, onText: { streamed.append($0) })
         let reply = try await model.reply(to: [.user("虚构测试")])
         XCTAssertEqual(reply.text, "测试回复")
+        XCTAssertEqual(streamed.first, "")
+        XCTAssertTrue(streamed.contains("测试回复"))
         XCTAssertTrue(refreshed)
-        XCTAssertTrue(probed)
+        XCTAssertFalse(probed)
         let reloaded = SubscriptionConnection(network: network, keychainAccount: account)
         let persisted = try await reloaded.authorizedCredentials()
         XCTAssertEqual(persisted.refreshToken, "rotated-test")

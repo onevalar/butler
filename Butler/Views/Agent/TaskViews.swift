@@ -4,10 +4,14 @@ struct TaskListView: View {
     @Bindable var store: ReminderStore
     let onOpen: (UUID) -> Void
     let onCreate: () -> Void
-    @State private var includeFinished = false
+    @State private var includeFinished = true
+    @State private var searchText = ""
+    @State private var deleting: TimedReminder?
+    @State private var deleteError: String?
 
     private var values: [TimedReminder] {
-        store.reminders.filter { includeFinished || $0.status == .active || $0.status == .paused }
+        store.reminders.filter { (includeFinished || $0.status == .active || $0.status == .paused)
+            && (searchText.isEmpty || $0.text.localizedCaseInsensitiveContains(searchText)) }
             .sorted { $0.createdAt > $1.createdAt }
     }
 
@@ -26,13 +30,32 @@ struct TaskListView: View {
                     }.padding(.vertical, 4)
                 }
                 .glassRows()
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    Button("删除", role: .destructive) { deleting = task }
+                }
+                .contextMenu {
+                    Button("删除任务", systemImage: "trash", role: .destructive) { deleting = task }
+                }
             }
         }
         .glassList()
         .navigationTitle("任务与历史")
+        .searchable(text: $searchText, prompt: "搜索任务与历史")
         .toolbar { Button("新任务", systemImage: "plus", action: onCreate) }
-        .orbScrollTracking()
         .onAppear { store.rescheduleAll() }
+        .confirmationDialog("永久删除这个任务？", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), presenting: deleting) { task in
+            Button("删除任务", role: .destructive) {
+                do { try store.delete(task.id, expectedRevision: task.revision) }
+                catch { deleteError = error.localizedDescription }
+                deleting = nil
+            }
+            Button("保留任务", role: .cancel) { deleting = nil }
+        } message: { task in
+            Text("「\(task.text)」及其操作记录将被永久删除，后续提醒停止，对话记录保留。此操作不能撤销。")
+        }
+        .alert("未能删除", isPresented: Binding(get: { deleteError != nil }, set: { if !$0 { deleteError = nil } })) {
+            Button("知道了") { deleteError = nil }
+        } message: { Text(deleteError ?? "") }
     }
 }
 
@@ -44,6 +67,8 @@ struct TaskDetailView: View {
     let onOpenScope: (ChatScope) -> Void
     @State private var error: String?
     @State private var confirmCancel = false
+    @State private var deleting: TimedReminder?
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         List {
@@ -75,6 +100,13 @@ struct TaskDetailView: View {
                 Section {
                     Button("和管家讨论这个任务", systemImage: "bubble.left.and.bubble.right", action: onChat)
                     NavigationLink("相关对话") { RelatedConversationView(scope: .task(id), sessions: sessions, onOpen: onOpenScope) }
+                    if task.status == .completed || task.status == .cancelled {
+                        Button("重新标记为未完成", systemImage: "arrow.uturn.backward") {
+                            act { try store.reopen(id) }
+                        }
+                        Text("保留之前的操作记录，恢复原有提醒规则；已过期的自动完成时间会清除。提醒时间已过的任务仍需重新安排。")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
                     if task.status == .active || task.status == .paused {
                         Button("标记整个任务完成", systemImage: "checkmark.circle") { act { try store.complete(id) } }
                         if task.status == .active { Button("暂停提醒", systemImage: "pause.circle") { act { try store.pause(id) } } }
@@ -93,16 +125,31 @@ struct TaskDetailView: View {
                     }
                 }
                 .glassRows()
+                Section {
+                    Button("删除任务", systemImage: "trash", role: .destructive) { deleting = task }
+                }
+                .glassRows()
                 if let error { Text(error).foregroundStyle(.red) }
             } else { ContentUnavailableView("任务不存在", systemImage: "checklist", description: Text("它可能已从备份中移除。")) }
         }
         .glassList()
         .navigationTitle("任务")
         .navigationBarTitleDisplayMode(.inline)
-        .orbScrollTracking()
         .onAppear { store.rescheduleAll() }
         .confirmationDialog("取消这个任务并停止后续提醒？历史会保留。", isPresented: $confirmCancel) {
             Button("取消任务", role: .destructive) { act { try store.remove(id) } }
+        }
+        .confirmationDialog("永久删除这个任务？", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), presenting: deleting) { task in
+            Button("删除任务", role: .destructive) {
+                do {
+                    try store.delete(task.id, expectedRevision: task.revision)
+                    deleting = nil
+                    dismiss()
+                } catch { self.error = error.localizedDescription; deleting = nil }
+            }
+            Button("保留任务", role: .cancel) { deleting = nil }
+        } message: { task in
+            Text("「\(task.text)」及其操作记录将被永久删除，后续提醒停止，对话记录保留。此操作不能撤销。")
         }
     }
 
@@ -145,6 +192,5 @@ struct RelatedConversationView: View {
         .glassList()
         .navigationTitle("相关对话")
         .navigationBarTitleDisplayMode(.inline)
-        .orbScrollTracking()
     }
 }

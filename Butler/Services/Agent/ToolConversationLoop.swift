@@ -6,6 +6,7 @@ enum ToolConversationLoop {
     static func run(model: any LocalAgentModel, messages: inout [LocalAgentMessage],
                     prefetched: [PrefetchedToolResult] = [],
                     rounds: Int = 30, execute: (LocalToolCall) async throws -> String,
+                    progress: (String) -> Void = { _ in },
                     log: (String) -> Void = ChatDiagnostics.log) async throws -> String? {
         try Task.checkCancellation()
         // These reads were executed by the phone, before the first model request. Keep their
@@ -18,6 +19,7 @@ enum ToolConversationLoop {
         for round in 0..<rounds {
             try Task.checkCancellation()
             let asked = Date.now
+            progress(round == 0 ? "正在理解你的安排…" : "正在整理结果…")
             let reply = try await model.reply(to: messages)
             log("round \(round) \(String(format: "%.1f", Date.now.timeIntervalSince(asked)))s calls=\(reply.calls.map(\.name).joined(separator: ","))")
             try Task.checkCancellation()
@@ -29,6 +31,7 @@ enum ToolConversationLoop {
                 if let previous = completed[call.id] {
                     output = previous
                 } else {
+                    progress(status(for: call.name))
                     let began = Date.now
                     output = try await execute(call)
                     log("tool \(call.name) \(String(format: "%.1f", Date.now.timeIntervalSince(began)))s")
@@ -38,5 +41,17 @@ enum ToolConversationLoop {
             }
         }
         return nil
+    }
+
+    private static func status(for name: String) -> String {
+        switch name {
+        case "get_tasks", "list_reminders": "正在查看任务和提醒…"
+        case "search_inventory", "get_item_profile", "get_item_history": "正在查找家里的物品…"
+        case "get_weather": "正在查询天气…"
+        case "get_settings": "正在查看设置…"
+        case "judge_with_jev": "正在核对匹配结果…"
+        case let value where value.hasPrefix("propose_"): "正在准备修改，请稍后确认…"
+        default: "正在读取相关资料…"
+        }
     }
 }

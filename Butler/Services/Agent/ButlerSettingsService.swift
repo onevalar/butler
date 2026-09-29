@@ -1,6 +1,6 @@
 import Foundation
 
-struct ButlerSettingChange: Equatable {
+struct ButlerSettingChange: Equatable, Codable {
     let key: String
     let before: String
     let after: String

@@ -11,6 +11,7 @@ struct LotDetailView: View {
     @Query private var products: [CatalogProduct]
     @Query private var events: [InventoryEvent]
 
+    @State private var editingProfile = false
     @State private var capturingDate = false
     @State private var planningDate = false
     @State private var estimatingDate = false
@@ -73,6 +74,9 @@ struct LotDetailView: View {
     private func content(lot: InventoryLot, facts: LotFacts) -> some View {
         ScrollView {
             VStack(spacing: 12) {
+                if let profile = facts.profile, profile.photo != nil {
+                    ItemPhoto(profile: profile, size: 220).frame(maxWidth: .infinity)
+                }
                 status(facts)
                 quickActions(facts)
                 details(lot: lot, facts: facts)
@@ -91,7 +95,6 @@ struct LotDetailView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 32)
         }
-        .orbScrollTracking()
         .navigationTitle(facts.name)
         .navigationSubtitle(subtitle(facts))
         .toolbarTitleDisplayMode(.inlineLarge)
@@ -105,6 +108,11 @@ struct LotDetailView: View {
                     Image(systemName: "ellipsis")
                 }
                 .accessibilityLabel("更多")
+            }
+        }
+        .sheet(isPresented: $editingProfile) {
+            ItemProfileEditor(facts: facts) { profile in
+                try InventoryActions(modelContainer: modelContext.container).setProfile(profile, for: facts)
             }
         }
         .fullScreenCover(isPresented: $capturingDate) { DateCaptureView(lot: facts) }
@@ -172,14 +180,14 @@ struct LotDetailView: View {
         VStack(alignment: .leading, spacing: 12) {
             if facts.quantityOnly {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text("还剩").font(.subheadline).foregroundStyle(.secondary)
+                    Text(facts.isDurable ? "家里有" : "还剩").font(.subheadline).foregroundStyle(.secondary)
                     Text("\(facts.quantity)")
                         .font(.system(size: 48, weight: .semibold, design: .rounded))
                         .foregroundStyle(facts.isRunningLow ? .red : .primary)
                         .contentTransition(reduceMotion ? .identity : .numericText())
                     Text(facts.unit).font(.body)
                 }
-                Text(facts.isRunningLow ? "快没了，记得补货" : "只记数量，不提醒到期")
+                Text(facts.isDurable ? facts.profile?.availabilityLabel ?? "可使用" : facts.isRunningLow ? "快没了，记得补货" : "只记数量，不提醒到期")
                     .font(.subheadline)
                     .foregroundStyle(facts.isRunningLow ? .red : .secondary)
             } else if let days = facts.daysLeft, let end = facts.governingDate {
@@ -231,6 +239,11 @@ struct LotDetailView: View {
 
     private func quickActions(_ facts: LotFacts) -> some View {
         HStack(spacing: 10) {
+            if facts.isDurable {
+                ActionTile(title: "物品资料", systemImage: "square.and.pencil") { editingProfile = true }
+                ActionTile(title: "移动位置", systemImage: "shippingbox") { choosingPlace = true }
+                ActionTile(title: "送给别人", systemImage: "gift") { pendingClose = .gifted }
+            } else {
             ActionTile(title: "用掉 1 \(facts.unit)", systemImage: "minus") { useOne(facts) }
             if facts.quantityOnly {
                 ActionTile(title: "又买了 1 \(facts.unit)", systemImage: "plus") {
@@ -241,6 +254,7 @@ struct LotDetailView: View {
                 ActionTile(title: "全部用完", systemImage: "checkmark") { pendingClose = .depleted }
                 ActionTile(title: "丢掉", systemImage: "trash", tint: .red) { pendingClose = .discarded }
             }
+        }
         }
         .sensoryFeedback(.success, trigger: facts.quantity)
     }
@@ -259,6 +273,13 @@ struct LotDetailView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("详情").font(.footnote).foregroundStyle(.secondary).padding(.horizontal, 16)
             VStack(spacing: 0) {
+                DetailRow(title: "物品资料", value: facts.category.title + " · " + (facts.profile?.availabilityLabel ?? "可使用")) { editingProfile = true }
+                if let profile = facts.profile {
+                    ForEach(profile.attributes.keys.sorted(), id: \.self) { key in
+                        DetailRow(title: key, value: profile.attributes[key] ?? "") { editingProfile = true }
+                    }
+                }
+                RowDivider(inset: 16)
                 DetailRow(title: "数量", value: "\(facts.quantity) \(facts.unit)") { editingQuantity = true }
                 if !facts.quantityOnly {
                     RowDivider(inset: 16)
@@ -276,14 +297,16 @@ struct LotDetailView: View {
                 RowDivider(inset: 16)
                 DetailRow(title: "放在", value: facts.storageLocation ?? "未设置") { choosingPlace = true }
                 RowDivider(inset: 16)
+                if !facts.isDurable {
                 Toggle("只记数量", isOn: Binding(get: { facts.quantityOnly }, set: { setQuantityOnly($0, facts) }))
                     .padding(.horizontal, 16)
                     .frame(minHeight: 52)
+                }
             }
             .padding(.vertical, 4)
             .glassCard(radius: 26)
-            Text("打开后不再提醒到期，只记还剩多少。适合饮用水、纸巾这类东西。")
-                .font(.footnote).foregroundStyle(.secondary).padding(.horizontal, 16)
+            if !facts.isDurable { Text("打开后不再提醒到期，只记还剩多少。适合饮用水、纸巾这类东西。")
+                .font(.footnote).foregroundStyle(.secondary).padding(.horizontal, 16) }
         }
     }
 
@@ -501,6 +524,7 @@ private struct HistorySheet: View {
     static func describe(_ event: InventoryEvent) -> String {
         switch event.eventTypeRawValue {
         case "lotAdded": "记进来了"
+        case "itemProfileUpdated": "更新了物品资料"
         case "lotDateSet": "日期更新了"
         case "lotMoved": "换了个地方放"
         case "quantityAdjusted": "数量变了"

@@ -91,10 +91,11 @@ struct HomeAgenda {
     }
 
     static func build(lots: [LotFacts], reminders: [TimedReminder], events: [CalendarEventInfo],
-                      now: Date = .now, dayCount: Int = 7, calendar: Calendar = .current) -> HomeAgenda {
+                      now: Date = .now, dayCount: Int = 7, calendar: Calendar = .current, additionalDays: [Date] = []) -> HomeAgenda {
         let today = calendar.startOfDay(for: now)
         let days = (0..<dayCount).compactMap { calendar.date(byAdding: .day, value: $0, to: today) }
-        let lastDay = days.last ?? today
+        let displayedDays = Array(Set(days + additionalDays.map { calendar.startOfDay(for: $0) })).sorted()
+        let lastDay = displayedDays.last ?? today
         var byDay: [Date: [AgendaEntry]] = [:]
         var attention: [AgendaEntry] = []
 
@@ -156,7 +157,11 @@ struct HomeAgenda {
                     subtitle: "\(reminder.fireDate.monthDay) 的任务 · 尚未完成", day: today, start: nil, end: nil,
                     target: .reminder(reminder.id)))
             }
-            for day in days {
+            var taskDays = displayedDays
+            if reminder.repeats == .none && reminder.phases == nil && reminder.fireDate < today {
+                taskDays = Array(Set(taskDays + [calendar.startOfDay(for: reminder.fireDate)])).sorted()
+            }
+            for day in taskDays {
                 for start in ReminderSchedule.occurrences(reminder, on: day, calendar: calendar) {
                     let repeatLabel: String?
                     if reminder.phases != nil { repeatLabel = reminder.whenLabel }
@@ -176,7 +181,7 @@ struct HomeAgenda {
         }
 
         for event in events {
-            for day in days {
+            for day in displayedDays {
                 guard let next = calendar.date(byAdding: .day, value: 1, to: day),
                       event.start < next, event.end > day || (event.end == event.start && event.start >= day) else { continue }
                 let subtitle = [event.calendarName, event.location].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
@@ -201,6 +206,15 @@ struct HomeAgenda {
         attention.sort { $0.kind < $1.kind }
         let missing = lots.filter { $0.needsDate || $0.needsCompartment }.count
         return HomeAgenda(today: today, days: days, needsAttention: attention, missingInfoCount: missing, byDay: byDay)
+    }
+
+    /// Only the browsed month and its adjacent week are calculated, even when jumping years away.
+    static func browsingDays(around date: Date, calendar: Calendar = .current) -> [Date] {
+        guard let month = calendar.dateInterval(of: .month, for: date),
+              let start = calendar.date(byAdding: .day, value: -7, to: month.start),
+              let end = calendar.date(byAdding: .day, value: 7, to: month.end) else { return [] }
+        let count = calendar.dateComponents([.day], from: start, to: end).day ?? 0
+        return (0..<count).compactMap { calendar.date(byAdding: .day, value: $0, to: start) }
     }
 
     /// When a reminder fires on `day`, if it does.

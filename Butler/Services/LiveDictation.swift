@@ -32,12 +32,22 @@ final class LiveDictation {
     private var legacyTask: SFSpeechRecognitionTask?
     private var sessionID: UUID?
     private var tapInstalled = false
+    private var customConfiguration: CustomSpeechConfiguration?
+    private var customRecorder: AVAudioRecorder?
+    private var customFile: URL?
+    private var customMeterTask: Task<Void, Never>?
+    private var customUploadTask: Task<String, Error>?
+    private var realtimeClient: RealtimeSpeechClient?
+    private var realtimeInput: AsyncStream<Data>.Continuation?
+    /// A completed custom recording needs network time; Apple's local finalization stays short.
+    var finalizationTimeout: Duration { customConfiguration == nil ? .seconds(3) : .seconds(45) }
+    var usesCustomService: Bool { customConfiguration != nil }
 
     nonisolated deinit {}
 
     static let locale = Locale(identifier: "zh-CN")
 
-    func start(after existing: String) async {
+    func start(after existing: String, onRecordingStarted: () -> Void = {}) async {
         guard sessionID == nil, !Task.isCancelled else { return }
         askedAt = ProcessInfo.processInfo.systemUptime
         firstWordLogged = false
@@ -46,7 +56,7 @@ final class LiveDictation {
         error = nil
         preparing = true
         await withTaskCancellationHandler {
-            await prepare(after: existing, session: id)
+            await prepare(after: existing, session: id, onRecordingStarted: onRecordingStarted)
         } onCancel: {
             Task { @MainActor [weak self] in
                 guard let self, self.sessionID == id else { return }
@@ -62,13 +72,15 @@ final class LiveDictation {
 
     /// The microphone starts as soon as permission and the audio session allow it. Everything heard from then on is
     /// kept, and handed to the recognizer once it is ready, so the first words are never lost to start-up time.
-    private func prepare(after existing: String, session id: UUID) async {
+    private func prepare(after existing: String, session id: UUID, onRecordingStarted: () -> Void) async {
         defer { if sessionID == id { preparing = false } }
         do {
-            let authorized = await authorize(session: id)
+            let settings = SpeechRecognitionSettings()
+            customConfiguration = settings.provider == .custom ? try settings.customConfiguration() : nil
+            let authorized = await authorize(session: id, needsAppleSpeech: customConfiguration == nil)
             try checkSession(id)
             guard authorized else {
-                error = "没有麦克风或语音识别权限，可以在系统设置里打开。"
+                error = customConfiguration == nil ? "没有麦克风或语音识别权限，可以在系统设置里打开。" : "没有麦克风权限，可以在系统设置里打开。"
                 preparing = false
                 sessionID = nil
                 return
@@ -79,7 +91,16 @@ final class LiveDictation {
             text = base
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.record, mode: .measurement, options: .duckOthers)
+            try session.setAllowHapticsAndSystemSoundsDuringRecording(true)
             try session.setActive(true, options: .notifyOthersOnDeactivation)
+            if customConfiguration != nil {
+                if let configuration = customConfiguration, configuration.usesRealtime {
+                    try startRealtimeRecording(session: id, configuration: configuration, onRecordingStarted: onRecordingStarted)
+                } else {
+                    try startCustomRecording(session: id, onRecordingStarted: onRecordingStarted)
+                }
+                return
+            }
             let relay = AudioRelay()
             self.relay = relay
             let natural = engine.inputNode.outputFormat(forBus: 0)
@@ -89,6 +110,8 @@ final class LiveDictation {
             engine.prepare()
             try checkSession(id)
             try engine.start()
+            // Notify the caller synchronously; don't wait for SwiftUI's next observation/render pass.
+            onRecordingStarted()
             listening = true
             preparing = false
             ChatDiagnostics.log("voice: recording began \(elapsed())s after the request")
@@ -99,7 +122,9 @@ final class LiveDictation {
             guard sessionID == id else { return }
             let cancelled = error is CancellationError || Task.isCancelled
             cancel()
-            if !cancelled { self.error = "语音识别没能启动，先打字吧。" }
+            if !cancelled {
+                self.error = (error as? SpeechServiceError)?.localizedDescription ?? "语音识别没能启动，先打字吧。"
+            }
         }
     }
 
@@ -137,6 +162,10 @@ final class LiveDictation {
         let stoppedText = text
         listening = false
         audioLevel = 0
+        if let client = realtimeClient { return await stopRealtimeRecording(session: id, client: client) }
+        if let configuration = customConfiguration {
+            return await stopCustomRecording(session: id, configuration: configuration)
+        }
         engine.stop()
         removeTap()
         // What was heard while the recognizer was still starting is replayed to it first.
@@ -161,6 +190,152 @@ final class LiveDictation {
         listening = false
         preparing = false
         teardown()
+    }
+
+    // MARK: - Realtime custom transcription
+
+    private func startRealtimeRecording(session id: UUID, configuration: CustomSpeechConfiguration,
+                                        onRecordingStarted: () -> Void) throws {
+        let (stream, continuation) = AsyncStream<Data>.makeStream(bufferingPolicy: .bufferingOldest(512))
+        realtimeInput = continuation
+        let client = RealtimeSpeechClient(configuration: configuration)
+        realtimeClient = client
+        let format = engine.inputNode.outputFormat(forBus: 0)
+        let tap = try Self.realtimeTap(from: format, into: continuation, meter: makeMeter(session: id)) { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.sessionID == id else { return }
+                self.cancel()
+                self.error = SpeechServiceError.audioBacklog.localizedDescription
+            }
+        }
+        engine.inputNode.installTap(onBus: 0, bufferSize: 2400, format: format, block: tap)
+        tapInstalled = true
+        engine.prepare()
+        try checkSession(id)
+        try engine.start()
+        onRecordingStarted()
+        listening = true
+        preparing = false
+        client.start(model: configuration.model, audio: stream, onText: { [weak self] text in
+            guard let self, self.sessionID == id else { return }
+            self.text = self.base.isEmpty ? text : self.base + " " + text
+        }, onFailure: { [weak self] message in
+            guard let self, self.sessionID == id else { return }
+            self.cancel()
+            self.error = message
+        })
+        customMeterTask = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(120)) } catch { return }
+            guard let self, self.sessionID == id, self.listening else { return }
+            self.cancel()
+            self.error = SpeechServiceError.tooLong.localizedDescription
+        }
+    }
+
+    private func stopRealtimeRecording(session id: UUID, client: RealtimeSpeechClient) async -> String {
+        engine.stop()
+        removeTap()
+        customMeterTask?.cancel()
+        realtimeInput?.finish()
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        do {
+            let result = try await client.finish()
+            try checkSession(id)
+            text = base.isEmpty ? result : base + " " + result
+        } catch {
+            guard sessionID == id else { return text }
+            if !(error is CancellationError), !Task.isCancelled {
+                self.error = (error as? SpeechServiceError)?.localizedDescription ?? "实时语音收尾超时，请检查文字后重试。"
+            }
+        }
+        guard sessionID == id else { return text }
+        teardown(deactivateSession: false)
+        sessionID = nil
+        return text
+    }
+
+    nonisolated private static func realtimeTap(from source: AVAudioFormat, into continuation: AsyncStream<Data>.Continuation,
+                                                 meter: MicrophoneMeter, onFailure: @escaping @Sendable () -> Void) throws -> AVAudioNodeTapBlock {
+        let converter = try RealtimePCMConverter(source: source)
+        return { buffer, _ in
+            meter.consume(buffer)
+            do {
+                let data = try converter.convert(buffer)
+                guard !data.isEmpty else { return }
+                if case .dropped = continuation.yield(data) { onFailure() }
+            } catch { onFailure() }
+        }
+    }
+
+    // MARK: - File-based custom transcription (upload only after release)
+
+    private func startCustomRecording(session id: UUID, onRecordingStarted: () -> Void) throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("butler-voice-\(UUID().uuidString).m4a")
+        customFile = file
+        let recorder = try AVAudioRecorder(url: file, settings: [
+            AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 16_000,
+            AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 48_000
+        ])
+        recorder.isMeteringEnabled = true
+        customRecorder = recorder
+        guard recorder.prepareToRecord(), recorder.record() else { throw VoiceError.setupFailed }
+        onRecordingStarted()
+        listening = true
+        preparing = false
+        customMeterTask = Task { [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
+                guard let self, self.sessionID == id, self.listening, let recorder = self.customRecorder else { return }
+                guard recorder.isRecording else {
+                    self.cancel()
+                    self.error = "录音意外中断，请重试。"
+                    return
+                }
+                if recorder.currentTime >= 120 {
+                    self.cancel()
+                    self.error = SpeechServiceError.tooLong.localizedDescription
+                    return
+                }
+                recorder.updateMeters()
+                let measured = CGFloat(min(1, max(0, (recorder.averagePower(forChannel: 0) + 55) / 45)))
+                self.audioLevel = self.audioLevel * 0.4 + measured * 0.6
+            }
+        }
+    }
+
+    private func stopCustomRecording(session id: UUID, configuration: CustomSpeechConfiguration) async -> String {
+        customMeterTask?.cancel()
+        let duration = customRecorder?.currentTime ?? 0
+        customRecorder?.stop()
+        customRecorder = nil
+        // Release the microphone during the network request, while keeping its session ID isolated.
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        do {
+            guard duration >= 0.1, let file = customFile else { throw SpeechServiceError.emptyAudio }
+            try checkSession(id)
+            let audio = try Data(contentsOf: file)
+            // The upload owns this in-memory copy; the recording no longer needs to remain on disk.
+            try? FileManager.default.removeItem(at: file)
+            customFile = nil
+            let task = Task { try await CustomSpeechClient().transcribe(audio: audio, configuration: configuration) }
+            customUploadTask = task
+            let result = try await task.value
+            try checkSession(id)
+            text = base.isEmpty ? result : base + " " + result
+        } catch {
+            guard sessionID == id else { return text }
+            if !(error is CancellationError), !Task.isCancelled, (error as? URLError)?.code != .cancelled {
+                if (error as? URLError)?.code == .timedOut {
+                    self.error = "语音服务响应超时，请重试。"
+                } else {
+                    self.error = (error as? SpeechServiceError)?.localizedDescription ?? "无法连接语音服务，请检查网络与服务配置。"
+                }
+            }
+        }
+        guard sessionID == id else { return text }
+        teardown(deactivateSession: false)
+        sessionID = nil
+        return text
     }
 
     // MARK: - Speech analyzer (iOS 26)
@@ -407,6 +582,19 @@ final class LiveDictation {
     }
 
     private func teardown(deactivateSession: Bool = true) {
+        realtimeInput?.finish()
+        realtimeInput = nil
+        realtimeClient?.cancel()
+        realtimeClient = nil
+        customMeterTask?.cancel()
+        customMeterTask = nil
+        customUploadTask?.cancel()
+        customUploadTask = nil
+        customRecorder?.stop()
+        customRecorder = nil
+        if let customFile { try? FileManager.default.removeItem(at: customFile) }
+        customFile = nil
+        customConfiguration = nil
         audioLevel = 0
         if engine.isRunning { engine.stop() }
         removeTap()
@@ -427,7 +615,8 @@ final class LiveDictation {
         }
     }
 
-    private func authorize(session id: UUID) async -> Bool {
+    private func authorize(session id: UUID, needsAppleSpeech: Bool) async -> Bool {
+        if !needsAppleSpeech { return await AVAudioApplication.requestRecordPermission() }
         let speech = await withCheckedContinuation { continuation in
             SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0 == .authorized) }
         }

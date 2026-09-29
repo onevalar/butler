@@ -8,6 +8,8 @@
 	<string>在首页时间线上显示你日历里的日程，管家只读取、不修改。</string>
 	<key>NSCameraUsageDescription</key>
 	<string>拍下买回来的东西、购物小票或包装上的日期，让管家帮你记下来。</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>获取你所在地区的天气，帮助小当家提供出门和穿搭建议。也可以手动选择城市。</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>用说话代替打字，和管家对话。</string>
 	<key>NSSpeechRecognitionUsageDescription</key>

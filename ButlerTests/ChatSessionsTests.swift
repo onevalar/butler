@@ -5,6 +5,50 @@ import XCTest
 
 @MainActor
 final class ChatSessionsTests: XCTestCase {
+    func testWholeBriefConversationCarriesAllSubjectsAndNeverBecomesPrimaryLotChat() throws {
+        let (_, _, _, _, sessions) = try fixture()
+        let id = UUID()
+        let brief = ButlerBrief(greeting: "早上好", text: "牛奶明天到期，青菜今晚吃；下午记得取快递。", basis: "", target: .lot(id),
+                                actions: [.init(label: "喝完了", effect: .closeLot(.depleted))], source: .local)
+        let scope = ChatScope.brief(BriefConversation(brief: brief, day: "2026-09-29"))
+        let chat = sessions.chat(for: scope)
+        let context = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(chat.scopeContext.utf8)) as? [String: Any])
+        XCTAssertEqual(chat.contextTitle, "关于这条管家提醒")
+        XCTAssertEqual(context["brief_text"] as? String, brief.text)
+        XCTAssertEqual(context["source"] as? String, "home_brief")
+        XCTAssertNil(context["lot_id"])
+        XCTAssertNil(context["task_id"])
+        XCTAssertFalse(chat === sessions.chat(for: .lot(id)))
+        XCTAssertFalse(ButlerChat.allowsLocalReminderCreation(in: scope))
+        XCTAssertTrue(chat === sessions.chat(for: .brief(BriefConversation(brief: brief, day: "2026-09-29"))))
+        var updated = brief
+        updated.text = "牛奶已经喝完，明天处理青菜。"
+        let other = sessions.chat(for: .brief(BriefConversation(brief: updated, day: "2026-09-29")))
+        XCTAssertFalse(chat === other)
+        XCTAssertTrue(chat.scopeContext.contains("下午记得取快递"))
+        XCTAssertFalse(chat.scopeContext.contains("牛奶已经喝完"))
+    }
+
+    func testBriefSnapshotAndIndependentHistorySurviveReloadIncludingNoObjectReminder() throws {
+        let (container, directory, defaults, reminders, sessions) = try fixture()
+        let brief = ButlerBrief(greeting: "早上好", text: "下午下雨，出门记得带伞。", basis: "", target: nil, actions: [], source: .local)
+        let scope = ChatScope.brief(BriefConversation(brief: brief, day: "2026-09-29"))
+        let chat = sessions.chat(for: scope)
+        chat.draft = "那就晚些出门"
+        let turn = ChatTurn(question: "今天这条提醒", answer: "可以调整")
+        try ChatSessionFiles(scope: scope, root: directory).saveTurns([turn])
+        let restoredScope = try XCTUnwrap(ChatSessionFiles.savedScopes(in: directory).first { $0 == scope })
+        let restored = ButlerChat(container: container, reminders: reminders, scope: restoredScope,
+                                  connection: chat.connection, jev: chat.jev, directory: directory, defaults: defaults)
+        XCTAssertEqual(restored.turns, [turn])
+        XCTAssertEqual(restored.draft, "那就晚些出门")
+        XCTAssertTrue(restored.scopeContext.contains(brief.text))
+        XCTAssertTrue(sessions.chat(for: .general).turns.isEmpty)
+        XCTAssertNotEqual(scope, .brief(BriefConversation(brief: brief, day: "2026-09-30")))
+        XCTAssertFalse(scope.key.contains("/"))
+        XCTAssertFalse(scope.key.contains(brief.text))
+    }
+
     private func fixture() throws -> (ModelContainer, URL, UserDefaults, ReminderStore, ChatSessions) {
         let container = try ButlerStore.makePreviewContainer()
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("chat-sessions-\(UUID())", isDirectory: true)

@@ -16,7 +16,9 @@ struct ButlerSettingsView: View {
     @Environment(CalendarFeed.self) private var calendarFeed: CalendarFeed?
     @Environment(\.modelContext) private var modelContext
     @State private var confirmClear = false
+    @State private var showVoiceTrial = false
     @AppStorage("expiryWarningDays") private var leadDays = 2
+    @AppStorage(SpeechRecognitionSettings.providerKey) private var speechProvider = SpeechRecognitionProvider.apple.rawValue
     @AppStorage("reminderMinutes") private var reminderMinutes = 9 * 60
     @AppStorage(AppTheme.storageKey) private var theme: AppTheme = .mist
     @Query(filter: #Predicate<InventoryLot> { $0.stateRawValue == "active" }) private var activeLots: [InventoryLot]
@@ -52,6 +54,9 @@ struct ButlerSettingsView: View {
                 }
                 NavigationLink { ModelSettingsPage(chat: chat, hasOtherWork: hasOtherWork) } label: {
                     LabeledContent("对话模型", value: chat.connection.isLoggedIn ? "GPT-6 Sol" : "未登录")
+                }
+                NavigationLink { SpeechRecognitionSettingsView() } label: {
+                    LabeledContent("语音识别", value: (SpeechRecognitionProvider(rawValue: speechProvider) ?? .apple).title)
                 }
                 NavigationLink { JevSettingsPage(chat: chat, hasOtherWork: hasOtherWork) } label: {
                     LabeledContent("Jev 条件判断", value: !chat.jev.isConfigured ? "未接入" : chat.jev.isEnabled ? "已启用" : "已关闭")
@@ -107,6 +112,12 @@ struct ButlerSettingsView: View {
             .glassRows()
             #endif
 
+            Section("交互试用") {
+                Button("按住说话 · 连续触感") { showVoiceTrial = true }
+                    .disabled(chat.working || hasOtherWork)
+            }
+            .glassRows()
+
             Section("关于") {
                 LabeledContent("版本", value: Self.version)
                 Link("隐私政策", destination: OnboardingView.privacyURL)
@@ -114,7 +125,7 @@ struct ButlerSettingsView: View {
             .glassRows()
         }
         .glassList()
-        .orbScrollTracking()
+        .fullScreenCover(isPresented: $showVoiceTrial) { VoicePressTrialView() }
         .navigationTitle("管家与设置").navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if showsDone { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }

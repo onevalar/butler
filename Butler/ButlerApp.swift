@@ -39,6 +39,39 @@ struct ButlerApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                #if DEBUG
+                .task {
+                    guard ProcessInfo.processInfo.arguments.contains("--check-speech-service") else { return }
+                    do {
+                        let config = try SpeechRecognitionSettings().customConfiguration()
+                        guard config.usesRealtime else { return }
+                        try await RealtimeSpeechClient(configuration: config).checkConnection(model: config.model)
+                        ChatDiagnostics.log("speech probe: authenticated and session configuration accepted; no audio sent")
+                        // Opt-in developer fixture, never the microphone or user recordings.
+                        if ProcessInfo.processInfo.arguments.contains("--check-speech-sample") {
+                            let file = FileManager.default.temporaryDirectory.appendingPathComponent("butler-speech-test.pcm")
+                            let bytes = try Data(contentsOf: file)
+                            guard bytes.count <= 480_000 else { return }
+                            defer { try? FileManager.default.removeItem(at: file) }
+                            let client = RealtimeSpeechClient(configuration: config)
+                            defer { client.cancel() }
+                            let (stream, input) = AsyncStream<Data>.makeStream()
+                            var updates = 0
+                            client.start(model: config.model, audio: stream, onText: { _ in updates += 1 }, onFailure: { _ in })
+                            for offset in stride(from: 0, to: bytes.count, by: 4800) {
+                                input.yield(bytes.subdata(in: offset..<min(offset + 4800, bytes.count)))
+                                try await Task.sleep(for: .milliseconds(100))
+                            }
+                            input.finish()
+                            let result = try await client.finish()
+                            ChatDiagnostics.log("speech probe: synthetic audio completed, updates=\(updates), expectedPhrase=\(result.contains("语音识别测试"))")
+                        }
+                    } catch {
+                        let message = (error as? SpeechServiceError)?.localizedDescription ?? "connection failed"
+                        ChatDiagnostics.log("speech probe: \(message)")
+                    }
+                }
+                #endif
         }
         .modelContainer(modelContainer)
     }

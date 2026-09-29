@@ -163,6 +163,29 @@ final class ReminderStore {
     func resume(_ id: UUID) throws { try transition(id, to: .active, kind: "resumed", detail: "恢复提醒") }
     func remove(_ id: UUID) throws { try transition(id, to: .cancelled, kind: "cancelled", detail: "取消任务") }
 
+    /// Explicit deletion, unlike cancellation. Persist first, then remove its scheduled notifications.
+    func delete(_ id: UUID, expectedRevision: Int) throws {
+        guard let task = reminder(id: id), task.revision == expectedRevision else {
+            throw ReminderSchedule.InvalidRule(message: "任务已改变或不存在，请重新查看后删除")
+        }
+        try save(reminders.filter { $0.id != id })
+        rescheduleAll()
+    }
+
+    /// Explicit correction from task management; normal resume still only resumes paused tasks.
+    func reopen(_ id: UUID, now: Date = .now) throws {
+        guard var reminder = reminder(id: id) else { throw ReminderSchedule.InvalidRule(message: "任务不存在") }
+        guard reminder.status == .completed || reminder.status == .cancelled else { return }
+        reminder.status = .active
+        reminder.revision += 1
+        let expiredAutomatic = reminder.autoCompleteAt.map { $0 <= now } ?? false
+        if expiredAutomatic { reminder.autoCompleteAt = nil }
+        reminder.activity.append(ReminderActivity(date: now, kind: "reopened",
+            detail: "重新标记为未完成" + (expiredAutomatic ? "；清除已过期的自动完成时间" : "")))
+        try save(reminders.map { $0.id == id ? reminder : $0 })
+        rescheduleAll()
+    }
+
     private func transition(_ id: UUID, to status: TimedReminder.Status, kind: String, detail: String) throws {
         guard var reminder = reminder(id: id) else { throw ReminderSchedule.InvalidRule(message: "任务不存在") }
         guard reminder.status != status else { return }

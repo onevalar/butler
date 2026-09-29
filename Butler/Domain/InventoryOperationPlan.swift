@@ -43,6 +43,7 @@ enum InventoryFieldKey: String, Codable, Hashable, Sendable {
     case storageLocation
     case state
     case templateDefaults
+    case itemProfile
 }
 
 enum LotDateKind: String, Codable, Sendable {
@@ -78,6 +79,13 @@ struct AddLotOperation: Codable, Sendable {
     let estimatedExpiryDate: Date?
     let plannedUseByDate: Date?
     let storageLocation: String?
+    let evidence: [ProposedFieldEvidence]
+}
+
+struct SetItemProfileOperation: Codable, Sendable {
+    let lotID: UUID
+    let profile: ItemProfile
+    let expectedRevision: Int
     let evidence: [ProposedFieldEvidence]
 }
 
@@ -151,6 +159,7 @@ enum InventoryOperation: Codable, Sendable {
     case adjustQuantity(AdjustQuantityOperation)
     case setLotDate(SetLotDateOperation)
     case moveLot(MoveLotOperation)
+    case setItemProfile(SetItemProfileOperation)
     case closeLot(CloseLotOperation)
     case undoLot(UndoLotOperation)
     case createTemplate(CreateTemplateOperation)
@@ -167,6 +176,7 @@ enum InventoryOperation: Codable, Sendable {
         case adjustQuantity
         case setLotDate
         case moveLot
+        case setItemProfile
         case closeLot
         case undoLot
         case createTemplate
@@ -184,6 +194,8 @@ enum InventoryOperation: Codable, Sendable {
             self = .adjustQuantity(try container.decode(AdjustQuantityOperation.self, forKey: .payload))
         case .setLotDate:
             self = .setLotDate(try container.decode(SetLotDateOperation.self, forKey: .payload))
+        case .setItemProfile:
+            self = .setItemProfile(try container.decode(SetItemProfileOperation.self, forKey: .payload))
         case .moveLot:
             self = .moveLot(try container.decode(MoveLotOperation.self, forKey: .payload))
         case .closeLot:
@@ -211,6 +223,9 @@ enum InventoryOperation: Codable, Sendable {
             try container.encode(payload, forKey: .payload)
         case .setLotDate(let payload):
             try container.encode(OperationType.setLotDate, forKey: .type)
+            try container.encode(payload, forKey: .payload)
+        case .setItemProfile(let payload):
+            try container.encode(OperationType.setItemProfile, forKey: .type)
             try container.encode(payload, forKey: .payload)
         case .moveLot(let payload):
             try container.encode(OperationType.moveLot, forKey: .type)

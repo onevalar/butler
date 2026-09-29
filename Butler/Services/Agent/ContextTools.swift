@@ -1,7 +1,7 @@
 import Foundation
 
-enum TaskAction: String, Codable { case complete, pause, resume, cancel
-    var title: String { switch self { case .complete: "完成"; case .pause: "暂停"; case .resume: "恢复"; case .cancel: "取消" } }
+enum TaskAction: String, Codable { case complete, pause, resume, cancel, reopen, delete
+    var title: String { switch self { case .complete: "完成"; case .pause: "暂停"; case .resume: "恢复"; case .cancel: "取消"; case .reopen: "重新标记为未完成"; case .delete: "删除" } }
 }
 
 extension ButlerTools {
@@ -28,9 +28,9 @@ extension ButlerTools {
                 "end_time": optionalString, "auto_complete_at": optionalString,
                 "phases": ["type": "array", "minItems": 1, "maxItems": 12, "items": phase]
             ]),
-            tool("propose_task_action", "提出完成/暂停/恢复/取消整个任务，确认后生效；取消后保留历史。先get_tasks取得id和revision。", [
+            tool("propose_task_action", "提出完成/暂停/恢复/取消/删除整个任务；reopen将已完成或取消的任务重新标记为未完成。cancel保留历史，delete永久删除任务及操作记录并停止提醒，保留对话。仅在用户明确要求删除时使用delete，确认后才生效。先get_tasks取得id和revision。", [
                 "id": string, "expected_revision": ["type": "integer"],
-                "action": ["type": "string", "enum": ["complete", "pause", "resume", "cancel"]]
+                "action": ["type": "string", "enum": ["complete", "pause", "resume", "cancel", "reopen", "delete"]]
             ])
         ]
         return tools.map { String(decoding: try! JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys]), as: UTF8.self) }.joined(separator: ",")
@@ -44,8 +44,13 @@ extension ButlerTools {
     }
 
     func validateTaskAction(_ action: TaskAction, reminder: TimedReminder) throws {
+        if action == .delete { return }
+        if action == .reopen {
+            guard reminder.status == .completed || reminder.status == .cancelled else { throw ToolError("任务尚未结束，不需要重新开启") }
+            return
+        }
         guard reminder.status == .active || reminder.status == .paused else {
-            throw ToolError("任务已经完成或取消，不能再修改状态；需要再次提醒请新建任务")
+            throw ToolError("任务已经完成或取消，如需纠正请使用reopen，再修改提醒计划")
         }
         if action == .pause, reminder.status != .active { throw ToolError("任务已经暂停，无需重复暂停") }
         if action == .resume, reminder.status != .paused { throw ToolError("任务正在进行中，无需恢复") }
@@ -131,7 +136,8 @@ extension ButlerTools {
             guard let id = UUID(uuidString: input.id), let value = reminders.reminder(id: id) else { throw ToolError("找不到任务") }
             try requireTaskRevision(id, input.expected_revision)
             try validateTaskAction(input.action, reminder: value)
-            add(.taskAction(id, input.action, expectedRevision: input.expected_revision), title: "\(input.action.title)任务：\(value.text)", detail: nil)
+            add(.taskAction(id, input.action, expectedRevision: input.expected_revision), title: "\(input.action.title)任务：\(value.text)",
+                detail: input.action == .delete ? "永久删除任务及操作记录，停止后续提醒；对话记录保留。此操作不能撤销。" : nil)
         default: return nil
         }
         return try encode(["status": "waiting_for_user_confirmation", "saved": false, "pending_changes": pending.count] as [String: Any])

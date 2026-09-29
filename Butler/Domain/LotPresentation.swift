@@ -1,7 +1,7 @@
 import Foundation
 
 /// How soon a lot needs attention. Drives seal color and ordering everywhere.
-enum UrgencyTier: Int, Comparable, Sendable {
+enum UrgencyTier: Int, Comparable, Sendable, Codable {
     case overdue, today, soon, week, calm, undated
 
     static func < (lhs: UrgencyTier, rhs: UrgencyTier) -> Bool { lhs.rawValue < rhs.rawValue }
@@ -19,12 +19,12 @@ enum UrgencyTier: Int, Comparable, Sendable {
 }
 
 /// Everything the UI needs to draw one lot, derived without touching persistence.
-struct LotFacts: Identifiable, Sendable {
+struct LotFacts: Identifiable, Sendable, Codable {
     let id: UUID
     let productID: UUID
     let name: String
     let brand: String?
-    let glyph: Character
+    var glyph: Character { LotGlyph.glyph(for: name, isMedicine: isMedicine) }
     let isMedicine: Bool
     let quantity: Int
     let unit: String
@@ -40,12 +40,15 @@ struct LotFacts: Identifiable, Sendable {
 
     /// Things like drinking water or tissues: only how many are left matters, dates are ignored.
     let quantityOnly: Bool
+    let profile: ItemProfile?
+    var category: ItemCategory { profile?.category ?? ItemProfile.inferred(name: name, legacyCategory: isMedicine ? "medicine" : quantityOnly ? "household" : nil).category }
+    var isDurable: Bool { profile?.category.durable ?? [.clothing, .electronics, .tools].contains(category) }
     static let quantityOnlyCategory = "household"
 
     /// No date of any kind: Butler must ask instead of guessing.
     var needsDate: Bool { governingDate == nil && !quantityOnly }
     /// A quantity-only item that is about to run out.
-    var isRunningLow: Bool { quantityOnly && quantity <= 1 }
+    var isRunningLow: Bool { quantityOnly && !isDurable && quantity <= 1 }
     /// The user said "冰箱" without saying which compartment.
     var needsCompartment: Bool { storageLocation == StorageLocation.ambiguousFridge }
 
@@ -56,8 +59,9 @@ struct LotFacts: Identifiable, Sendable {
         self.name = name
         brand = product?.brand
         isMedicine = LotGlyph.isMedicine(name: name, category: product?.categoryRawValue)
-        quantityOnly = product?.categoryRawValue == LotFacts.quantityOnlyCategory
-        glyph = LotGlyph.glyph(for: name, isMedicine: isMedicine)
+        profile = lot.itemProfile
+        let category = profile?.category ?? ItemProfile.inferred(name: name, legacyCategory: product?.categoryRawValue).category
+        quantityOnly = (profile?.category.durable ?? [.clothing, .electronics, .tools].contains(category)) || product?.categoryRawValue == LotFacts.quantityOnlyCategory
         quantity = lot.quantity
         unit = lot.unit
         storageLocation = lot.storageLocation
@@ -107,7 +111,8 @@ struct LotFacts: Identifiable, Sendable {
         }
         if text == "药" || text == "药品" { return isMedicine }
         guard !text.isEmpty else { return true }
-        return name.localizedCaseInsensitiveContains(text)
+        return (profile?.searchText.localizedStandardContains(text) ?? false) || category.title.localizedStandardContains(text)
+            || name.localizedCaseInsensitiveContains(text)
             || (brand?.localizedCaseInsensitiveContains(text) ?? false)
             || (storageLocation?.localizedCaseInsensitiveContains(text) ?? false)
     }
@@ -123,6 +128,7 @@ struct LotFacts: Identifiable, Sendable {
     }
 
     var dateStatusLabel: String {
+        if isDurable { return profile?.availabilityLabel ?? "可使用" }
         if quantityOnly { return isRunningLow ? "只剩 \(quantity) \(unit)" : "剩 \(quantity) \(unit)" }
         guard let daysLeft else { return "待补日期" }
         if daysLeft < 0 {

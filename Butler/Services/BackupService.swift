@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 /// Includes scoped conversations, drafts and their photo attachments.
 struct ButlerBackup: Codable {
     static let format = "butler-backup"
-    static let currentVersion = 2
+    static let currentVersion = 3
 
     var format = ButlerBackup.format
     var version = ButlerBackup.currentVersion
@@ -23,6 +23,7 @@ struct ButlerBackup: Codable {
     /// The phone-side files, stored verbatim so their own formats round-trip exactly.
     var files: [String: Data] = [:]
     var settings: [String: String] = [:]
+    var weatherLocation: WeatherLocation?
 
     var activeLotCount: Int { lots.filter { $0.stateRawValue == InventoryLotState.active.rawValue }.count }
 
@@ -36,6 +37,7 @@ struct ButlerBackup: Codable {
         var id: UUID, productID: UUID, quantity: Int, unit: String
         var purchasedAt: Date?, packageExpiryDate: Date?, estimatedExpiryDate: Date?, plannedUseByDate: Date?
         var storageLocation: String?, stateRawValue: String, createdAt: Date, updatedAt: Date, revision: Int
+        var profileData: Data?
     }
 
     struct Evidence: Codable {
@@ -73,7 +75,7 @@ enum BackupService {
     /// Phone-side files that make up the owner's data, by backup key.
     static let fileNames = ["notes": "agent-test-memory.json", "reminders": "reminders.json",
                             "chat": "butler-chat.json", "chatSummary": "butler-chat-summary.json",
-                            "chatDraft": "butler-chat-draft.json"]
+                            "chatDraft": "butler-chat-draft.json", "pending": "pending-changes.json"]
     static let settingKeys = ButlerSettingsService.definitions.map(\.key)
     private static let chatFilePrefix = "chat-file/"
     private static let chatDirectories = ["chat-sessions", "chat-photos"]
@@ -88,6 +90,7 @@ enum BackupService {
                            defaults: UserDefaults = .standard) throws -> ButlerBackup {
         let context = ModelContext(container)
         var backup = ButlerBackup()
+        backup.weatherLocation = defaults.data(forKey: "weatherLocation").flatMap { try? JSONDecoder().decode(WeatherLocation.self, from: $0) }
         backup.products = try context.fetch(FetchDescriptor<CatalogProduct>()).map {
             .init(id: $0.id, canonicalName: $0.canonicalName, brand: $0.brand, categoryRawValue: $0.categoryRawValue,
                   barcode: $0.barcode, defaultUnit: $0.defaultUnit, typicalShelfLifeDays: $0.typicalShelfLifeDays,
@@ -98,7 +101,7 @@ enum BackupService {
             .init(id: $0.id, productID: $0.productID, quantity: $0.quantity, unit: $0.unit, purchasedAt: $0.purchasedAt,
                   packageExpiryDate: $0.packageExpiryDate, estimatedExpiryDate: $0.estimatedExpiryDate,
                   plannedUseByDate: $0.plannedUseByDate, storageLocation: $0.storageLocation,
-                  stateRawValue: $0.stateRawValue, createdAt: $0.createdAt, updatedAt: $0.updatedAt, revision: $0.revision)
+                  stateRawValue: $0.stateRawValue, createdAt: $0.createdAt, updatedAt: $0.updatedAt, revision: $0.revision, profileData: $0.profileData)
         }
         backup.evidence = try context.fetch(FetchDescriptor<FieldEvidence>()).map {
             .init(id: $0.id, subjectKindRawValue: $0.subjectKindRawValue, subjectID: $0.subjectID, fieldKey: $0.fieldKey,
@@ -192,6 +195,7 @@ enum BackupService {
                                    plannedUseByDate: l.plannedUseByDate, storageLocation: l.storageLocation,
                                    createdAt: l.createdAt, updatedAt: l.updatedAt, revision: l.revision)
             lot.stateRawValue = l.stateRawValue
+            lot.profileData = l.profileData
             context.insert(lot)
         }
         for e in backup.evidence {
@@ -245,6 +249,9 @@ enum BackupService {
             }
         }
         defaults.removeObject(forKey: "butlerChatDraft")
+        if let weather = backup.weatherLocation { defaults.set(try JSONEncoder().encode(weather), forKey: "weatherLocation") }
+        else { defaults.removeObject(forKey: "weatherLocation") }
+        defaults.removeObject(forKey: "weatherSnapshot")
         for key in settingKeys {
             guard let value = backup.settings[key] else { continue }
             switch key {

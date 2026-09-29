@@ -18,6 +18,8 @@ final class CalendarFeed {
     private var observer: NSObjectProtocol?
     /// How far ahead to read; the overview asks for a year.
     var horizonDays = 8
+    /// A separately queried month keeps arbitrary history browsing bounded.
+    var focusedDate = Date.now
 
     init() {
         observer = NotificationCenter.default.addObserver(forName: .EKEventStoreChanged, object: store, queue: .main) { [weak self] _ in
@@ -49,8 +51,16 @@ final class CalendarFeed {
             events = []
             return
         }
-        let predicate = store.predicateForEvents(withStart: start, end: end, calendars: nil)
-        events = store.events(matching: predicate).map { event in
+        var intervals = [DateInterval(start: start, end: end)]
+        if let month = Calendar.current.dateInterval(of: .month, for: focusedDate), month.start < start || month.end > end {
+            intervals.append(month)
+        }
+        var seen = Set<String>()
+        events = intervals.flatMap { interval in
+            store.events(matching: store.predicateForEvents(withStart: interval.start, end: interval.end, calendars: nil))
+        }.filter { event in
+            seen.insert("\(event.eventIdentifier ?? event.calendarItemIdentifier)|\(event.startDate.timeIntervalSince1970)").inserted
+        }.map { event in
             CalendarEventInfo(id: event.eventIdentifier ?? UUID().uuidString, title: event.title ?? "日程",
                               location: event.location, calendarName: event.calendar?.title ?? "日历",
                               start: event.startDate, end: event.endDate, isAllDay: event.isAllDay)

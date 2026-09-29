@@ -247,6 +247,17 @@ enum InventoryPolicy {
                 expectedRevision: operation.expectedRevision
             ))
 
+        case .setItemProfile(let operation):
+            evidence = operation.evidence
+            do { try operation.profile.validate() }
+            catch { violations.append(.init(operationID: plannedOperation.operationID, message: error.localizedDescription)) }
+            requireEvidence(.itemProfile, in: evidence, operationID: plannedOperation.operationID, violations: &violations)
+            validateRevision(operation.expectedRevision, operationID: plannedOperation.operationID, violations: &violations)
+            let identity = (try? InventoryOperationCoding.makeJSONEncoder().encode(operation.profile).base64EncodedString()) ?? "invalid"
+            requirements.append(.init(planID: planID, operationID: plannedOperation.operationID, entityID: operation.lotID,
+                fieldKey: .itemProfile, reason: .existingStateMutationRequiresConfirmation,
+                proposedValueIdentity: identity, expectedRevision: operation.expectedRevision))
+
         case .moveLot(let operation):
             evidence = operation.evidence
             if operation.storageLocation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

@@ -85,8 +85,14 @@ struct InventoryActions {
                                expectedRevision: lot.revision, evidence: evidence)))
     }
 
+    func setProfile(_ profile: ItemProfile, for lot: LotFacts) throws {
+        try profile.validate()
+        try run(.setItemProfile(.init(lotID: lot.id, profile: profile, expectedRevision: lot.revision,
+            evidence: [.init(fieldKey: .itemProfile, source: .userEdited, confidence: 1, rawText: profile.searchText)])))
+    }
+
     /// One new purchase, as the assistant understood it. Dates are only what the user said.
-    struct NewItem: Equatable, Sendable {
+    struct NewItem: Equatable, Sendable, Codable {
         var name: String
         var quantity: Int
         var unit: String
@@ -97,6 +103,7 @@ struct InventoryActions {
         var existingProductID: UUID?
         /// Only count how many are left; no expiry questions or reminders.
         var quantityOnly = false
+        var profile: ItemProfile?
     }
 
     /// Adds several purchases in one transaction (all or nothing).
@@ -107,7 +114,7 @@ struct InventoryActions {
         var operations: [PlannedInventoryOperation] = []
         for item in items {
             let kind = ProductLexicon.lookup(item.name)?.kind ?? .unknown
-            let quantityOnly = item.quantityOnly || kind == .household
+            let quantityOnly = item.quantityOnly || kind == .household || item.profile?.category.durable == true
             let category = quantityOnly ? LotFacts.quantityOnlyCategory : kind.categoryRawValue
             let productID = item.existingProductID ?? UUID()
             if item.existingProductID == nil {
@@ -145,6 +152,12 @@ struct InventoryActions {
                 lotID: lotID, productID: productID, quantity: item.quantity, unit: item.unit,
                 purchasedAt: nil, packageExpiryDate: item.packageExpiry, estimatedExpiryDate: nil,
                 plannedUseByDate: planned, storageLocation: item.storage, evidence: evidence))))
+            if let profile = item.profile {
+                try profile.validate()
+                operations.append(.init(operationID: UUID(), operation: .setItemProfile(.init(lotID: lotID,
+                    profile: profile, expectedRevision: 0, evidence: [.init(fieldKey: .itemProfile, source: .userStated,
+                    confidence: 1, rawText: sourceText)]))))
+            }
         }
         try run(operations)
         return createdLotIDs

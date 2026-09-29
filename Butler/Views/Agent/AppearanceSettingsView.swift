@@ -71,7 +71,6 @@ struct AppearanceSettingsView: View {
             .glassRows()
         }
         .glassList()
-        .orbScrollTracking()
         .navigationTitle("外观")
         .navigationBarTitleDisplayMode(.inline)
     }

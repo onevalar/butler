@@ -6,7 +6,7 @@ import Foundation
 // situation. What a button can do is a closed set (`BriefEffect`) that the app validates and carries out
 // only when the owner taps; the model never changes anything itself.
 
-/// What the sentence is about.
+/// The primary object acted on by the card's quick-action buttons, not its entire subject.
 enum BriefTarget: Hashable, Codable {
     case lot(UUID)
     case task(UUID)
@@ -92,7 +92,7 @@ struct ButlerBrief: Equatable, Codable {
     var text: String
     var basis: String
     var target: BriefTarget?
-    /// The buttons for this situation. The view adds a last button, "其他…", that opens a conversation about this one thing.
+    /// Quick actions for target; the separate conversation entry discusses the whole card.
     var actions: [BriefAction]
     var source: Source
 }
@@ -178,9 +178,8 @@ enum BriefLocal {
         let hour = calendar.component(.hour, from: now)
         let greeting = DailyBrief.greeting(hour: hour)
         guard let top = candidates.first else {
-            let evening = hour >= 18 || hour < 5
             let text = lotCount == 0 ? "家里还没记东西。买了什么跟我说一句，我来记着到期。"
-                : evening ? "今天的事都办完了，家里的东西也都还新鲜。" : "今天没有要操心的事，家里的东西都还新鲜。"
+                : "暂时没有新的提醒，其他安排和记录都在下面。"
             return ButlerBrief(greeting: greeting, text: text, basis: basis, target: nil, actions: [], source: .local)
         }
         var text: String
@@ -296,6 +295,8 @@ enum BriefModelReply {
         - snooze_task，value=分钟：过一会儿再提醒（只用于任务，5 到 240）
         - open_detail：打开详情看看
 
+        weather 若存在，只是值得留意的新鲜天气线索，不是必须说出的提醒。先判断它是否会影响当前事情或用户接下来的活动：有明确关系时，最多把一句具体关心自然融进 text，与其他正文同等呈现；没有关系就完全不提。不要为了凑内容每天提醒穿衣、带伞，不把温差本身当成必须加衣的理由，也不把原始 hint 生硬拼在正文前后。没有 weather 时不编造天气。不要转述温度数值、风速、降雨概率等原始气象数据；这些在天气面板查看。不能凭天气创造库存、任务或自动修改规则。
+
         按钮要贴合这件事，不要每次都给同一组：过期很久的食物，重点是处理掉；快到期但还能吃的，重点是今晚或明天吃掉，可以给“再放放”一两天；药品要谨慎，不要替用户决定扔；任务到点了，重点是做完或稍后再提醒；快用完的东西，给“知道了”，不必催促。不要给“其他”按钮，App 会自己加。
 
         只输出一个 JSON，不要任何别的文字：
@@ -310,12 +311,17 @@ enum BriefModelReply {
         return formatter.string(from: date)
     }
 
-    static func request(candidates: [BriefCandidate], greeting: String, now: Date, calendar: Calendar = .current) -> String {
-        let payload: [String: Any] = [
+    static func request(candidates: [BriefCandidate], greeting: String, now: Date, calendar: Calendar = .current, weather: WeatherSnapshot? = nil) -> String {
+        var payload: [String: Any] = [
             "now": stamp(now),
             "greeting": greeting,
             "items": candidates.map(\.dictionary),
         ]
+        if let weather, let hint = weather.hint(at: now) {
+            payload["weather"] = ["place": weather.place.name, "condition": weather.conditionLabel,
+                                  "temperature_c": weather.temperature, "feels_like_c": weather.feelsLike,
+                                  "read_at": weather.fetchedAt.ISO8601Format(), "hint": hint]
+        }
         let data = (try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])) ?? Data()
         return String(decoding: data, as: UTF8.self)
     }

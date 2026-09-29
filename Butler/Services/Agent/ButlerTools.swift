@@ -3,23 +3,26 @@ import Observation
 import SwiftData
 
 /// A change the assistant proposed. Nothing is written until the owner taps confirm.
-struct PendingChange: Identifiable {
-    enum Kind {
+struct PendingChange: Identifiable, Codable {
+    enum Kind: Codable {
         case add(InventoryActions.NewItem)
         case setQuantity(LotFacts, Int)
         case close(LotFacts, InventoryLotState)
         case setDate(LotFacts, LotDateKind, Date?)
         case move(LotFacts, String)
         case tracking(LotFacts, quantityOnly: Bool)
+        case itemProfile(LotFacts, ItemProfile)
+        case undoInventory(LotFacts, UUID)
         case note(LocalMemory)
         case reminder(TimedReminder)
         case cancelReminder(TimedReminder)
         case taskPlan(TimedReminder, expectedRevision: Int?)
         case taskAction(UUID, TaskAction, expectedRevision: Int)
         case settings([ButlerSettingChange])
+        case weatherLocation(WeatherLocation, before: WeatherLocation)
     }
 
-    let id = UUID()
+    var id = UUID()
     let kind: Kind
     /// One line the owner reads on the card, e.g. "新增 牛奶 ×2 瓶".
     let title: String
@@ -28,7 +31,7 @@ struct PendingChange: Identifiable {
     var check: JevCheck? = nil
 }
 
-enum JevCheck: Equatable {
+enum JevCheck: Equatable, Codable {
     case passed
     /// Jev disagreed, the model kept its proposal; the owner decides on the card.
     case concern(String)
@@ -41,10 +44,15 @@ final class ButlerTools {
     let notes: LocalMemoryStore
     let reminders: ReminderStore
     let jev: any ConditionJudge
-    private(set) var pending: [PendingChange] = []
+    private(set) var pending: [PendingChange] = [] { didSet { pendingDidChange?(pending) } }
+    var pendingDidChange: (([PendingChange]) -> Void)?
+    func restorePending(_ values: [PendingChange]) { pending = values }
     /// The saved conversation, provided by the chat that owns these tools.
     var conversation: (() -> ConversationArchive)?
     var currentContext: (() -> String)?
+    var weather: WeatherStore = .shared
+    var inputPhotos: [Data] = []
+    var displayedCollection: ItemCollection?
     var conversationScope: ChatScope = .general
     var relatedScopes: Set<ChatScope> = []
     var settingsDefaults: UserDefaults = .standard
@@ -79,7 +87,7 @@ final class ButlerTools {
         self.previous = previous
         raisedConcerns = []
         relatedScopes = []
-        pending = []
+        displayedCollection = nil
     }
 
     func removePending(_ id: UUID) { pending.removeAll { $0.id == id } }
@@ -87,13 +95,13 @@ final class ButlerTools {
     // MARK: - Tool definitions
 
     var toolJSON: String {
-        var tools = Self.inventoryTools + "," + Self.contextTools
+        var tools = Self.inventoryTools + "," + Self.contextTools + "," + Self.pendingTools + "," + Self.itemTools + "," + Self.weatherTools
         if conversation != nil { tools += "," + Self.conversationTools }
         if jev.isAvailable { tools += "," + Self.jevTool }
         return "[" + tools + "]"
     }
 
-    static let inventoryTools = #"""
+    static let legacyInventoryTools = #"""
     {"type":"function","name":"search_inventory","description":"查询家里现有物品（真实库存）。query为空字符串时查询全部在库批次，但最多返回80条；按名称、品牌或存放位置的关键词匹配。include_finished=true 时额外查询最近30天已处理记录，最多返回30条。count是匹配的在库批次数，returned_count是实际返回数；complete/truncated说明查询范围内是否返回完整，有截断时应缩小关键词补查。返回每件的 lot_id、剩余数量、单位、位置、日期和剩余天数；不同单位的数量不可直接相加。","strict":true,"parameters":{"type":"object","properties":{"query":{"type":"string"},"include_finished":{"type":"boolean"}},"required":["query","include_finished"],"additionalProperties":false}},
     {"type":"function","name":"propose_add_items","description":"提出新增购买的物品，等用户确认后才入库。每件一条。package_expiry 只能填用户明确说出或包装上的日期(YYYY-MM-DD)，否则 null；planned_use_by 是用户想在哪天前吃完/用完的计划，没说就 null。storage 是用户说的存放位置（冷藏/冷冻/常温/卫生间/储物柜等），没说就 null。track：quantity 表示只记数量、不管过期（饮用水、纸巾、洗护清洁用品等用户不在乎过期的东西），expiry 表示要跟踪到期（食物、药等）。","strict":true,"parameters":{"type":"object","properties":{"items":{"type":"array","minItems":1,"maxItems":20,"items":{"type":"object","properties":{"name":{"type":"string"},"quantity":{"type":"integer","minimum":1,"maximum":999},"unit":{"type":"string"},"storage":{"type":["string","null"]},"package_expiry":{"type":["string","null"]},"planned_use_by":{"type":["string","null"]},"track":{"type":"string","enum":["expiry","quantity"]}},"required":["name","quantity","unit","storage","package_expiry","planned_use_by","track"],"additionalProperties":false}}},"required":["items"],"additionalProperties":false}},
     {"type":"function","name":"propose_set_quantity","description":"把某件物品的剩余数量设置为指定值（不是扣减）。设为0等于用完。lot_id 必须来自本轮程序预取的真实库存或 search_inventory。","strict":true,"parameters":{"type":"object","properties":{"lot_id":{"type":"string"},"quantity":{"type":"integer","minimum":0,"maximum":999}},"required":["lot_id","quantity"],"additionalProperties":false}},
@@ -159,6 +167,9 @@ final class ButlerTools {
         defer { insistedConcern = nil }
         do {
             let data = Data(call.arguments.utf8)
+            if let output = try await executeWeatherTool(call.name, data: data) { return output }
+            if let output = try executeItemTool(call.name, data: data) { return output }
+            if let output = try executePendingTool(call.name, data: data) { return output }
             if let output = try executeContextTool(call.name, data: data) { return output }
             switch call.name {
             case "search_inventory":
@@ -170,6 +181,7 @@ final class ButlerTools {
                     var name: String; var quantity: Int; var unit: String
                     var storage: String?; var package_expiry: String?; var planned_use_by: String?
                     var track: String?
+                    var profile: ItemProfileInput?
                 }
                 struct Args: Decodable { var items: [Item] }
                 let args = try JSONDecoder().decode(Args.self, from: data)
@@ -177,7 +189,8 @@ final class ButlerTools {
                     var new = try newItem(name: item.name, quantity: item.quantity, unit: item.unit, storage: item.storage,
                                           packageExpiry: try Self.date(item.package_expiry),
                                           plannedUseBy: try Self.date(item.planned_use_by))
-                    new.quantityOnly = item.track == "quantity"
+                    new.profile = try item.profile?.profile(photos: inputPhotos)
+                    new.quantityOnly = item.track == "quantity" || new.profile?.category.durable == true
                     if new.quantityOnly { new.packageExpiry = nil; new.plannedUseBy = nil }
                     return new
                 }
@@ -344,10 +357,19 @@ final class ButlerTools {
     }
 
     /// Applies every pending change in order. Returns one line per change for the chat and the model.
-    func confirmAll() -> [String] {
+    func confirmAll(ids: Set<UUID>? = nil) -> [String] {
+        let selected = pending.filter { ids == nil || ids!.contains($0.id) }
+        let selectedIDs = Set(selected.map(\.id))
+        // Validate all previews before this batch changes revisions itself.
+        var stale: Set<UUID> = []
+        for change in selected {
+            if let preview = change.inventoryPreview {
+                if (try? activeLot(preview.id.uuidString).revision) != preview.revision { stale.insert(change.id) }
+            }
+        }
         let actions = InventoryActions(modelContainer: container)
         var results: [String] = []
-        let adds = pending.compactMap { change -> (PendingChange, InventoryActions.NewItem)? in
+        let adds = selected.compactMap { change -> (PendingChange, InventoryActions.NewItem)? in
             if case .add(let item) = change.kind { return (change, item) }
             return nil
         }
@@ -360,15 +382,23 @@ final class ButlerTools {
                 results += adds.map { "✗ \($0.0.title)：\(error.localizedDescription)" }
             }
         }
-        for change in pending {
+        for change in selected {
             do {
+                guard !stale.contains(change.id) else { throw ToolError("物品已改变，请重新查询并确认") }
                 switch change.kind {
                 case .add: continue
                 case .setQuantity(let lot, let quantity): try actions.adjustQuantity(try fresh(lot), to: quantity)
                 case .close(let lot, let state): try actions.close(try fresh(lot), as: state)
                 case .setDate(let lot, let kind, let date): try actions.setDate(date, kind: kind, for: try fresh(lot))
                 case .move(let lot, let location): try actions.move(try fresh(lot), to: location)
-                case .tracking(let lot, let quantityOnly): try actions.setQuantityOnly(quantityOnly, productID: lot.productID)
+                case .tracking(let lot, let quantityOnly):
+                    if lot.isDurable { throw ToolError("耐用品通过物品资料管理，不使用食品跟踪方式") }
+                    try actions.setQuantityOnly(quantityOnly, productID: lot.productID)
+                case .itemProfile(let lot, let profile): try actions.setProfile(profile, for: try fresh(lot))
+                case .undoInventory(let lot, let eventID):
+                    let current = try lotFacts(lot.id)
+                    guard current.revision == lot.revision else { throw ToolError("物品已改变，请重新查询") }
+                    try actions.undo(try inventoryEvent(eventID), for: current)
                 case .note(let memory): try notes.upsert(memory)
                 case .reminder(let reminder): try reminders.add(reminder)
                 case .cancelReminder(let reminder):
@@ -386,8 +416,13 @@ final class ButlerTools {
                     case .complete: try reminders.complete(id)
                     case .pause: try reminders.pause(id)
                     case .resume: try reminders.resume(id)
+                    case .reopen: try reminders.reopen(id)
                     case .cancel: try reminders.remove(id)
+                    case .delete: try reminders.delete(id, expectedRevision: revision)
                     }
+                case .weatherLocation(let selection, let before):
+                    try weather.setLocation(selection, expected: before)
+                    Task { await weather.refresh(force: true) }
                 case .settings(let changes):
                     try ButlerSettingsService.apply(changes, defaults: settingsDefaults, jev: jev as? JevClient)
                 }
@@ -396,7 +431,7 @@ final class ButlerTools {
                 results.append("✗ \(change.title)：\(error.localizedDescription)")
             }
         }
-        pending = []
+        pending.removeAll { selectedIDs.contains($0.id) }
         return results
     }
 
@@ -415,9 +450,10 @@ final class ButlerTools {
         switch kind {
         case .setQuantity(let lot, _), .close(let lot, _), .setDate(let lot, _, _), .move(let lot, _), .tracking(let lot, _):
             relatedScopes.insert(.lot(lot.id))
+        case .itemProfile(let lot, _), .undoInventory(let lot, _): relatedScopes.insert(.lot(lot.id))
         case .reminder(let value), .cancelReminder(let value), .taskPlan(let value, _): relatedScopes.insert(.task(value.id))
         case .taskAction(let id, _, _): relatedScopes.insert(.task(id))
-        case .settings: relatedScopes.insert(.settings)
+        case .settings, .weatherLocation: relatedScopes.insert(.settings)
         default: break
         }
         pending.append(PendingChange(kind: kind, title: title, detail: detail,
@@ -440,7 +476,8 @@ final class ButlerTools {
     private func proposeAdd(_ item: InventoryActions.NewItem, check: JevCheck?) {
         var parts: [String] = []
         if let storage = item.storage { parts.append(storage) }
-        if item.quantityOnly { parts.append("只记数量") }
+        if let profile = item.profile { parts.append(profile.searchText); if profile.photo != nil { parts.append("含照片") } }
+        else if item.quantityOnly { parts.append("只记数量") }
         if let date = item.packageExpiry { parts.append("包装有效期 \(date.monthDay)") }
         if let date = item.plannedUseBy { parts.append("\(date.monthDay)前吃完") }
         if item.existingProductID != nil { parts.append("家里已有同款") }
@@ -548,7 +585,7 @@ final class ButlerTools {
                             as [String: Any])) ?? #"{"status":"needs_review","saved":false}"#
     }
 
-    private func allLots() throws -> [(InventoryLot, CatalogProduct?)] {
+    func allLots() throws -> [(InventoryLot, CatalogProduct?)] {
         let context = ModelContext(container)
         let products = Dictionary(try context.fetch(FetchDescriptor<CatalogProduct>()).map { ($0.id, $0) },
                                   uniquingKeysWith: { first, _ in first })
@@ -567,6 +604,7 @@ final class ButlerTools {
     static func jevText(_ lot: LotFacts) -> String {
         var parts = [lot.name + (lot.brand.map { "（\($0)）" } ?? ""), "\(lot.quantity) \(lot.unit)"]
         if let storage = lot.storageLocation { parts.append("放在\(storage)") }
+        if let profile = lot.profile { parts.append(profile.searchText) }
         parts.append("\(lot.startedAt.monthDay)买的")
         if let date = lot.governingDate {
             parts.append((lot.governingDateKind == .plannedUseBy ? "计划 " : "有效期 ") + date.monthDay)
@@ -574,7 +612,7 @@ final class ButlerTools {
         return parts.joined(separator: "，")
     }
 
-    private func activeLot(_ raw: String) throws -> LotFacts {
+    func activeLot(_ raw: String) throws -> LotFacts {
         guard let id = UUID(uuidString: raw),
               let (lot, product) = try allLots().first(where: { $0.0.id == id }) else {
             throw ToolError("找不到这件物品，请先用 search_inventory 查到它的 lot_id")
@@ -597,7 +635,7 @@ final class ButlerTools {
         let words = query.split(whereSeparator: { " ,，、;；".contains($0) }).map(String.init)
         func matches(_ lot: InventoryLot, _ product: CatalogProduct?) -> Bool {
             guard !words.isEmpty else { return true }
-            let haystack = [product?.canonicalName, product?.brand, lot.storageLocation].compactMap { $0 }.joined(separator: " ")
+            let haystack = [product?.canonicalName, product?.brand, lot.storageLocation, lot.itemProfile?.searchText, ItemProfile.inferred(name: product?.canonicalName ?? "", legacyCategory: product?.categoryRawValue).category.title].compactMap { $0 }.joined(separator: " ")
             return words.contains { word in
                 haystack.localizedStandardContains(word)
                     || (product?.canonicalName).map { !$0.isEmpty && word.localizedStandardContains($0) } == true
@@ -745,6 +783,13 @@ final class ButlerTools {
         if let kind = lot.governingDateKind { item["governing_date_kind"] = kind.rawValue }
         if let date = lot.governingDate { item["governing_date"] = date.isoDay }
         if lot.isMedicine { item["is_medicine"] = true }
+        item["revision"] = lot.revision
+        item["category"] = lot.category.rawValue
+        item["category_label"] = lot.category.title
+        if let profile = lot.profile {
+            item["attributes"] = profile.attributes; item["tags"] = profile.tags
+            item["availability"] = profile.availability; item["has_photo"] = profile.photo != nil
+        }
         item["track"] = lot.quantityOnly ? "quantity" : "expiry"
         item["bought"] = lot.startedAt.isoDay
         return item

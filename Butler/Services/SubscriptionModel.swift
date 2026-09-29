@@ -10,13 +10,15 @@ final class SubscriptionModel: LocalAgentModel {
     private let beforeRequest: () throws -> Void
     private let diagnostics: (String) -> Void
     private let preserveCredentials: Bool
+    private let onText: (String) -> Void
 
     init(connection: SubscriptionConnection, network: URLSession = .shared,
          instructions: @escaping () -> String = { SubscriptionModel.instructions },
          tools: @escaping () -> String = { SubscriptionModel.toolJSON },
          beforeRequest: @escaping () throws -> Void = {},
          diagnostics: @escaping (String) -> Void = ChatDiagnostics.log,
-         preserveCredentials: Bool = false) {
+         preserveCredentials: Bool = false,
+         onText: @escaping (String) -> Void = { _ in }) {
         self.connection = connection
         self.network = network
         self.instructions = instructions
@@ -24,29 +26,23 @@ final class SubscriptionModel: LocalAgentModel {
         self.beforeRequest = beforeRequest
         self.diagnostics = diagnostics
         self.preserveCredentials = preserveCredentials
+        self.onText = onText
     }
-
-    /// Last time the model answered; after a quiet spell the service is checked quickly before waiting on it.
-    private var lastAnswer: Date?
 
     // No executor-bound cleanup. Avoid the iOS 26.2 isolated-deinit runtime fault
     // when a scoped conversation releases its transport synchronously.
     nonisolated deinit {}
 
     func reply(to messages: [LocalAgentMessage]) async throws -> LocalModelReply {
-        if lastAnswer.map({ Date.now.timeIntervalSince($0) > 120 }) ?? true {
-            try await ensureReachable()
-        }
+        // The real request also checks connectivity; don't put a redundant HEAD on the critical path.
         // A dropped or stalled connection is tried once more: nothing has been done on the phone yet.
         do {
             let reply = try await attempt(messages)
-            lastAnswer = .now
             return reply
         } catch let error as URLError where Self.isTransient(error) {
             diagnostics("model retry after \(ChatDiagnostics.describe(error))")
             try await ensureReachable()
             let reply = try await attempt(messages)
-            lastAnswer = .now
             return reply
         }
     }
@@ -74,7 +70,10 @@ final class SubscriptionModel: LocalAgentModel {
 
     private func attempt(_ messages: [LocalAgentMessage]) async throws -> LocalModelReply {
         try Task.checkCancellation()
+        onText("") // A retry must not append to a previous partial answer.
+        let authorizing = Date.now
         let credentials = try await connection.authorizedCredentials(preserveOnFailure: preserveCredentials)
+        diagnostics("model credentials \(String(format: "%.2f", Date.now.timeIntervalSince(authorizing)))s")
         var request = URLRequest(url: URL(string: "https://chatgpt.com/backend-api/codex/responses")!)
         request.httpMethod = "POST"
         // Longest silence allowed between two pieces of the streamed answer.
@@ -105,6 +104,9 @@ final class SubscriptionModel: LocalAgentModel {
             throw SubscriptionError.rejected(status, Self.serviceMessage(body))
         }
         var stream = SubscriptionStream()
+        var shown = ""
+        var lastShown = Date.distantPast
+        var sawText = false
         var size = 0
         var line = Data()
         for try await byte in bytes {
@@ -114,6 +116,18 @@ final class SubscriptionModel: LocalAgentModel {
             if byte == 10 {
                 guard let text = String(data: line, encoding: .utf8) else { throw SubscriptionError.invalidResponse }
                 try stream.consume(text)
+                if stream.visibleText != shown {
+                    if !sawText {
+                        diagnostics("model first_text \(String(format: "%.2f", Date.now.timeIntervalSince(sent)))s")
+                        sawText = true
+                    }
+                    // Coalesce redraws without delaying the first visible text.
+                    if Date.now.timeIntervalSince(lastShown) >= 0.05 || stream.completed {
+                        shown = stream.visibleText
+                        lastShown = .now
+                        onText(shown)
+                    }
+                }
                 line.removeAll(keepingCapacity: true)
                 if stream.completed { break }
             } else { line.append(byte) }
@@ -122,7 +136,9 @@ final class SubscriptionModel: LocalAgentModel {
             guard let text = String(data: line, encoding: .utf8) else { throw SubscriptionError.invalidResponse }
             try stream.consume(text)
         }
-        return try stream.finish()
+        let reply = try stream.finish()
+        onText(reply.text)
+        return reply
     }
 
     static func serviceMessage(_ body: Data) -> String? {
@@ -203,6 +219,7 @@ struct SubscriptionStream {
     private var dataLines: [String] = []
     private var output: [[String: Any]] = []
     private var deltas = ""
+    var visibleText: String { deltas }
     private(set) var completed = false
 
     mutating func consume(_ rawLine: String) throws {

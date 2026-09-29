@@ -22,6 +22,7 @@ struct ButlerChatView: View {
     var onQuickCapture: (() -> Void)? = nil
     var onGeneralChat: (() -> Void)? = nil
     var onSettingsChat: (() -> Void)? = nil
+    var onOpenLot: ((UUID) -> Void)? = nil
     var hasOtherWork = false
     var diaryTurns: [ChatTurn]? = nil
     let onClose: () -> Void
@@ -50,16 +51,30 @@ struct ButlerChatView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 14) {
+                        if case .brief(let reminder) = chat.scope {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("这次管家提醒 · \(reminder.day)").font(.caption).foregroundStyle(.secondary)
+                                Text(reminder.text).font(.body).textSelection(.enabled)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 8)
+                        }
                         if chat.turns.isEmpty { welcome }
                         ForEach(chat.turns) { turn in turnView(turn) }
                         if chat.working {
+                            if !chat.liveReply.isEmpty {
+                                Text(chat.liveReply)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .textSelection(.enabled)
+                            }
                             // Counts up after a few seconds, so a long wait never looks like nothing is happening.
                             TimelineView(.periodic(from: .now, by: 1)) { context in
                                 let seconds = Int(context.date.timeIntervalSince(chat.workingSince ?? context.date))
                                 HStack(spacing: 8) {
                                     ProgressView()
-                                    Text(seconds < 6 ? "正在想，需要时会查家里的东西…"
-                                         : seconds < 25 ? "还在想… \(seconds) 秒" : "这次有点慢… \(seconds) 秒，可以点停止")
+                                    Text((chat.liveReply.isEmpty ? chat.workingStage : "正在回复…")
+                                         + (seconds < 6 ? "" : " \(seconds) 秒")
+                                         + (seconds < 25 ? "" : "，可以点停止"))
                                         .monospacedDigit()
                                 }
                             }
@@ -74,6 +89,7 @@ struct ButlerChatView: View {
                     .padding(.horizontal, 16).padding(.top, 12)
                 }
                 .scrollDismissesKeyboard(.interactively)
+                .scrollEdgeEffectHidden(for: .bottom)
                 .defaultScrollAnchor(.bottom, for: .initialOffset)
                 .onScrollGeometryChange(for: ChatScrollPolicy.Geometry.self) { geometry in
                     Self.scrollGeometry(geometry)
@@ -105,7 +121,8 @@ struct ButlerChatView: View {
                 }
             }
             .background { ButlerBackground() }
-            .safeAreaBar(edge: .bottom) { composer }
+            // Reserve room for the floating controls without a system bar backdrop or separator.
+            .safeAreaInset(edge: .bottom, spacing: 0) { composer }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     ButlerOrb(size: 30, active: chat.working || dictation.listening)
@@ -282,6 +299,9 @@ struct ButlerChatView: View {
         case .day(let day):
             ("聊聊这一天的安排", "这里关联 \(day) 的日程。可以查看已有任务，或为这一天安排提醒。",
              ["这天有哪些任务？", "这天有什么物品需要处理？", "帮我梳理这一天的安排"])
+        case .brief:
+            ("这些事，我们一起安排", "可以讨论上面整条提醒中的任何一件事，也可以一起调整安排。涉及修改时，会先给你确认。",
+             ["帮我梳理一下这些事的先后顺序", "这些事还有什么处理办法？"])
         }
     }
 
@@ -353,6 +373,9 @@ struct ButlerChatView: View {
                     Spacer(minLength: 40)
                 }
             }
+            if let collection = turn.collection, let onOpenLot {
+                InventoryResultView(collection: collection, onOpen: onOpenLot)
+            }
             if !turn.receipts.isEmpty {
                 VStack(alignment: .leading, spacing: 3) {
                     ForEach(Array(turn.receipts.enumerated()), id: \.offset) { _, line in
@@ -379,7 +402,7 @@ struct ButlerChatView: View {
             ForEach(Array(pending.enumerated()), id: \.element.id) { index, change in
                 HStack(alignment: .center, spacing: 12) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(change.title).font(.body.weight(.medium))
+                        Text("\(index + 1). \(change.title)").font(.body.weight(.medium))
                         if let detail = change.detail {
                             Text(detail).font(.subheadline).foregroundStyle(.secondary)
                         }
@@ -402,6 +425,8 @@ struct ButlerChatView: View {
                 .padding(.horizontal, 18).padding(.vertical, 12)
                 if index < pending.count - 1 { RowDivider(inset: 18) }
             }
+            Text("可点确认，也可以说“确认”或“确认第2项”")
+                .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 18).padding(.top, 10)
             HStack(spacing: 10) {
                 Button("取消") { chat.discard() }
                     .buttonStyle(QuietButtonStyle())
@@ -495,7 +520,7 @@ struct ButlerChatView: View {
         case .preparing: "正在准备语音…"
         case .listening: "正在听，说完点停止"
         case .finishing: "正在整理最后一句…"
-        case .idle: chat.working ? "可以先写下一条…" : "和管家说…"
+        case .idle: "和管家说…"
         }
     }
 
@@ -508,9 +533,8 @@ struct ButlerChatView: View {
         }
         if loadingAttachments { return "正在添加照片…" }
         if chat.draft.count > 8_000 { return "内容超过 8,000 字，请分成几条发送。" }
-        if composerPolicy.hasContent, !chat.connection.isLoggedIn { return "请先在管家设置里登录，草稿会保留。" }
+        if composerPolicy.hasContent, !chat.connection.isLoggedIn, !chat.canSend { return "请先在管家设置里登录，草稿会保留。" }
         if composerPolicy.hasContent, chat.tools == nil { return "暂时无法读取本机资料，草稿已保留。" }
-        if chat.working { return "管家正在回答，你可以先写下一条。" }
         return nil
     }
 
@@ -599,6 +623,7 @@ struct ButlerChatView: View {
 
     private func stopListening() {
         guard let id = voiceSession.finish() else { return }
+        let finalizationTimeout = dictation.finalizationTimeout
         voiceTask = Task { @MainActor in
             let text = await dictation.stop()
             guard !Task.isCancelled, visible, voiceSession.end(id) else { return }
@@ -609,7 +634,7 @@ struct ButlerChatView: View {
         }
         // Speech services must not leave sending or manual editing blocked indefinitely.
         voiceDeadlineTask = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(3))
+            try? await Task.sleep(for: finalizationTimeout)
             guard !Task.isCancelled, voiceSession.accepts(id) else { return }
             cancelListening()
             dictation.error = "语音收尾超时，已保留识别文字，请检查后发送。"

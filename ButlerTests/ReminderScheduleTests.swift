@@ -140,6 +140,26 @@ final class ReminderScheduleTests: XCTestCase {
         XCTAssertEqual(store.reminders.count, 2)
     }
 
+    func testExplicitReopenRetainsHistoryAndDoesNotImmediatelyAutoCompleteAgain() throws {
+        let store = store()
+        let now = Date.now
+        var task = TimedReminder(text: "纠正误完成", fireDate: now.addingTimeInterval(-7200))
+        task.autoCompleteAt = now.addingTimeInterval(-3600)
+        try store.add(task)
+        try store.refresh(now: now)
+        XCTAssertEqual(store.reminder(id: task.id)?.status, .completed)
+        try store.reopen(task.id, now: now)
+        try store.refresh(now: now)
+        let saved = try XCTUnwrap(store.reminder(id: task.id))
+        XCTAssertEqual(saved.status, .active)
+        XCTAssertNil(saved.autoCompleteAt)
+        XCTAssertEqual(saved.activity.suffix(2).map(\.kind), ["autoCompleted", "reopened"])
+        try store.reopen(task.id, now: now)
+        XCTAssertEqual(store.reminder(id: task.id)?.revision, saved.revision)
+        store.reload()
+        XCTAssertEqual(store.reminder(id: task.id), saved)
+    }
+
     func testEditingRejectsStaleRevisionAndPreservesStatusAndHistory() throws {
         let store = store()
         let original = TimedReminder(text: "新提醒", fireDate: .now.addingTimeInterval(3600))
