@@ -22,7 +22,11 @@ extension Date {
     }
 
     var clockTime: String {
-        formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
+        // No AM/PM marker fits beside the list. Keep the hour unambiguous in every region.
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: self)
     }
 }
 

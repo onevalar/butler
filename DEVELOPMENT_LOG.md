@@ -472,3 +472,8 @@ Detailed fixtures, expected outcomes, and release gates are normative in [`docs/
 - 汇总本轮日程/通用物品、天气、整张提醒上下文、输入与连续触觉、自定义及实时语音改动；更新 TestFlight 测试说明和 README。
 - 发布前全量测试：348项，1项既有 SwiftData 旧磁盘结构升级测试仍显式跳过，0失败（/private/tmp/butler-release-all-tests.log）。最新 Release 构建已通过；git diff --check及凭据扫描通过。
 - 已核对 Main · TestFlight 的 Test 必须通过、Archive上传，以及内部和外部两个 test 组的自动分发配置。实际云端结果与测试可用状态以本次构建页面为准。
+
+### 2026-09-29 云端区域差异修复
+- 构建25使用 f58fd47，归档编译/签名导出通过，测试被同一用例的两条时间断言拦截，未运行内外部测试分发。
+- 根因：clockTime 跟随区域的12小时制却省略AM/PM，美国环境把15:00/21:00显示为03:00/09:00。本机指定英文、美国区域精确复现；改为 en_US_POSIX + HH:mm，继续使用当前本地时区。
+- 同时修正提醒工具测试的输入时间格式，直接生成未来完整日期，移除跨午夜跳过断言。美国区域全量348项，1项既有跳过，0失败（/private/tmp/butler-release-us-final-tests.log）。测试门槛保留，修复后重新手动构建。

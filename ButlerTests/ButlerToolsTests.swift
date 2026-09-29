@@ -138,14 +138,15 @@ final class ButlerToolsTests: XCTestCase {
     func testTimedRemindersAreSetListedAndCancelledAfterConfirmation() async throws {
         let (tools, _) = try makeTools()
         let later = Date.now.addingTimeInterval(3600)
-        let time = ButlerTools.nowLabel.prefix(10) + " " + later.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        let time = formatter.string(from: later)
         let proposal = await call(tools, "propose_reminder", #"{"text":"热一下剩饭","time":"\#(time)","repeat":"none"}"#)
-        if Calendar.current.isDateInToday(later) {
-            XCTAssertEqual(proposal["status"] as? String, "waiting_for_user_confirmation")
-            XCTAssertTrue(tools.reminders.upcoming.isEmpty, "nothing is set before confirmation")
-            _ = tools.confirmAll()
-            XCTAssertEqual(tools.reminders.upcoming.first?.text, "热一下剩饭")
-        }
+        XCTAssertEqual(proposal["status"] as? String, "waiting_for_user_confirmation")
+        XCTAssertTrue(tools.reminders.upcoming.isEmpty, "nothing is set before confirmation")
+        _ = tools.confirmAll()
+        XCTAssertEqual(tools.reminders.upcoming.first?.text, "热一下剩饭")
         let past = await call(tools, "propose_reminder", #"{"text":"晚了","time":"2020-01-01 11:00","repeat":"none"}"#)
         XCTAssertNotNil(past["error"])
 
