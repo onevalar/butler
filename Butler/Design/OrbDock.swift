@@ -341,17 +341,12 @@ struct OrbDockView: View {
             Color(.systemBackground).opacity(0.55)
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
+            // One piece of text at a time: what is being heard. Cancelling is written on the cancel zone itself.
             VStack(spacing: 10) {
                 bubble
                 if voiceMessage != nil {
                     Button("知道了") { voiceMessage = nil }
                         .buttonStyle(.bordered)
-                } else if !finishingVoice {
-                    Text(hintText)
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(cancelling ? Color.red : .primary)
-                        .padding(.horizontal, 16).frame(height: 30)
-                        .glassEffect(.regular, in: .capsule)
                 }
             }
             .padding(.horizontal, 24)
@@ -365,11 +360,14 @@ struct OrbDockView: View {
     @ViewBuilder
     private var bubble: some View {
         let waiting = voiceMessage == nil && !finishingVoice && dictation.error == nil && dictation.text.isEmpty
-        if waiting {
-            // Heard nothing yet: a small pill, not an empty box.
-            Text("…")
-                .font(.title3.weight(.medium)).foregroundStyle(.secondary)
-                .padding(.horizontal, 22).frame(height: 38)
+        if waiting && cancelling {
+            // The cancel zone already says what happens on release; a second line would only contradict it.
+            EmptyView()
+        } else if waiting {
+            // Heard nothing yet: say what to do, once, in a small pill instead of an empty box.
+            Text(dictation.listening ? "说吧，松手就发送" : "…")
+                .font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
+                .padding(.horizontal, 18).frame(height: 36)
                 .glassEffect(.regular, in: .capsule)
         } else {
             Text(transcript)
@@ -381,12 +379,6 @@ struct OrbDockView: View {
                 .padding(.horizontal, 18).padding(.vertical, 14)
                 .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         }
-    }
-
-    private var hintText: String {
-        if cancelling { return "松开取消" }
-        if cancelExtent > 0.05 { return "继续说话 · 再上滑取消" }
-        return "松开发送 · 上滑取消"
     }
 
     private var transcript: String {
@@ -709,20 +701,21 @@ private struct VoiceGlass: View {
             .opacity(Double(min(1, max(0.5, (barWidth - 64) / 40 + 0.5))))
             .clipShape(shape)
             // The cancel zone is the same glass turning red, brightest at its far end.
-            LinearGradient(colors: [Color(red: 1, green: 0.23, blue: 0.19).opacity(cancelling ? 0.92 : 0.7),
-                                    Color(red: 1, green: 0.27, blue: 0.23).opacity(cancelling ? 0.55 : 0.34), .clear],
+            LinearGradient(stops: [.init(color: Color(red: 1, green: 0.23, blue: 0.19).opacity(cancelling ? 0.95 : 0.78), location: 0),
+                                   .init(color: Color(red: 1, green: 0.27, blue: 0.23).opacity(cancelling ? 0.7 : 0.5), location: 0.55),
+                                   .init(color: Color(red: 1, green: 0.32, blue: 0.27).opacity(0), location: 1)],
                            startPoint: UnitPoint(x: 0.5, y: max(0, (centerY - geometry.topReach) / height)),
-                           endPoint: UnitPoint(x: 0.5, y: (centerY - geometry.barHeight / 2 + 6) / height))
+                           endPoint: UnitPoint(x: 0.5, y: (centerY - 4) / height))
                 .opacity(grow)
                 .clipShape(shape)
                 .animation(.easeOut(duration: 0.15), value: cancelling)
             shape.stroke(LinearGradient(colors: [.white.opacity(dark ? 0.3 : 0.9), .white.opacity(dark ? 0.1 : 0.35)],
                                         startPoint: .top, endPoint: .bottom), lineWidth: 1)
             bars(centerY: centerY)
-            Text("✕ 取消")
+            Text(cancelling ? "松开取消" : "✕ 取消")
                 .font(.system(size: 16, weight: .bold))
                 .foregroundStyle(.white)
-                .opacity(max(0, min(1, (extent - 0.45) / 0.35)) * (cancelling ? 1 : 0.75))
+                .opacity(max(0, min(1, (extent - 0.45) / 0.35)) * (cancelling ? 1 : 0.8))
                 .position(x: width / 2, y: centerY - geometry.zoneOffset)
         }
         .frame(width: width, height: height)

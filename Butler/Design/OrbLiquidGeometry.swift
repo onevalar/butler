@@ -138,16 +138,20 @@ struct VoiceGeometry: Sendable, Equatable {
     /// 0...1: how far the cancel zone has grown.
     var extent: CGFloat = 0
     /// Distance from the bar's centre to the zone's centre when fully grown.
-    static let reach: CGFloat = 122
-    static let zoneWidth: CGFloat = 132
-    static let zoneHeight: CGFloat = 60
-    static let neckWidth: CGFloat = 34
+    static let reach: CGFloat = 100
+    static let zoneWidth: CGFloat = 96
+    static let zoneHeight: CGFloat = 58
+    /// The neck is the bar being drawn upward: a column that eases in slightly and ends in the zone.
+    static let neckBase: CGFloat = 19
+    static let neckTip: CGFloat = 16
 
     /// How far the top of the glass is above the bar's centre.
     var topReach: CGFloat {
         guard extent > 0.001 else { return barHeight / 2 }
         let grow = Self.smooth(extent)
-        return max(barHeight / 2, zoneOffset + max(8, Self.zoneHeight / 2 * grow))
+        // The highest of the zone and the neck's rounded tip (the neck is wider than a small zone at first).
+        let tip = Self.neckTip + 3 * grow
+        return max(barHeight / 2, zoneOffset + max(8, Self.zoneHeight / 2 * grow, tip))
     }
 
     /// Centre of the zone above the bar's centre.
@@ -161,11 +165,10 @@ struct VoiceGeometry: Sendable, Equatable {
         let grow = Self.smooth(extent)
         let zoneY = centerY - zoneOffset
         let zone = Self.pill(x: x, y: y - zoneY, halfWidth: max(8, Self.zoneWidth / 2 * grow), halfHeight: max(8, Self.zoneHeight / 2 * grow))
-        // The neck: a slim pill from the bar up to the zone, thinner the farther it stretches.
-        let neckHalf = max(3, Self.neckWidth / 2 * (1 - 0.3 * grow) * min(1, extent * 3))
-        let neckMid = (zoneY + centerY) / 2
-        let neck = Self.pill(x: x, y: y - neckMid, halfWidth: neckHalf, halfHeight: max(neckHalf, abs(centerY - zoneY) / 2))
-        return Self.smoothMin(Self.smoothMin(bar, neck, 22), zone, 22)
+        // The neck: a cone from the bar's middle up to the zone, thinning as it stretches.
+        let tip = Self.neckTip + 3 * grow
+        let neck = Self.cone(x: x, y: centerY - y, r1: Self.neckBase, r2: tip, height: max(zoneOffset, Self.neckBase - tip + 1))
+        return Self.smoothMin(Self.smoothMin(bar, neck, 16), zone, 18)
     }
 
     func contours(width: CGFloat, height: CGFloat, centerY: CGFloat) -> [[CGPoint]] {
@@ -177,6 +180,17 @@ struct VoiceGeometry: Sendable, Equatable {
         let dx = max(abs(x) - (halfWidth - radius), 0)
         let dy = max(abs(y) - (halfHeight - radius), 0)
         return hypot(dx, dy) - radius
+    }
+
+    /// Signed distance to two circles of different radius joined by their tangents; the second is `height` above the first.
+    private static func cone(x: CGFloat, y: CGFloat, r1: CGFloat, r2: CGFloat, height h: CGFloat) -> CGFloat {
+        let px = abs(x), py = y
+        let b = (r1 - r2) / h
+        let a = sqrt(max(0, 1 - b * b))
+        let k = px * -b + py * a
+        if k < 0 { return hypot(px, py) - r1 }
+        if k > a * h { return hypot(px, py - h) - r2 }
+        return px * a + py * b - r1
     }
 
     private static func smoothMin(_ a: CGFloat, _ b: CGFloat, _ k: CGFloat) -> CGFloat {
