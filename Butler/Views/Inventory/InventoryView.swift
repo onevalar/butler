@@ -172,7 +172,9 @@ extension View {
                 }
                 .sharedBackgroundVisibility(.hidden)
                 if !(control is EmptyView) {
+                    // The segmented control has its own track; the toolbar's glass behind it made two layers.
                     ToolbarItem(placement: .topBarTrailing) { control }
+                        .sharedBackgroundVisibility(.hidden)
                 }
             }
     }

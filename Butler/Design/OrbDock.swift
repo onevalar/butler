@@ -81,26 +81,46 @@ struct OrbDockView: View {
             if presentingVoice {
                 Color(.systemBackground).opacity(0.55)
                     .ignoresSafeArea().allowsHitTesting(false)
-                VStack(spacing: 10) {
-                    if !interaction.cancelling || !recorder.dictation.text.isEmpty || interaction.issue != nil {
-                        Text(status)
-                            .font(recorder.dictation.text.isEmpty ? .subheadline.weight(.medium) : .title3.weight(.medium))
-                            .multilineTextAlignment(.center)
-                            .lineLimit(5)
-                            .foregroundStyle(interaction.cancelling ? Color.secondary : Color.primary)
-                            .padding(.horizontal, 18).padding(.vertical, 12)
-                            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 24))
+                if interaction.phase == .finishing && interaction.issue == nil && recorder.dictation.usesCustomService {
+                    // One capsule: what's happening and how to stop it, well clear of the orb so a thumb
+                    // resting near the orb can't hit 取消 by accident, and 取消 is a full 44-point target.
+                    HStack(spacing: 0) {
+                        ProgressView().padding(.leading, 18).padding(.trailing, 10)
+                        Text("正在整理语音…").font(.subheadline.weight(.medium))
+                        Divider().frame(height: 22).padding(.horizontal, 14)
+                        Button { reset() } label: {
+                            Text("取消").font(.subheadline.weight(.semibold))
+                                .padding(.trailing, 20).padding(.leading, 4)
+                                .frame(minHeight: 52)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("取消识别")
                     }
-                    if interaction.issue != nil {
-                        Button("知道了") { interaction.dismissIssue() }
-                            .buttonStyle(.bordered)
-                    } else if interaction.phase == .finishing && recorder.dictation.usesCustomService {
-                        Button("取消识别") { reset() }
-                            .buttonStyle(.bordered)
+                    .frame(height: 52)
+                    .glassEffect(.regular, in: .capsule)
+                    .padding(.bottom, Self.ballLift + VoiceGeometry(barWidth: voiceWidth, extent: cancelExtent).topReach + 56)
+                } else {
+                    VStack(spacing: 16) {
+                        if !interaction.cancelling || !recorder.dictation.text.isEmpty || interaction.issue != nil {
+                            Text(status)
+                                .font(recorder.dictation.text.isEmpty ? .subheadline.weight(.medium) : .title3.weight(.medium))
+                                .multilineTextAlignment(.center)
+                                .lineLimit(5)
+                                .foregroundStyle(interaction.cancelling ? Color.secondary : Color.primary)
+                                .padding(.horizontal, 18).padding(.vertical, 12)
+                                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 24))
+                        }
+                        if interaction.issue != nil {
+                            Button("知道了") { interaction.dismissIssue() }
+                                .buttonStyle(.bordered)
+                                .controlSize(.large)
+                        }
                     }
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, Self.ballLift + VoiceGeometry(barWidth: voiceWidth, extent: cancelExtent).topReach
+                             + (interaction.issue != nil ? 44 : 16))
                 }
-                .padding(.horizontal, 24)
-                .padding(.bottom, Self.ballLift + VoiceGeometry(barWidth: voiceWidth, extent: cancelExtent).topReach + 16)
             }
 
             GeometryReader { proxy in
