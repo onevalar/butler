@@ -47,8 +47,6 @@ struct ButlerChatView: View {
     @State private var pickedPhotos: [PhotosPickerItem] = []
     @State private var showingSettings = false
     @FocusState private var composing: Bool
-    /// The draft has wrapped: give it the full width, buttons underneath.
-    @State private var composerExpanded = false
 
     var body: some View {
         NavigationStack {
@@ -464,13 +462,12 @@ struct ButlerChatView: View {
                         Button { showingLibrary = true } label: { Label("照片图库", systemImage: "photo.on.rectangle") }
                         Button { showingFiles = true } label: { Label("选择文件", systemImage: "folder") }
                     } label: {
-                        Image(systemName: "plus").font(.system(size: 17, weight: .medium)).frame(width: 40, height: 40)
+                        Image(systemName: "plus").font(.system(size: 19, weight: .regular)).frame(width: 40, height: 40)
                     }
                     .buttonStyle(.plain)
                     .glassEffect(.regular.interactive(), in: .circle)
                     .disabled(voiceSession.phase != .idle || loadingAttachments)
                     .accessibilityLabel("添加照片")
-                    .padding(.bottom, 2)
 
                     inputField
                 }
@@ -485,61 +482,25 @@ struct ButlerChatView: View {
         }
     }
 
-    /// One line: text, then the small buttons on the same line. Once the text wraps, it takes the full
-    /// width and the buttons move to a row of their own underneath (until the draft is cleared).
+    /// Like Messages: a capsule as tall as the ＋ button, text centred on one line and growing upwards
+    /// when it wraps; one plain glyph at the right (waveform to talk, ↑ to send).
     private var inputField: some View {
-        let field = TextField(placeholder, text: $chat.draft, axis: .vertical)
-            .font(.body)
-            .lineLimit(1...10)
-            .focused($composing)
-            // Recognition owns this draft until its last result is finalized.
-            // Never overwrite a manual edit with a late partial transcript.
-            .disabled(!composerPolicy.canEditText)
-            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
-                if !composerExpanded, height > 30 { composerExpanded = true }
-            }
-        return Group {
-            if composerExpanded {
-                VStack(alignment: .leading, spacing: 4) {
-                    field.padding(.horizontal, 14).padding(.top, 10)
-                    HStack(spacing: 4) {
-                        Spacer(minLength: 0)
-                        inlineMicrophone
-                        trailingButton
-                    }
-                    .padding(.trailing, 4).padding(.bottom, 4)
-                }
-            } else {
-                HStack(alignment: .bottom, spacing: 2) {
-                    field.padding(.leading, 14).padding(.vertical, 11)
-                    inlineMicrophone
-                    trailingButton
-                }
-                .padding(.trailing, 4).padding(.bottom, 4)
-            }
+        HStack(alignment: .bottom, spacing: 4) {
+            TextField(placeholder, text: $chat.draft, axis: .vertical)
+                .font(.body)
+                .lineLimit(1...10)
+                .focused($composing)
+                // Recognition owns this draft until its last result is finalized.
+                // Never overwrite a manual edit with a late partial transcript.
+                .disabled(!composerPolicy.canEditText)
+                .padding(.leading, 16)
+                .padding(.vertical, 9)
+            trailingButton
+                .padding(.trailing, 4)
+                .padding(.bottom, 4)
         }
-        .frame(minHeight: 44)
-        .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .onChange(of: chat.draft) { _, draft in
-            if draft.isEmpty { composerExpanded = false }
-        }
-    }
-
-    @ViewBuilder
-    private var inlineMicrophone: some View {
-        if composerPolicy.showsInlineMicrophone {
-            Button(action: startListening) {
-                Image(systemName: "mic")
-                    .font(.system(size: 17, weight: .regular))
-                    .frame(width: 36, height: 36)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .disabled(!composerPolicy.canStartVoice || loadingAttachments)
-            .accessibilityLabel("用语音补充")
-            .accessibilityHint(chat.working ? "管家回答结束后可用" : "停止听写后可编辑和发送")
-        }
+        .frame(minHeight: 40)
+        .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
     private var composerPolicy: ChatComposerPolicy {
@@ -569,51 +530,47 @@ struct ButlerChatView: View {
         return nil
     }
 
-    /// Inside the input, bottom right. Each state shows one thing only: send ↑, a microphone, a red stop
-    /// while listening, or a spinner while getting ready or finishing (tap it to stop there).
+    /// Inside the input, bottom right, drawn the way Messages does: a plain waveform to start talking,
+    /// a filled ↑ to send, a red stop while listening, a small spinner while getting ready or finishing.
     @ViewBuilder
     private var trailingButton: some View {
         switch composerPolicy.action {
         case .stopResponse:
-            composerButton(.symbol("stop.fill"), label: "停止生成", tint: Color(.tertiarySystemFill), glyph: .primary) { chat.stop() }
+            composerButton(label: "停止生成") { chat.stop() } content: {
+                Image(systemName: "stop.circle.fill").font(.system(size: 28)).foregroundStyle(.secondary)
+            }
         case .cancelPreparation:
-            composerButton(.spinner, label: "取消准备语音", tint: Color(.tertiarySystemFill), glyph: .primary) { cancelListening() }
+            composerButton(label: "取消准备语音") { cancelListening() } content: { ProgressView().controlSize(.small) }
         case .stopDictation:
-            composerButton(.symbol("stop.fill"), label: "停止听写", tint: .red, glyph: .white) { stopListening() }
+            composerButton(label: "停止听写") { stopListening() } content: {
+                Image(systemName: "stop.circle.fill").font(.system(size: 28)).foregroundStyle(.white, .red)
+            }
         case .finishDictation:
-            composerButton(.spinner, label: "保留当前文字并结束语音收尾", tint: Color(.tertiarySystemFill), glyph: .primary) { cancelListening() }
+            composerButton(label: "保留当前文字并结束语音收尾") { cancelListening() } content: { ProgressView().controlSize(.small) }
         case .send:
-            composerButton(.symbol("arrow.up"), label: "发送", tint: accent.fill, glyph: accent.onFill) {
+            composerButton(label: "发送") {
                 guard chat.canSend, !loadingAttachments, voiceSession.phase == .idle else { return }
                 scrollPolicy.sendToLatest()
                 composing = false
                 chat.send()
+            } content: {
+                Image(systemName: "arrow.up.circle.fill").font(.system(size: 28))
+                    .foregroundStyle(accent.onFill, accent.fill)
             }
             .disabled(!chat.canSend || loadingAttachments)
-            .opacity(chat.canSend && !loadingAttachments ? 1 : 0.4)
+            .opacity(chat.canSend && !loadingAttachments ? 1 : 0.35)
         case .voice:
-            composerButton(.symbol("mic.fill"), label: "开始语音输入", tint: accent.fill, glyph: accent.onFill) { startListening() }
-                .disabled(loadingAttachments)
+            composerButton(label: "开始语音输入") { startListening() } content: {
+                Image(systemName: "waveform").font(.system(size: 17, weight: .medium)).foregroundStyle(.secondary)
+            }
+            .disabled(loadingAttachments)
         }
     }
 
-    private enum ComposerGlyph { case symbol(String), spinner }
-
-    private func composerButton(_ glyph: ComposerGlyph, label: String, tint: Color, glyph color: Color,
-                                action: @escaping () -> Void) -> some View {
+    private func composerButton<Content: View>(label: String, action: @escaping () -> Void,
+                                               @ViewBuilder content: () -> Content) -> some View {
         Button(action: action) {
-            ZStack {
-                Circle().fill(tint)
-                switch glyph {
-                case .symbol(let name):
-                    Image(systemName: name).font(.system(size: 15, weight: .bold)).foregroundStyle(color)
-                case .spinner:
-                    ProgressView().controlSize(.small).tint(color)
-                }
-            }
-            .frame(width: 32, height: 32)
-            .frame(width: 36, height: 36)
-            .contentShape(Circle())
+            content().frame(width: 32, height: 32).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
