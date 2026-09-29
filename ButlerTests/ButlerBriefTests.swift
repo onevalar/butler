@@ -47,6 +47,23 @@ final class ButlerBriefTests: XCTestCase {
         XCTAssertEqual(snoozed.map(\.kind), [.dueTask, .expiringSoon, .lowStock])
     }
 
+    func testTasksLaterTodayAreRaisedSoonOnesBeforeFoodAndADayWithOnlyThemIsNotQuiet() throws {
+        let now = at(5)
+        let yogurt = lot("红枣酸奶", package: day(2, from: now), now: now)
+        let train = TimedReminder(text: "G2515 北京北→朔州东", fireDate: at(6, 9), createdAt: day(-1, from: now))
+        let evening = TimedReminder(text: "取快递", fireDate: at(18), createdAt: day(-1, from: now))
+        let agenda = HomeAgenda.build(lots: [yogurt], reminders: [train, evening], events: [], now: now)
+        let all = BriefCandidates.make(facts: [yogurt], agenda: agenda, now: now)
+        XCTAssertEqual(all.map(\.kind), [.upcomingTask, .expiringSoon, .upcomingTask])
+        XCTAssertEqual(all.first?.detail, "今天 06:09")
+
+        let onlyTasks = BriefCandidates.make(facts: [], agenda: HomeAgenda.build(lots: [], reminders: [train], events: [], now: now), now: now)
+        let brief = BriefLocal.compose(candidates: onlyTasks, lotCount: 3, basis: "", now: now)
+        XCTAssertEqual(brief.target, .task(train.id))
+        XCTAssertTrue(brief.text.contains("06:09"), brief.text)
+        XCTAssertEqual(brief.actions.map(\.effect), [.openDetail, .completeTask])
+    }
+
     func testSignatureChangesWithTheSituationAndThePartOfTheDayButNotWithTheClock() {
         let morning = at(9)
         let egg = BriefCandidate(target: .lot(UUID()), kind: .expired, name: "土鸡蛋", detail: "已过期 4 天", quantity: 6, unit: "枚",

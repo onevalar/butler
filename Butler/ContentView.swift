@@ -73,6 +73,8 @@ struct ContentView: View {
     /// A brief button that changes medicine stock asks once more.
     @State private var confirmingBrief: (action: BriefAction, target: BriefTarget)?
     @State private var briefError: String?
+    /// A task about to be cancelled from the home list (asks once, like on its own page).
+    @State private var cancellingTask: UUID?
 
     @AppStorage("onboardingDone") private var onboardingDone = false
     @Environment(\.openURL) private var openURL
@@ -127,7 +129,8 @@ struct ContentView: View {
                     openChat(scope: .brief(BriefConversation(brief: visibleBrief, day: agendaNow.isoDay)), .typing)
                 },
                 onBriefInteraction: { briefService.beginInteraction() },
-                onBrowseMonth: { browsingMonth = $0 }
+                onBrowseMonth: { browsingMonth = $0 },
+                onTaskAction: taskAction
             )
             .navigationDestination(for: Route.self) { destination($0, facts: facts) }
         }
@@ -161,6 +164,15 @@ struct ContentView: View {
             Button("取消", role: .cancel) { confirmingBrief = nil }
         } message: {
             Text("这是药品，确认后才会更新库存。")
+        }
+        .confirmationDialog("取消这个任务并停止后续提醒？历史会保留。",
+                            isPresented: Binding(get: { cancellingTask != nil }, set: { if !$0 { cancellingTask = nil } }),
+                            titleVisibility: .visible) {
+            Button("取消任务", role: .destructive) {
+                if let id = cancellingTask { runTask { try reminders.remove(id) } }
+                cancellingTask = nil
+            }
+            Button("保留", role: .cancel) { cancellingTask = nil }
         }
         .alert("没能完成", isPresented: Binding(get: { briefError != nil }, set: { if !$0 { briefError = nil } })) {
             Button("知道了", role: .cancel) { briefError = nil }
@@ -385,6 +397,26 @@ struct ContentView: View {
     private func presentChat(_ detent: PresentationDetent = .large) {
         chatDetent = detent
         showingChat = true
+    }
+
+    private func taskAction(_ id: UUID, _ action: TaskQuickAction) {
+        switch action {
+        case .complete: runTask { try reminders.complete(id) }
+        case .pause: runTask { try reminders.pause(id) }
+        case .cancel: cancellingTask = id
+        case .remindLater:
+            guard let task = reminders.reminder(id: id) else { return }
+            Task {
+                do { try await reminders.snooze(id: id, revision: task.revision, minutes: 30) }
+                catch { briefError = error.localizedDescription }
+                agendaNow = .now
+            }
+        }
+    }
+
+    private func runTask(_ work: () throws -> Void) {
+        do { try work(); agendaNow = .now; snoozeRevision += 1 }
+        catch { briefError = error.localizedDescription }
     }
 
     private func briefTapped(_ action: BriefAction, _ target: BriefTarget, facts: [LotFacts]) {

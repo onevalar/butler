@@ -101,7 +101,7 @@ struct ButlerBrief: Equatable, Codable {
 
 /// One thing that might deserve the butler's attention right now.
 struct BriefCandidate: Equatable {
-    enum Kind: String { case expired, dueTask = "due_task", expiringSoon = "expiring_soon", lowStock = "low_stock" }
+    enum Kind: String { case expired, dueTask = "due_task", upcomingTask = "upcoming_task", expiringSoon = "expiring_soon", lowStock = "low_stock" }
 
     let target: BriefTarget
     let kind: Kind
@@ -125,7 +125,8 @@ struct BriefCandidate: Equatable {
 }
 
 enum BriefCandidates {
-    /// Most pressing first: overdue food, tasks that have come due, food about to expire, things running low.
+    /// Most pressing first: overdue food, tasks that have come due, tasks later today (within 3 hours before food
+    /// about to expire, later ones after it), things running low. A day with only upcoming tasks is never "quiet".
     static func make(facts: [LotFacts], agenda: HomeAgenda, now: Date, snoozed: Set<String> = [],
                      calendar: Calendar = .current, limit: Int = 5) -> [BriefCandidate] {
         let byID = Dictionary(facts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -142,11 +143,25 @@ enum BriefCandidates {
                                       detail: "已到时间，还没完成" + (entry.start.map { "（\($0.clockTime)）" } ?? ""),
                                       quantity: nil, unit: nil, daysLeft: nil, location: nil, isMedicine: false))
         }
+        // Still to come today: the train at 07:09 matters more than yoghurt due in three days.
+        let upcoming = agenda.entries(on: agenda.today).filter { entry in
+            guard entry.kind == .reminder, !entry.isCompleted, !entry.isRoutine, let start = entry.start, start > now,
+                  case .reminder(let id) = entry.target else { return false }
+            return seenTasks.insert(id).inserted
+        }.sorted { ($0.start ?? now) < ($1.start ?? now) }.prefix(2)
+        func upcomingCandidate(_ entry: AgendaEntry) -> BriefCandidate? {
+            guard case .reminder(let id) = entry.target, let start = entry.start else { return nil }
+            return BriefCandidate(target: .task(id), kind: .upcomingTask, name: entry.title, detail: "今天 \(start.clockTime)",
+                                  quantity: nil, unit: nil, daysLeft: nil, location: nil, isMedicine: false)
+        }
+        let soon = upcoming.filter { ($0.start ?? now).timeIntervalSince(now) <= 3 * 3600 }
+        out += soon.compactMap(upcomingCandidate)
         for lot in facts.filter({ !$0.quantityOnly && ($0.daysLeft ?? 99) >= 0 && ($0.daysLeft ?? 99) <= 3 })
             .sorted(by: { ($0.daysLeft ?? 0, $0.name) < ($1.daysLeft ?? 0, $1.name) }) {
             let when = lot.daysLeft == 0 ? "今天到期" : lot.daysLeft == 1 ? "明天到期" : "\(lot.daysLeft ?? 0) 天后到期"
             out.append(candidate(lot, .expiringSoon, detail: lot.governingDateKind == .plannedUseBy ? "该吃完了（\(when)）" : when))
         }
+        out += upcoming.filter { !soon.contains($0) }.compactMap(upcomingCandidate)
         for entry in agenda.needsAttention where entry.kind == .lowStock {
             guard case .lot(let id) = entry.target, let lot = byID[id] else { continue }
             out.append(candidate(lot, .lowStock, detail: "只剩 \(lot.quantity) \(lot.unit)"))
@@ -195,6 +210,10 @@ enum BriefLocal {
             text = "「\(top.name)」到时间了，做了吗？"
             actions = [BriefAction(label: "做完了", effect: .completeTask),
                        BriefAction(label: "10 分钟后再提醒", effect: .remindLater(minutes: 10))]
+        case .upcomingTask:
+            text = "\(top.detail)有「\(top.name)」，记得留好时间。"
+            actions = [BriefAction(label: "看看详情", effect: .openDetail),
+                       BriefAction(label: "已经办好", effect: .completeTask)]
         case .expiringSoon:
             text = "\(top.name)\(top.detail)，尽快用掉吧。"
             actions = [BriefAction(label: "已吃完", effect: .closeLot(.depleted)),
@@ -297,7 +316,7 @@ enum BriefModelReply {
 
         weather 若存在，只是值得留意的新鲜天气线索，不是必须说出的提醒。先判断它是否会影响当前事情或用户接下来的活动：有明确关系时，最多把一句具体关心自然融进 text，与其他正文同等呈现；没有关系就完全不提。不要为了凑内容每天提醒穿衣、带伞，不把温差本身当成必须加衣的理由，也不把原始 hint 生硬拼在正文前后。没有 weather 时不编造天气。不要转述温度数值、风速、降雨概率等原始气象数据；这些在天气面板查看。不能凭天气创造库存、任务或自动修改规则。
 
-        按钮要贴合这件事，不要每次都给同一组：过期很久的食物，重点是处理掉；快到期但还能吃的，重点是今晚或明天吃掉，可以给“再放放”一两天；药品要谨慎，不要替用户决定扔；任务到点了，重点是做完或稍后再提醒；快用完的东西，给“知道了”，不必催促。不要给“其他”按钮，App 会自己加。
+        按钮要贴合这件事，不要每次都给同一组：过期很久的食物，重点是处理掉；快到期但还能吃的，重点是今晚或明天吃掉，可以给“再放放”一两天；药品要谨慎，不要替用户决定扔；任务到点了，重点是做完或稍后再提醒；今天稍后的任务（upcoming_task）是提前提醒一声几点要做什么，可给“看看详情”“已经办好”；快用完的东西，给“知道了”，不必催促。不要给“其他”按钮，App 会自己加。
 
         只输出一个 JSON，不要任何别的文字：
         {"target":"<key>","text":"…","actions":[{"label":"…","effect":"…","value":数字或null}]}

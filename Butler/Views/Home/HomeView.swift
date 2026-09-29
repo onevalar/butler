@@ -50,6 +50,8 @@ struct HomeView: View {
     let onBriefOther: (ButlerBrief) -> Void
     let onBriefInteraction: () -> Void
     let onBrowseMonth: (Date) -> Void
+    /// Done / later / pause / cancel straight from the list, without opening the task.
+    var onTaskAction: (UUID, TaskQuickAction) -> Void = { _, _ in }
 
     @State private var showingPicker = false
     @State private var slideForward = true
@@ -111,10 +113,10 @@ struct HomeView: View {
                                closePicker()
                            },
                            onBrowseMonth: onBrowseMonth)
-                .padding(.horizontal, 16).padding(.top, 28)
+                .padding(.horizontal, 16).padding(.top, 30)
                 .frame(maxHeight: .infinity, alignment: .top)
-                .background { ButlerBackground() }
-                .presentationDetents([.height(470)])
+                // Tall enough for a six-week month and no more, on the system sheet surface.
+                .presentationDetents([.height(420)])
                 .presentationDragIndicator(.visible)
         }
         .animation(reduceMotion ? nil : .spring(response: 0.38, dampingFraction: 0.82), value: showingPicker)
@@ -204,7 +206,7 @@ struct HomeView: View {
             }
             ForEach(Array(list.rows.enumerated()), id: \.element.id) { index, row in
                 if index > 0 { rowDivider }
-                HomeRowView(row: row, onOpen: openListItem)
+                HomeRowView(row: row, onOpen: openListItem, onTaskAction: taskAction)
                     .accessibilityAction { if isActive { onOpen(row.target) } }
             }
             if !list.completed.isEmpty {
@@ -215,7 +217,7 @@ struct HomeView: View {
                     .padding(.horizontal, 18).padding(.top, list.rows.isEmpty ? 6 : 16).padding(.bottom, 2)
                 ForEach(Array(list.completed.enumerated()), id: \.element.id) { index, row in
                     if index > 0 { rowDivider }
-                    HomeRowView(row: row, onOpen: openListItem)
+                    HomeRowView(row: row, onOpen: openListItem, onTaskAction: taskAction)
                         .accessibilityAction { if isActive { onOpen(row.target) } }
                 }
             }
@@ -227,6 +229,11 @@ struct HomeView: View {
         .transition(reduceMotion ? .opacity : .asymmetric(
             insertion: .move(edge: slideForward ? .trailing : .leading).combined(with: .opacity),
             removal: .move(edge: slideForward ? .leading : .trailing).combined(with: .opacity)))
+    }
+
+    private func taskAction(_ id: UUID, _ action: TaskQuickAction) {
+        guard isActive, listInteraction.allowsTap else { return }
+        onTaskAction(id, action)
     }
 
     private func openListItem(_ target: AgendaEntry.Target) {
@@ -281,41 +288,76 @@ struct HomeView: View {
 }
 
 /// One line of the day list.
+/// What can be done to a task from the home list.
+enum TaskQuickAction { case complete, remindLater, pause, cancel }
+
+/// One line of the day list. A task has a circle to tick it off (like Reminders) and, on a long press,
+/// the other things you'd otherwise dig for on its page.
 struct HomeRowView: View {
     let row: HomeListRow
     let onOpen: (AgendaEntry.Target) -> Void
+    var onTaskAction: (UUID, TaskQuickAction) -> Void = { _, _ in }
+
+    private var taskID: UUID? {
+        if case .reminder(let id) = row.target { return id }
+        return nil
+    }
 
     var body: some View {
-        Button { onOpen(row.target) } label: {
-            HStack(spacing: 14) {
-                if !row.lead.isEmpty {
-                    Text(row.lead)
-                        .font(.system(size: 15, weight: .semibold)).monospacedDigit()
-                        .foregroundStyle(row.isCompleted ? .secondary : .primary)
-                        .frame(minWidth: 44, alignment: .leading)
+        HStack(spacing: 0) {
+            if let taskID, !row.isCompleted {
+                Button { onTaskAction(taskID, .complete) } label: {
+                    Circle().strokeBorder(row.kind.color, lineWidth: 1.8)
+                        .frame(width: 24, height: 24)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
-                if row.isCompleted {
-                    Image(systemName: "checkmark").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary).frame(width: 6)
-                } else {
-                    KindBar(color: row.kind.color, height: 34)
-                }
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(row.title).font(.body)
-                        .strikethrough(row.isCompleted)
-                        .foregroundStyle(row.isCompleted ? Color.secondary : Color.primary).fixedSize(horizontal: false, vertical: true)
-                    if let subtitle = row.subtitle {
-                        Text(subtitle).font(.subheadline)
-                            .foregroundStyle(row.isAlert ? Color.red : .secondary).fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                Spacer(minLength: 8)
-                if let action = row.action { CapsuleLabel(action) }
+                .buttonStyle(.plain)
+                .padding(.leading, 6)
+                .accessibilityLabel("完成「\(row.title)」")
             }
-            .padding(.leading, 16).padding(.trailing, 14).padding(.vertical, 9)
-            .frame(minHeight: 56)
-            .contentShape(Rectangle())
+            Button { onOpen(row.target) } label: {
+                HStack(spacing: 14) {
+                    if !row.lead.isEmpty {
+                        Text(row.lead)
+                            .font(.system(size: 15, weight: .semibold)).monospacedDigit()
+                            .foregroundStyle(row.isCompleted ? .secondary : .primary)
+                            .frame(minWidth: 44, alignment: .leading)
+                    }
+                    if row.isCompleted {
+                        Image(systemName: "checkmark.circle.fill").font(.system(size: 22)).foregroundStyle(.secondary)
+                    } else if taskID == nil {
+                        KindBar(color: row.kind.color, height: 34)
+                    }
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(row.title).font(.body)
+                            .strikethrough(row.isCompleted)
+                            .foregroundStyle(row.isCompleted ? Color.secondary : Color.primary).fixedSize(horizontal: false, vertical: true)
+                        if let subtitle = row.subtitle {
+                            Text(subtitle).font(.subheadline)
+                                .foregroundStyle(row.isAlert ? Color.red : .secondary).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    Spacer(minLength: 8)
+                    // Tasks are ticked off with the circle; the capsule is only for things at home.
+                    if let action = row.action, taskID == nil { CapsuleLabel(action) }
+                }
+                .padding(.leading, taskID != nil && !row.isCompleted ? 4 : 16).padding(.trailing, 14).padding(.vertical, 9)
+                .frame(minHeight: 56)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
+        .contextMenu {
+            if let taskID, !row.isCompleted {
+                Button("完成", systemImage: "checkmark.circle") { onTaskAction(taskID, .complete) }
+                Button("30 分钟后再提醒", systemImage: "clock.arrow.circlepath") { onTaskAction(taskID, .remindLater) }
+                Button("暂停提醒", systemImage: "pause.circle") { onTaskAction(taskID, .pause) }
+                Button("取消任务", systemImage: "xmark.circle", role: .destructive) { onTaskAction(taskID, .cancel) }
+                Divider()
+                Button("查看详情", systemImage: "info.circle") { onOpen(row.target) }
+            }
+        }
     }
 }
 

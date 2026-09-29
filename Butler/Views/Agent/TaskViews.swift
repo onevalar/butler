@@ -70,6 +70,23 @@ struct TaskDetailView: View {
     @State private var deleting: TimedReminder?
     @Environment(\.dismiss) private var dismiss
 
+    private func quickButton(_ title: String, _ symbol: String, primary: Bool = false,
+                             action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 6) {
+                Image(systemName: symbol).font(.system(size: 18, weight: .semibold))
+                Text(title).font(.footnote.weight(.medium))
+            }
+            .foregroundStyle(primary ? Color(.systemBackground) : Color.primary)
+            .frame(maxWidth: .infinity).frame(height: 66)
+            .background(primary ? AnyShapeStyle(Color.primary) : AnyShapeStyle(.clear),
+                        in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .glassEffect(primary ? .identity : .regular.interactive(), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
     var body: some View {
         List {
             if let task = store.reminder(id: id) {
@@ -77,12 +94,30 @@ struct TaskDetailView: View {
                     Text(task.text).font(.title3.bold())
                     LabeledContent("状态", value: task.statusLabel)
                     Text(task.whenLabel)
-                    LabeledContent("时区", value: task.timeZoneIdentifier)
+                    if task.timeZoneIdentifier != TimeZone.current.identifier {
+                        LabeledContent("时区", value: task.timeZoneIdentifier)
+                    }
                     if let end = task.endDate { LabeledContent("提醒截止", value: end.formatted()) }
                     if let date = task.autoCompleteAt { LabeledContent("自动标记完成", value: date.formatted()) }
                     if let warning = store.scheduleWarning { Text(warning).font(.footnote).foregroundStyle(.orange) }
                 }
                 .glassRows()
+                // The things people come here to do, right under the title instead of at the bottom.
+                if task.status == .active || task.status == .paused {
+                    Section {
+                        HStack(spacing: 10) {
+                            quickButton("完成", "checkmark", primary: true) { act { try store.complete(id) } }
+                            if task.status == .active {
+                                quickButton("暂停提醒", "pause") { act { try store.pause(id) } }
+                            } else {
+                                quickButton("恢复提醒", "play") { act { try store.resume(id) } }
+                            }
+                            quickButton("取消任务", "xmark") { confirmCancel = true }
+                        }
+                        .listRowBackground(Color.clear)
+                        .listRowInsets(EdgeInsets())
+                    }
+                }
                 Section("提醒规则预览") {
                     DisclosureGroup("完整提醒规则") {
                         Text(ReminderSchedule.ruleSummary(task))
@@ -106,12 +141,6 @@ struct TaskDetailView: View {
                         }
                         Text("保留之前的操作记录，恢复原有提醒规则；已过期的自动完成时间会清除。提醒时间已过的任务仍需重新安排。")
                             .font(.footnote).foregroundStyle(.secondary)
-                    }
-                    if task.status == .active || task.status == .paused {
-                        Button("标记整个任务完成", systemImage: "checkmark.circle") { act { try store.complete(id) } }
-                        if task.status == .active { Button("暂停提醒", systemImage: "pause.circle") { act { try store.pause(id) } } }
-                        else { Button("恢复提醒", systemImage: "play.circle") { act { try store.resume(id) } } }
-                        Button("取消任务", role: .destructive) { confirmCancel = true }
                     }
                 }
                 .glassRows()
