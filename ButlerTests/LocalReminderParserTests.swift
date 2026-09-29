@@ -41,6 +41,15 @@ final class LocalReminderParserTests: XCTestCase {
         XCTAssertNil(LocalReminderParser.parse("提醒我一下", now: now), "no time given")
     }
 
+    func testOfflineFallbackNeverDowngradesExplicitAlarmToNotification() {
+        let now = at(12, 0)
+        for request in ["20分钟后用闹钟提醒我关火", "20分钟后响铃提醒我", "明早7点提醒我叫醒孩子",
+                        "设置倒计时20分钟后叫我", "用计时器20分钟后提醒我"] {
+            XCTAssertNil(LocalReminderParser.parse(request, now: now), request)
+        }
+        XCTAssertNotNil(LocalReminderParser.parse("20分钟后发通知提醒我关火", now: now))
+    }
+
     func testChineseNumbers() {
         XCTAssertEqual(LocalReminderParser.normalizeNumbers("七点十八"), "7点18")
         XCTAssertEqual(LocalReminderParser.normalizeNumbers("十点半"), "10点半")

@@ -331,7 +331,25 @@ final class ButlerChat {
                 try JSONEncoder().encode(tools.pending.filter { !selectedIDs.contains($0.id) }).write(to: file, options: .atomic)
             } catch { self.error = "无法保存确认状态，本次没有执行修改。"; return }
         }
+        if selected.contains(where: { if case .alarm = $0.kind { true } else { false } }) {
+            working = true
+            workingSince = .now
+            workingStage = "正在核对系统闹钟…"
+            task = Task {
+                defer { working = false; workingSince = nil; workingStage = ""; task = nil }
+                let results = await tools.confirmIncludingAlarms(ids: Set(selected.map(\.id)))
+                finishConfirmation(results, tools: tools, hasDates: hasDates,
+                                   hasReminders: hasReminders, startsNotifications: startsNotifications)
+            }
+            return
+        }
         let results = tools.confirmAll(ids: ids)
+        finishConfirmation(results, tools: tools, hasDates: hasDates,
+                           hasReminders: hasReminders, startsNotifications: startsNotifications)
+    }
+
+    private func finishConfirmation(_ results: [String], tools: ButlerTools, hasDates: Bool,
+                                    hasReminders: Bool, startsNotifications: Bool) {
         if hasDates || hasReminders {
             let reminders = tools.reminders
             let turnID = turns.last?.id
@@ -717,6 +735,8 @@ final class ButlerChat {
         - 所有 propose_* 只是提出修改，手机会显示确认卡片，用户点“确认”或直接说“确认”后才真正保存，也支持“确认第2项”“取消第1项”。待确认内容跨消息保留；改其中一项时先get_pending_changes，用discard_pending_changes移除旧提案再提出新版本，保留其他项，修改后的提案仍需确认。含歧义的确认或修改先呈现最终方案，不擅自执行。提出后简短告诉用户拟改什么；收到“手机执行回执”前不要说“已保存”。
         - 东西的到期提醒由手机根据库存日期自动发送，把日期设好即可。
         - 用户要你在某个时间提醒他做某事，用 propose_reminder 设简单提醒；多阶段、间隔、终止日期等复杂规则用 propose_task_plan。先用 get_tasks 查看任务和当前 revision，修改已有任务必须传 expected_revision。完成、暂停、恢复等用 propose_task_action，不要靠另建任务修改原任务。到期停止提醒不等于事情完成，只有用户明确要求时才配置自动完成。
+        - 真正响铃、叫醒或倒计时意图使用 get_alarm_capabilities / get_alarms / propose_alarm / propose_alarm_action，不要用普通通知冒充闹钟。按语义和上下文理解，不要求用户说工具名：例如“明早七点叫醒我”是一次响铃，“煮面三分钟后叫我”可提出倒计时。“改晚半小时”“只留周二周四”先查询原闹钟再修改原ID，保留其他条件；多个可能目标时先问。所有设置和管理都通过对话，不引导到独立闹钟页面。只有系统授权仍需用户操作弹窗。
+        - 闹钟只在用户确认后请求授权并执行，系统状态以查询和执行回执为准；待确认、失败或待核实都不能说设置成功。停止本次响铃不代表完成任务；闹钟目前与普通任务独立，不能声称完成任务会自动取消关联闹钟。每周规则跟随当地时间；“法定工作日”“只跳过今天”“固定异地时区每天”“下月才开始”等目前不支持的规则不可偷换为周一到周五或取消全部，应明确限制并讨论可准确执行的方案。
         - 用户让你修改配置，用 get_settings 读取当前值，再用 propose_settings 提出支持的更改。工具不能操作的系统权限或功能如实说明，不要声称已经修改。
         - 时间由你自己判断，不要反问：没说上午/下午/晚上的钟点（“7点”“7:00”“十点半”），取从现在起最近的、还没到的那个时刻——比如现在 18:55 说“7点”就是今天 19:00，现在 20:00 说“7点”就是明天 07:00；说了“早上/中午/下午/晚上/明天/周六”就照说的来；没说日期指今天，今天已过就是明天。提出后在回答里讲清是哪天几点（如“今天晚上 7:00”），用户觉得不对会纠正。
         \(jev ? "- 手机会自动请 Jev 条件判断模型把关：查询结果带 relevance（与这句话的相关程度，越高越相关）；提出修改时如果返回 needs_review，说明 Jev 对“是哪一件/数字是剩余还是用掉/是否新买/日期是否用户说的”有疑问，按 jev_concern 修正后重新提出，拿不准就直接问用户。其他需要判断的情况也可以用 judge_with_jev。Jev 的结果是参考，不是授权。" : "")

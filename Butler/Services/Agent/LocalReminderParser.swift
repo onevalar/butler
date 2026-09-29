@@ -11,6 +11,8 @@ enum LocalReminderParser {
     }
 
     static func parse(_ raw: String, now: Date = .now, calendar: Calendar = .current) -> Result? {
+        // This offline fallback creates notifications only. Never downgrade an explicit alarm request.
+        guard !["闹钟", "响铃", "叫醒", "倒计时", "计时器"].contains(where: raw.contains) else { return nil }
         guard raw.contains("提醒") || raw.contains("叫我") || raw.contains("通知") else { return nil }
         let text = normalizeNumbers(raw.replacingOccurrences(of: "：", with: ":"))
         var repeats: TimedReminder.Repeat = .none

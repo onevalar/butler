@@ -20,6 +20,7 @@ struct PendingChange: Identifiable, Codable {
         case taskAction(UUID, TaskAction, expectedRevision: Int)
         case settings([ButlerSettingChange])
         case weatherLocation(WeatherLocation, before: WeatherLocation)
+        case alarm(ButlerAlarm.Change)
     }
 
     var id = UUID()
@@ -51,6 +52,7 @@ final class ButlerTools {
     var conversation: (() -> ConversationArchive)?
     var currentContext: (() -> String)?
     var weather: WeatherStore = .shared
+    @ObservationIgnored lazy var alarms: AlarmStore = .shared
     var inputPhotos: [Data] = []
     var displayedCollection: ItemCollection?
     /// The list the conversation is currently showing, and this turn's edit of it (applied in place).
@@ -99,7 +101,7 @@ final class ButlerTools {
     // MARK: - Tool definitions
 
     var toolJSON: String {
-        var tools = Self.inventoryTools + "," + Self.contextTools + "," + Self.pendingTools + "," + Self.itemTools + "," + Self.weatherTools
+        var tools = Self.inventoryTools + "," + Self.contextTools + "," + Self.pendingTools + "," + Self.itemTools + "," + Self.weatherTools + "," + Self.alarmTools
         if conversation != nil { tools += "," + Self.conversationTools }
         if jev.isAvailable { tools += "," + Self.jevTool }
         return "[" + tools + "]"
@@ -171,6 +173,7 @@ final class ButlerTools {
         defer { insistedConcern = nil }
         do {
             let data = Data(call.arguments.utf8)
+            if let output = try executeAlarmTool(call.name, data: data) { return output }
             if let output = try await executeWeatherTool(call.name, data: data) { return output }
             if let output = try executeItemTool(call.name, data: data) { return output }
             if let output = try executePendingTool(call.name, data: data) { return output }
@@ -352,6 +355,8 @@ final class ButlerTools {
             return (try? encode(["error": error.message, "saved": false] as [String: Any])) ?? #"{"error":"invalid"}"#
         } catch let error as ReminderSchedule.InvalidRule {
             return (try? encode(["error": error.localizedDescription, "saved": false] as [String: Any])) ?? #"{"error":"invalid_rule"}"#
+        } catch let error as AlarmFailure {
+            return (try? encode(["error": error.localizedDescription, "saved": false] as [String: Any])) ?? #"{"error":"alarm_failed"}"#
         } catch let error as JevClient.JevError {
             return (try? encode(["error": "jev_failed", "detail": error.localizedDescription,
                                  "hint": "自己判断并继续"] as [String: Any])) ?? #"{"error":"jev_failed"}"#
@@ -362,7 +367,10 @@ final class ButlerTools {
 
     /// Applies every pending change in order. Returns one line per change for the chat and the model.
     func confirmAll(ids: Set<UUID>? = nil) -> [String] {
-        let selected = pending.filter { ids == nil || ids!.contains($0.id) }
+        let selected = pending.filter {
+            if case .alarm = $0.kind { return false } // Committed only by confirmIncludingAlarms.
+            return ids == nil || ids!.contains($0.id)
+        }
         let selectedIDs = Set(selected.map(\.id))
         // Validate all previews before this batch changes revisions itself.
         var stale: Set<UUID> = []
@@ -429,6 +437,7 @@ final class ButlerTools {
                     Task { await weather.refresh(force: true) }
                 case .settings(let changes):
                     try ButlerSettingsService.apply(changes, defaults: settingsDefaults, jev: jev as? JevClient)
+                case .alarm: continue
                 }
                 results.append("✓ \(change.title)")
             } catch {
