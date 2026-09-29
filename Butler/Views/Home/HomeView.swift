@@ -176,9 +176,8 @@ struct HomeView: View {
             .accessibilityLabel("日期与记录")
             .accessibilityHint("打开完整日期面板，清单当前显示\(Self.label(for: listDay, today: agenda.today, calendar: calendar))")
         }
-        .padding(.leading, 18).padding(.trailing, 16)
+        .padding(.leading, 4)
         .frame(height: 44)
-        .glassEffect(.regular.interactive(), in: .capsule)
     }
 
     static func label(for day: Date, today: Date, calendar: Calendar = .current) -> String {
@@ -331,7 +330,7 @@ struct HomeRowView: View {
     }
 }
 
-/// Quick actions apply to their target; “其他安排” discusses the entire visible reminder.
+/// Quick actions apply to their target; the last button “其他” discusses the entire visible reminder.
 struct BriefCard: View {
     let brief: ButlerBrief
     let busy: Bool
@@ -357,33 +356,29 @@ struct BriefCard: View {
                 WeatherGreeting(greeting: brief.greeting)
                 if busy { Text("小当家正在更新…").font(.caption).foregroundStyle(.secondary).accessibilityAddTraits(.updatesFrequently) }
                 Spacer(minLength: 8)
-                if !brief.text.isEmpty {
-                    Button { onOther(brief) } label: {
-                        HStack(spacing: 3) {
-                            Text("其他安排")
-                            Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold))
-                        }
-                        .font(.footnote).foregroundStyle(.secondary)
-                        .padding(.vertical, 6).padding(.leading, 12).contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("其他安排")
-                    .accessibilityHint("讨论当前整张管家提醒，包含其中提到的所有事情")
-                }
             }
             Text(brief.text)
                 .font(.system(size: 17, weight: .medium))
                 .lineSpacing(4)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
-            if let target = brief.target {
+            if !brief.text.isEmpty {
                 FlowLayout(spacing: 8, lineSpacing: 8) {
-                    ForEach(Array(brief.actions.enumerated()), id: \.element.id) { index, action in
-                        Button { onAction(action, target) } label: {
-                            briefButtonLabel(action.label, primary: index == 0)
+                    if let target = brief.target {
+                        ForEach(Array(brief.actions.enumerated()), id: \.element.id) { index, action in
+                            Button { onAction(action, target) } label: {
+                                briefButtonLabel(action.label, primary: index == 0)
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
+                    // Last in the row, same shape as the rest: none of these fit, talk it through.
+                    Button { onOther(brief) } label: {
+                        briefButtonLabel("其他", primary: false)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("其他")
+                    .accessibilityHint("讨论当前整张管家提醒，包含其中提到的所有事情")
                 }
             }
         }

@@ -126,12 +126,6 @@ struct ButlerChatView: View {
             // Reserve room for the floating controls without a system bar backdrop or separator.
             .safeAreaInset(edge: .bottom, spacing: 0) { composer }
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    ButlerOrb(size: 30, active: chat.working || dictation.listening)
-                        .accessibilityHidden(true)
-                }
-                // The system puts its own glass disc behind toolbar items; the orb is glass already.
-                .sharedBackgroundVisibility(.hidden)
                 ToolbarItem(placement: .principal) {
                     VStack(spacing: 1) {
                         Text(chat.contextTitle)
@@ -147,7 +141,7 @@ struct ButlerChatView: View {
                     .accessibilityElement(children: .combine)
                     .accessibilityAddTraits(.isHeader)
                 }
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .topBarLeading) {
                     Menu {
                         if let onGeneralChat {
                             Button("通用对话", systemImage: "bubble.left.and.bubble.right") {
