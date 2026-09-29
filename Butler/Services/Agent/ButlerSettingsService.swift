@@ -16,7 +16,7 @@ enum ButlerSettingsService {
     static let definitions: [(key: String, title: String, fallback: String, values: String)] = [
         ("appearanceMode", "显示模式", "system", "system,light,dark"),
         ("accentChoice", "主题色", "glass", "glass,celadon,ocean,amber,berry,dusk"),
-        ("ambientGlow", "背景光", "true", "true,false"),
+        ("appTheme", "主题背景", "mist", "mist,window,plain"),
         ("expiryWarningDays", "到期提前天数", "2", "0,1,2,3,7"),
         ("reminderMinutes", "默认提醒时刻（零点起分钟数）", "540", "0...1439"),
         ("jevEnabled", "启用 Jev", "true", "true,false"),
@@ -27,8 +27,9 @@ enum ButlerSettingsService {
 
     static func value(_ key: String, defaults: UserDefaults) -> String {
         guard let definition = definitions.first(where: { $0.key == key }) else { return "" }
+        if key == "appTheme" { return AppTheme.stored(in: defaults).rawValue }
         guard let object = defaults.object(forKey: key) else { return definition.fallback }
-        if ["ambientGlow", "jevEnabled", "jevPrefetchEnabled", "showSystemCalendar"].contains(key) {
+        if ["jevEnabled", "jevPrefetchEnabled", "showSystemCalendar"].contains(key) {
             return defaults.bool(forKey: key) ? "true" : "false"
         }
         return String(describing: object)
@@ -66,7 +67,7 @@ enum ButlerSettingsService {
         for change in changes {
             switch change.key {
             case "expiryWarningDays", "reminderMinutes": defaults.set(Int(change.after), forKey: change.key)
-            case "ambientGlow", "jevEnabled", "jevPrefetchEnabled", "showSystemCalendar":
+            case "jevEnabled", "jevPrefetchEnabled", "showSystemCalendar":
                 defaults.set(change.after == "true", forKey: change.key)
             default: defaults.set(change.after, forKey: change.key)
             }

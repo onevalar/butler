@@ -11,6 +11,7 @@ struct ButlerApp: App {
             "expiryWarningDays": 2,
             "reminderMinutes": 9 * 60,
         ])
+        AppTheme.migrateLegacyGlow()
         FontRegistry.registerBundledFonts()
         if !Self.isRunningTests { NotificationManager.shared.installDelegate() }
 

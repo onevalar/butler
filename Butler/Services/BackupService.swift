@@ -249,10 +249,14 @@ enum BackupService {
             guard let value = backup.settings[key] else { continue }
             switch key {
             case "expiryWarningDays", "reminderMinutes": if let number = Int(value) { defaults.set(number, forKey: key) }
-            case "showSystemCalendar", "ambientGlow", "jevEnabled", "jevPrefetchEnabled":
+            case "showSystemCalendar", "jevEnabled", "jevPrefetchEnabled":
                 defaults.set(value == "1" || value == "true", forKey: key)
             default: defaults.set(value, forKey: key)
             }
+        }
+        // A backup from before themes only knows the old 背景光 switch: off meant 素净.
+        if backup.settings["appTheme"] == nil, let glow = backup.settings["ambientGlow"] {
+            defaults.set(glow == "1" || glow == "true" ? AppTheme.mist.rawValue : AppTheme.plain.rawValue, forKey: AppTheme.storageKey)
         }
         NotificationCenter.default.post(name: .butlerBackupRestored, object: nil)
     }

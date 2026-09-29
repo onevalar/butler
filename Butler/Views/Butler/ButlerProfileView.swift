@@ -28,9 +28,9 @@ struct ButlerHero: View {
     }
 }
 
-struct UnderstandingCard: View {
+struct UnderstandingCard<Editor: View>: View {
     let chat: ButlerChat
-    let onEdit: () -> Void
+    let editor: Editor
 
     var body: some View {
         let notes = chat.tools?.notes.records ?? []
@@ -39,9 +39,7 @@ struct UnderstandingCard: View {
             HStack {
                 Label("我对你的了解", systemImage: "sparkle").font(.headline)
                 Spacer()
-                Button(action: onEdit) { Image(systemName: "square.and.pencil") }
-                    .buttonStyle(.plain).foregroundStyle(.secondary)
-                    .accessibilityLabel("编辑关于我和家里")
+                Image(systemName: "square.and.pencil").foregroundStyle(.secondary).accessibilityHidden(true)
             }
             if profile.isEmpty && notes.isEmpty {
                 Text("还不太了解你。聊天时说说你的习惯，比如“饮用水我都放卫生间”“周末去盒马买菜”，我会记下来。")
@@ -61,6 +59,11 @@ struct UnderstandingCard: View {
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard()
+        // The whole card opens the editor; the link is hidden so the row shows no second chevron.
+        .background { NavigationLink { editor } label: { EmptyView() }.opacity(0) }
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("编辑关于我和家里")
+        .accessibilityAddTraits(.isButton)
     }
 }
 

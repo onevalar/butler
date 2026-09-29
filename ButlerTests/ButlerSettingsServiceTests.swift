@@ -27,19 +27,19 @@ final class ButlerSettingsServiceTests: XCTestCase {
         // Suites still see the process registration domain (including AppStorage defaults).
         // Compare explicit original values rather than assuming a missing object is nil.
         store.set("light", forKey: "appearanceMode")
-        store.set(true, forKey: "ambientGlow")
+        store.set("mist", forKey: "appTheme")
         store.set(540, forKey: "reminderMinutes")
         let changes = try [
             ButlerSettingsService.proposal(key: "appearanceMode", value: "dark", defaults: store),
-            ButlerSettingsService.proposal(key: "ambientGlow", value: "false", defaults: store),
+            ButlerSettingsService.proposal(key: "appTheme", value: "plain", defaults: store),
             ButlerSettingsService.proposal(key: "reminderMinutes", value: "1234", defaults: store)
         ]
         XCTAssertEqual(store.string(forKey: "appearanceMode"), "light")
-        XCTAssertEqual(store.object(forKey: "ambientGlow") as? Bool, true)
+        XCTAssertEqual(store.string(forKey: "appTheme"), "mist")
         XCTAssertEqual(store.object(forKey: "reminderMinutes") as? Int, 540)
         try ButlerSettingsService.apply(changes, defaults: store, jev: nil)
         XCTAssertEqual(store.string(forKey: "appearanceMode"), "dark")
-        XCTAssertEqual(store.object(forKey: "ambientGlow") as? Bool, false)
+        XCTAssertEqual(store.string(forKey: "appTheme"), "plain")
         XCTAssertEqual(store.object(forKey: "reminderMinutes") as? Int, 1234)
     }
 
@@ -57,7 +57,7 @@ final class ButlerSettingsServiceTests: XCTestCase {
 
     func testInvalidValuesAndDuplicateKeysAreRejected() throws {
         let store = defaults()
-        for (key, value) in [("appearanceMode", "purple"), ("ambientGlow", "1"),
+        for (key, value) in [("appearanceMode", "purple"), ("appTheme", "rainbow"),
                              ("reminderMinutes", "-1"), ("reminderMinutes", "1440"),
                              ("expiryWarningDays", "999"), ("butlerProfile", String(repeating: "字", count: 4001))] {
             XCTAssertThrowsError(try ButlerSettingsService.proposal(key: key, value: value, defaults: store), key)

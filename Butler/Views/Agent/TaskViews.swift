@@ -13,11 +13,11 @@ struct TaskListView: View {
 
     var body: some View {
         List {
-            Toggle("显示已完成和已取消", isOn: $includeFinished)
+            Toggle("显示已完成和已取消", isOn: $includeFinished).glassRows()
             if let warning = store.scheduleWarning {
-                Label(warning, systemImage: "exclamationmark.bubble").font(.footnote).foregroundStyle(.orange)
+                Label(warning, systemImage: "exclamationmark.bubble").font(.footnote).foregroundStyle(.orange).glassRows()
             }
-            if values.isEmpty { Text("还没有任务，告诉管家你想安排什么。").foregroundStyle(.secondary) }
+            if values.isEmpty { Text("还没有任务，告诉管家你想安排什么。").foregroundStyle(.secondary).glassRows() }
             ForEach(values) { task in
                 Button { onOpen(task.id) } label: {
                     VStack(alignment: .leading, spacing: 6) {
@@ -25,8 +25,10 @@ struct TaskListView: View {
                         Text(task.whenLabel).font(.footnote).foregroundStyle(.secondary)
                     }.padding(.vertical, 4)
                 }
+                .glassRows()
             }
         }
+        .glassList()
         .navigationTitle("任务与历史")
         .toolbar { Button("新任务", systemImage: "plus", action: onCreate) }
         .orbScrollTracking()
@@ -55,6 +57,7 @@ struct TaskDetailView: View {
                     if let date = task.autoCompleteAt { LabeledContent("自动标记完成", value: date.formatted()) }
                     if let warning = store.scheduleWarning { Text(warning).font(.footnote).foregroundStyle(.orange) }
                 }
+                .glassRows()
                 Section("提醒规则预览") {
                     DisclosureGroup("完整提醒规则") {
                         Text(ReminderSchedule.ruleSummary(task))
@@ -68,6 +71,7 @@ struct TaskDetailView: View {
                     ForEach(dates, id: \.self) { date in Text(date.formatted(date: .abbreviated, time: .shortened)) }
                     if !dates.isEmpty { Text("按当前规则计算；实际通知还受系统授权和排程容量影响。").font(.footnote).foregroundStyle(.secondary) }
                 }
+                .glassRows()
                 Section {
                     Button("和管家讨论这个任务", systemImage: "bubble.left.and.bubble.right", action: onChat)
                     NavigationLink("相关对话") { RelatedConversationView(scope: .task(id), sessions: sessions, onOpen: onOpenScope) }
@@ -78,6 +82,7 @@ struct TaskDetailView: View {
                         Button("取消任务", role: .destructive) { confirmCancel = true }
                     }
                 }
+                .glassRows()
                 Section("做过什么") {
                     if task.activity.isEmpty { Text("还没有操作记录").foregroundStyle(.secondary) }
                     ForEach(task.activity.reversed()) { event in
@@ -87,9 +92,11 @@ struct TaskDetailView: View {
                         }
                     }
                 }
+                .glassRows()
                 if let error { Text(error).foregroundStyle(.red) }
             } else { ContentUnavailableView("任务不存在", systemImage: "checklist", description: Text("它可能已从备份中移除。")) }
         }
+        .glassList()
         .navigationTitle("任务")
         .navigationBarTitleDisplayMode(.inline)
         .orbScrollTracking()
@@ -120,9 +127,9 @@ struct RelatedConversationView: View {
 
     var body: some View {
         List {
-            Button("继续这个对象的对话", systemImage: "bubble.left") { onOpen(scope) }
+            Button("继续这个对象的对话", systemImage: "bubble.left") { onOpen(scope) }.glassRows()
             let turns = sessions?.relatedTurns(for: scope) ?? []
-            if turns.isEmpty { Text("这里会保留这个对象的对话，以及其他会话中关联到它的内容。").foregroundStyle(.secondary) }
+            if turns.isEmpty { Text("这里会保留这个对象的对话，以及其他会话中关联到它的内容。").foregroundStyle(.secondary).glassRows() }
             ForEach(turns.reversed()) { item in
                 Section {
                     Text(item.turn.question).font(.body.bold())
@@ -132,8 +139,10 @@ struct RelatedConversationView: View {
                 } header: {
                     Text("\(item.scope.title) · \(item.turn.date.formatted())")
                 }
+                .glassRows()
             }
         }
+        .glassList()
         .navigationTitle("相关对话")
         .navigationBarTitleDisplayMode(.inline)
         .orbScrollTracking()

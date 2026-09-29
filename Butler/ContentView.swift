@@ -8,11 +8,27 @@ enum Route: Hashable {
     case tasks
     case day(Date)
     case overview
+    /// 这周还有…: the schedule overview opened on its list.
+    case upcoming
     case memories
     /// 家里: everything at home.
     case items
     /// 管家与设置.
     case butler
+}
+
+/// The year-long agenda is worth keeping until what it is built from changes.
+final class AgendaCache {
+    var key: AgendaKey?
+    var agenda: HomeAgenda?
+}
+
+struct AgendaKey: Hashable {
+    let lots: [String]
+    let products: [String]
+    let tasks: [String]
+    let events: Int
+    let minute: Int
 }
 
 struct ContentView: View {
@@ -42,6 +58,12 @@ struct ContentView: View {
     @State private var reminders = ReminderStore.openOnDevice()
     @State private var calendarFeed = CalendarFeed()
     @State private var selectedDay = Calendar.current.startOfDay(for: .now)
+    @State private var agendaCache = AgendaCache()
+    @State private var briefService = BriefService()
+    @State private var snoozeRevision = 0
+    /// A brief button that changes medicine stock asks once more.
+    @State private var confirmingBrief: (action: BriefAction, target: BriefTarget)?
+    @State private var briefError: String?
 
     @AppStorage("onboardingDone") private var onboardingDone = false
     @Environment(\.openURL) private var openURL
@@ -63,25 +85,53 @@ struct ContentView: View {
         lots.map { "\($0.id)|\($0.revision)" }.sorted() + [refreshID.uuidString]
     }
 
+    /// What the butler might raise right now, most pressing first (things already snoozed are left out).
+    private func briefCandidates(facts: [LotFacts], agenda: HomeAgenda) -> [BriefCandidate] {
+        BriefCandidates.make(facts: facts, agenda: agenda, now: agendaNow, snoozed: BriefSnoozes.active(now: agendaNow))
+    }
+
     var body: some View {
         let facts = facts
-        let agenda = HomeAgenda.build(lots: facts, reminders: reminders.reminders, events: calendarFeed.events, now: agendaNow)
-        let brief = DailyBrief.compose(agenda: agenda, lotCount: facts.count, reminderCount: reminders.active.count,
-                                       usesCalendar: calendarFeed.enabled && calendarFeed.canRead, now: agendaNow)
+        // A year ahead: home swipes between days, the date panel shows dots, and the overview needs the same.
+        let agenda = yearAgenda(facts: facts)
+        let candidates = briefCandidates(facts: facts, agenda: agenda)
+        let briefKey = BriefCandidates.signature(candidates, now: agendaNow) + "|\(facts.count)|\(reminders.active.count)|\(calendarFeed.enabled)"
         NavigationStack(path: $path) {
             HomeView(
                 agenda: agenda,
+                facts: facts,
                 selectedDay: $selectedDay,
+                now: agendaNow,
+                brief: briefService.brief,
+                briefBusy: briefService.isThinking,
+                pendingTaskCount: agenda.pending(on: agenda.today, at: agendaNow).count,
                 onOpen: open,
-                onOpenDay: { path.append(.day($0)) },
                 onOpenInventory: { path.append(.items) },
                 onOpenOverview: { path.append(.overview) },
+                onOpenUpcoming: { path.append(.upcoming) },
                 onOpenButler: { path.append(.butler) },
                 onOpenTasks: { path.append(.tasks) },
-                brief: brief
+                onBriefAction: { action, target in briefTapped(action, target, facts: facts) },
+                onBriefOther: { target in openChat(scope: target.scope, .typing) }
             )
             .navigationDestination(for: Route.self) { destination($0, facts: facts) }
         }
+        .onChange(of: briefKey + "|\(snoozeRevision)", initial: true) {
+            briefService.update(candidates: candidates, lotCount: facts.count, taskCount: reminders.active.count,
+                                usesCalendar: calendarFeed.enabled && calendarFeed.canRead, now: agendaNow)
+        }
+        .alert("\(confirmingBrief?.action.label ?? "")？", isPresented: Binding(get: { confirmingBrief != nil }, set: { if !$0 { confirmingBrief = nil } })) {
+            Button("确认") {
+                if let pending = confirmingBrief { runBrief(pending.action, pending.target, facts: facts) }
+                confirmingBrief = nil
+            }
+            Button("取消", role: .cancel) { confirmingBrief = nil }
+        } message: {
+            Text("这是药品，确认后才会更新库存。")
+        }
+        .alert("没能完成", isPresented: Binding(get: { briefError != nil }, set: { if !$0 { briefError = nil } })) {
+            Button("知道了", role: .cancel) { briefError = nil }
+        } message: { Text(briefError ?? "") }
         // Every page scrolls clear of the orb.
         .contentMargins(.bottom, 96, for: .scrollContent)
         .overlay {
@@ -117,6 +167,7 @@ struct ContentView: View {
                 let store = ChatSessions(container: modelContext.container, reminders: reminders)
                 sessions = store
                 chat = store.chat(for: .general)
+                briefService.attach(store.connection)
                 NotificationManager.shared.reminderStore = reminders
                 reminders.rescheduleAll()
             }
@@ -135,6 +186,7 @@ struct ContentView: View {
                 try? reminders.add(TimedReminder(text: "取快递", fireDate: friday))
             }
             #endif
+            calendarFeed.horizonDays = 370
             await calendarFeed.refresh()
             // Items with dates already exist but reminders were never allowed: ask once (the guide asks new users).
             if !Self.isTesting, onboardingDone, facts.contains(where: { $0.governingDate != nil }) {
@@ -228,9 +280,15 @@ struct ContentView: View {
                 showingChat = true
             })
         case .day(let day):
-            DayScheduleView(agenda: yearAgenda, day: day, onOpen: open)
+            DayScheduleView(agenda: yearAgenda(facts: facts), day: day, onOpen: open)
         case .overview:
-            CalendarOverviewView(agenda: yearAgenda, onOpenDay: { path.append(.day($0)) }, onOpen: open)
+            CalendarOverviewView(agenda: yearAgenda(facts: facts), onOpenDay: { path.append(.day($0)) }, onOpen: open)
+                .task {
+                    calendarFeed.horizonDays = 370
+                    await calendarFeed.refresh()
+                }
+        case .upcoming:
+            CalendarOverviewView(agenda: yearAgenda(facts: facts), initialMode: .list, onOpenDay: { path.append(.day($0)) }, onOpen: open)
                 .task {
                     calendarFeed.horizonDays = 370
                     await calendarFeed.refresh()
@@ -247,15 +305,53 @@ struct ContentView: View {
         }
     }
 
-    /// A year ahead, for the overview and for days opened from it.
-    private var yearAgenda: HomeAgenda {
-        HomeAgenda.build(lots: facts, reminders: reminders.reminders, events: calendarFeed.events, now: agendaNow, dayCount: 366)
+    /// A year ahead, for home, the overview and the days opened from it. Rebuilt only when its inputs change.
+    private func yearAgenda(facts: [LotFacts]) -> HomeAgenda {
+        let key = AgendaKey(
+            lots: lots.map { "\($0.id)|\($0.revision)|\($0.stateRawValue)|\($0.storageLocation ?? "")" },
+            products: products.map { "\($0.id)|\($0.revision)" },
+            tasks: reminders.reminders.map { "\($0.id)|\($0.revision)|\($0.status)|\($0.activity.count)" },
+            events: calendarFeed.events.hashValue,
+            minute: Int(agendaNow.timeIntervalSince1970 / 60))
+        if agendaCache.key == key, let cached = agendaCache.agenda { return cached }
+        let built = HomeAgenda.build(lots: facts, reminders: reminders.reminders, events: calendarFeed.events, now: agendaNow, dayCount: 366)
+        agendaCache.key = key
+        agendaCache.agenda = built
+        return built
     }
 
     private func openChat(_ start: ChatStart) {
-        selectChat(currentScope)
+        openChat(scope: currentScope, start)
+    }
+
+    /// Opens the conversation that belongs to one thing (an item, a task), so what is said stays about that thing.
+    private func openChat(scope: ChatScope, _ start: ChatStart) {
+        selectChat(scope)
         chatRequest = ChatRequest(start: start)
         showingChat = true
+    }
+
+    private func briefTapped(_ action: BriefAction, _ target: BriefTarget, facts: [LotFacts]) {
+        if action.effect.changesData, case .lot(let id) = target, facts.first(where: { $0.id == id })?.isMedicine == true {
+            confirmingBrief = (action, target)
+        } else {
+            runBrief(action, target, facts: facts)
+        }
+    }
+
+    private func runBrief(_ action: BriefAction, _ target: BriefTarget, facts: [LotFacts]) {
+        let runner = BriefActionRunner(container: modelContext.container, reminders: reminders)
+        Task {
+            switch await runner.run(action, target: target, facts: facts, now: agendaNow) {
+            case .done: snoozeRevision += 1
+            case .open:
+                switch target {
+                case .lot(let id): path.append(.lot(id))
+                case .task(let id): path.append(.task(id))
+                }
+            case .failed(let message): briefError = message
+            }
+        }
     }
 
     /// Opens the conversation with a sentence already started, e.g. "买了".

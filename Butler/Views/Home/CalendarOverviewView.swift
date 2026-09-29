@@ -3,12 +3,23 @@ import SwiftUI
 /// Everything ahead, beyond this week: month calendars, a year at a glance, or one long list.
 struct CalendarOverviewView: View {
     let agenda: HomeAgenda
+    var initialMode: Mode = .month
     let onOpenDay: (Date) -> Void
     let onOpen: (AgendaEntry.Target) -> Void
 
     enum Mode: String, CaseIterable { case month = "月", year = "年", list = "列表" }
 
-    @State private var mode: Mode = .month
+    @State private var mode: Mode
+
+    init(agenda: HomeAgenda, initialMode: Mode = .month, onOpenDay: @escaping (Date) -> Void,
+         onOpen: @escaping (AgendaEntry.Target) -> Void) {
+        self.agenda = agenda
+        self.initialMode = initialMode
+        self.onOpenDay = onOpenDay
+        self.onOpen = onOpen
+        _mode = State(initialValue: initialMode)
+    }
+
     @State private var jumpTo: Date?
     private let calendar = Calendar.current
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
