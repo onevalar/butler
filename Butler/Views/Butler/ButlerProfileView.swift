@@ -1,32 +1,6 @@
 import SwiftUI
 
-// The top of 管家与设置: who the butler is, what it knows about the owner, and its diary.
-
-struct ButlerHero: View {
-    let chat: ButlerChat
-    @AppStorage("butlerSince") private var sinceStamp: Double = 0
-
-    private var since: Date {
-        let stored = sinceStamp > 0 ? Date(timeIntervalSince1970: sinceStamp) : .now
-        return min(stored, chat.turns.first?.date ?? stored)
-    }
-
-    private var dayCount: Int {
-        let calendar = Calendar.current
-        return (calendar.dateComponents([.day], from: calendar.startOfDay(for: since), to: calendar.startOfDay(for: .now)).day ?? 0) + 1
-    }
-
-    var body: some View {
-        VStack(spacing: 8) {
-            Text("小当家").font(.largeTitle.bold())
-            Text("从 \(since.formatted(.dateTime.year().month().day().locale(Locale(identifier: "zh_CN")))) 起陪你 · 第 \(dayCount) 天")
-                .font(.subheadline).foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.bottom, 4)
-        .accessibilityElement(children: .combine)
-    }
-}
+// The top of 管家与设置: what the butler knows about the owner, and its diary.
 
 struct UnderstandingCard<Editor: View>: View {
     let chat: ButlerChat

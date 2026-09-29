@@ -26,12 +26,6 @@ struct ButlerSettingsView: View {
     var body: some View {
         Form {
             Section {
-                ButlerHero(chat: chat)
-            }
-            .listRowBackground(Color.clear)
-            .listRowInsets(EdgeInsets())
-
-            Section {
                 UnderstandingCard(chat: chat, editor: ProfileSettingsPage(chat: chat))
             }
             .listRowBackground(Color.clear)
@@ -64,7 +58,7 @@ struct ButlerSettingsView: View {
             } header: {
                 Text("管家")
             } footer: {
-                Text("买了什么、还剩多少、放在哪，记在首页右上角的“家里”（现在 \(activeLots.count) 件）。习惯和偏好（常在哪买、习惯放哪、忌口）记在“习惯和偏好”里。")
+                Text("买了什么、还剩多少、放在哪，记在首页右上角的“物品”（现在 \(activeLots.count) 件）。习惯和偏好（常在哪买、习惯放哪、忌口）记在“习惯和偏好”里。")
             }
             .glassRows()
 
@@ -103,20 +97,17 @@ struct ButlerSettingsView: View {
             .glassRows()
 
             #if DEBUG
-            Section {
-                NavigationLink("Jev 自动对照测试") { JevEvaluationView(connection: chat.connection) }
-                    .disabled(chat.working || hasOtherWork)
-            } footer: {
-                Text("使用虚构库存自动完成 32 个测试对话；消耗现有模型额度，不修改家里的真实数据。这组测试比较修改核对流程，不包含提前准备查询资料。")
+            // Developer checks only: hidden unless the app is launched with --dev-tools.
+            if ProcessInfo.processInfo.arguments.contains("--dev-tools") {
+                Section("开发者测试") {
+                    NavigationLink("Jev 自动对照测试") { JevEvaluationView(connection: chat.connection) }
+                        .disabled(chat.working || hasOtherWork)
+                    Button("按住说话 · 连续触感") { showVoiceTrial = true }
+                        .disabled(chat.working || hasOtherWork)
+                }
+                .glassRows()
             }
-            .glassRows()
             #endif
-
-            Section("交互试用") {
-                Button("按住说话 · 连续触感") { showVoiceTrial = true }
-                    .disabled(chat.working || hasOtherWork)
-            }
-            .glassRows()
 
             Section("关于") {
                 LabeledContent("版本", value: Self.version)
@@ -126,7 +117,7 @@ struct ButlerSettingsView: View {
         }
         .glassList()
         .fullScreenCover(isPresented: $showVoiceTrial) { VoicePressTrialView() }
-        .navigationTitle("管家与设置").navigationBarTitleDisplayMode(.inline)
+        .compactTitle("管家与设置") { EmptyView() }
         .toolbar {
             if showsDone { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
         }
