@@ -193,12 +193,12 @@ struct HomeView: View {
 
     private var dayList: some View {
         let list = HomeList.build(day: listDay, agenda: agenda, facts: facts,
-                                  featured: isToday ? brief.target?.agendaTarget : nil, now: now)
+                                  featured: nil, now: now)
         return VStack(spacing: 0) {
             if list.rows.isEmpty && list.completed.isEmpty {
                 HStack(spacing: 10) {
                     Image(systemName: "checkmark.circle").foregroundStyle(.secondary)
-                    Text(isToday ? (brief.target == nil ? "今天没有别的安排" : "除了上面这件，今天没有别的安排") : "这天没有安排")
+                    Text(isToday ? "今天没有别的安排" : "这天没有安排")
                         .font(.subheadline).foregroundStyle(.secondary)
                     Spacer()
                 }
@@ -394,7 +394,7 @@ struct BriefCard: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
             // A quiet day (nothing to raise) has no buttons at all, not even 其他.
-            if brief.target != nil {
+            if brief.target != nil || brief.hasSubject == true {
                 FlowLayout(spacing: 8, lineSpacing: 8) {
                     if let target = brief.target {
                         ForEach(Array(brief.actions.enumerated()), id: \.element.id) { index, action in

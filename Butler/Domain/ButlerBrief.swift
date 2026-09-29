@@ -95,6 +95,9 @@ struct ButlerBrief: Equatable, Codable {
     /// Quick actions for target; the separate conversation entry discusses the whole card.
     var actions: [BriefAction]
     var source: Source
+    /// The card sums up something (today's arrangements, things to handle), even when no single thing has buttons.
+    /// Only a truly quiet card leaves out 其他. Optional so briefs cached before it still decode.
+    var hasSubject: Bool? = nil
 }
 
 // MARK: - Candidates
@@ -125,8 +128,8 @@ struct BriefCandidate: Equatable {
 }
 
 enum BriefCandidates {
-    /// Most pressing first: overdue food, tasks that have come due, tasks later today (within 3 hours before food
-    /// about to expire, later ones after it), things running low. A day with only upcoming tasks is never "quiet".
+    /// Most pressing first (overdue food, tasks that have come due, food about to expire, things running low), then
+    /// the rest of today's tasks as context for the overview. A day with only upcoming tasks is never "quiet".
     static func make(facts: [LotFacts], agenda: HomeAgenda, now: Date, snoozed: Set<String> = [],
                      calendar: Calendar = .current, limit: Int = 5) -> [BriefCandidate] {
         let byID = Dictionary(facts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -143,30 +146,28 @@ enum BriefCandidates {
                                       detail: "已到时间，还没完成" + (entry.start.map { "（\($0.clockTime)）" } ?? ""),
                                       quantity: nil, unit: nil, daysLeft: nil, location: nil, isMedicine: false))
         }
-        // Still to come today: the train at 07:09 matters more than yoghurt due in three days.
-        let upcoming = agenda.entries(on: agenda.today).filter { entry in
-            guard entry.kind == .reminder, !entry.isCompleted, !entry.isRoutine, let start = entry.start, start > now,
-                  case .reminder(let id) = entry.target else { return false }
-            return seenTasks.insert(id).inserted
-        }.sorted { ($0.start ?? now) < ($1.start ?? now) }.prefix(2)
-        func upcomingCandidate(_ entry: AgendaEntry) -> BriefCandidate? {
-            guard case .reminder(let id) = entry.target, let start = entry.start else { return nil }
-            return BriefCandidate(target: .task(id), kind: .upcomingTask, name: entry.title, detail: "今天 \(start.clockTime)",
-                                  quantity: nil, unit: nil, daysLeft: nil, location: nil, isMedicine: false)
-        }
-        let soon = upcoming.filter { ($0.start ?? now).timeIntervalSince(now) <= 3 * 3600 }
-        out += soon.compactMap(upcomingCandidate)
         for lot in facts.filter({ !$0.quantityOnly && ($0.daysLeft ?? 99) >= 0 && ($0.daysLeft ?? 99) <= 3 })
             .sorted(by: { ($0.daysLeft ?? 0, $0.name) < ($1.daysLeft ?? 0, $1.name) }) {
             let when = lot.daysLeft == 0 ? "今天到期" : lot.daysLeft == 1 ? "明天到期" : "\(lot.daysLeft ?? 0) 天后到期"
             out.append(candidate(lot, .expiringSoon, detail: lot.governingDateKind == .plannedUseBy ? "该吃完了（\(when)）" : when))
         }
-        out += upcoming.filter { !soon.contains($0) }.compactMap(upcomingCandidate)
         for entry in agenda.needsAttention where entry.kind == .lowStock {
             guard case .lot(let id) = entry.target, let lot = byID[id] else { continue }
             out.append(candidate(lot, .lowStock, detail: "只剩 \(lot.quantity) \(lot.unit)"))
         }
-        return Array(out.filter { !snoozed.contains($0.target.key) }.prefix(limit))
+        let pressing = Array(out.filter { !snoozed.contains($0.target.key) }.prefix(limit))
+        // What's still to come today, for the overview only: the card says "two trains this morning", the list
+        // below has the details. These never get buttons of their own.
+        let upcoming = agenda.entries(on: agenda.today).filter { entry in
+            guard entry.kind == .reminder, !entry.isCompleted, !entry.isRoutine, let start = entry.start, start > now,
+                  case .reminder(let id) = entry.target else { return false }
+            return seenTasks.insert(id).inserted
+        }.sorted { ($0.start ?? now) < ($1.start ?? now) }.prefix(6).compactMap { entry -> BriefCandidate? in
+            guard case .reminder(let id) = entry.target, let start = entry.start else { return nil }
+            return BriefCandidate(target: .task(id), kind: .upcomingTask, name: entry.title, detail: "今天 \(start.clockTime)",
+                                  quantity: nil, unit: nil, daysLeft: nil, location: nil, isMedicine: false)
+        }
+        return pressing + upcoming
     }
 
     private static func candidate(_ lot: LotFacts, _ kind: BriefCandidate.Kind, detail: String) -> BriefCandidate {
@@ -192,43 +193,62 @@ enum BriefLocal {
                         calendar: Calendar = .current) -> ButlerBrief {
         let hour = calendar.component(.hour, from: now)
         let greeting = DailyBrief.greeting(hour: hour)
-        guard let top = candidates.first else {
+        let pressing = candidates.filter { $0.kind != .upcomingTask }
+        let upcoming = candidates.filter { $0.kind == .upcomingTask }
+        guard !candidates.isEmpty else {
             let text = lotCount == 0 ? "家里还没记东西。买了什么跟我说一句，我来记着到期。"
                 : "暂时没有新的提醒，其他安排和记录都在下面。"
             return ButlerBrief(greeting: greeting, text: text, basis: basis, target: nil, actions: [], source: .local)
         }
-        var text: String
+        // First the shape of the day, in a few words; the list below has the times and details.
+        var text = upcoming.isEmpty ? "" : overview(upcoming, calendar: calendar)
+        guard let top = pressing.first else {
+            return ButlerBrief(greeting: greeting, text: text, basis: basis, target: nil, actions: [], source: .local, hasSubject: true)
+        }
         var actions: [BriefAction]
         switch top.kind {
         case .expired:
-            text = "\(top.name)\(top.detail)，今天处理掉吧。"
+            text += "\(top.name)\(top.detail)，今天处理掉吧。"
             actions = [BriefAction(label: "扔掉了", effect: .closeLot(.discarded)),
                        BriefAction(label: "已吃完", effect: .closeLot(.depleted)),
                        BriefAction(label: "先放放", effect: .snooze(days: 0))]
             if top.isMedicine { actions.removeAll { $0.effect == .closeLot(.depleted) } }
         case .dueTask:
-            text = "「\(top.name)」到时间了，做了吗？"
+            text += "「\(top.name)」到时间了，做了吗？"
             actions = [BriefAction(label: "做完了", effect: .completeTask),
                        BriefAction(label: "10 分钟后再提醒", effect: .remindLater(minutes: 10))]
-        case .upcomingTask:
-            text = "\(top.detail)有「\(top.name)」，记得留好时间。"
-            actions = [BriefAction(label: "看看详情", effect: .openDetail),
-                       BriefAction(label: "已经办好", effect: .completeTask)]
         case .expiringSoon:
-            text = "\(top.name)\(top.detail)，尽快用掉吧。"
+            text += "\(top.name)\(top.detail)，尽快用掉吧。"
             actions = [BriefAction(label: "已吃完", effect: .closeLot(.depleted)),
                        BriefAction(label: "明天再说", effect: .snooze(days: 0))]
-        case .lowStock:
-            text = "\(top.name)只剩 \(top.quantity ?? 0) \(top.unit ?? "")了，记得买。"
+        case .lowStock, .upcomingTask:
+            text += "\(top.name)只剩 \(top.quantity ?? 0) \(top.unit ?? "")了，记得买。"
             actions = [BriefAction(label: "知道了", effect: .snooze(days: 1))]
         }
         // The rest that also needs a look, in a few words, so the card says everything at a glance.
-        let others = candidates.dropFirst().map(\.name).reduce(into: [String]()) { if !$1.isEmpty, !$0.contains($1) { $0.append($1) } }
+        let others = pressing.dropFirst().map(\.name).reduce(into: [String]()) { if !$1.isEmpty, !$0.contains($1) { $0.append($1) } }
         if !others.isEmpty {
             let shown = others.prefix(2).joined(separator: "、")
             text += "另外\(shown)\(others.count > 2 ? "等 \(others.count) 样" : "")也要留意。"
         }
-        return ButlerBrief(greeting: greeting, text: text, basis: basis, target: top.target, actions: actions, source: .local)
+        return ButlerBrief(greeting: greeting, text: text, basis: basis, target: top.target, actions: actions, source: .local, hasSubject: true)
+    }
+
+    /// "今天还有 2 件安排，最早在早上 6 点多。" Counts and a rough time, never the details.
+    static func overview(_ upcoming: [BriefCandidate], calendar: Calendar = .current) -> String {
+        let times = upcoming.compactMap { candidate -> (Int, Int)? in
+            let parts = candidate.detail.replacingOccurrences(of: "今天 ", with: "").split(separator: ":").compactMap { Int($0) }
+            return parts.count == 2 ? (parts[0], parts[1]) : nil
+        }
+        guard let first = times.first else { return "今天还有 \(upcoming.count) 件安排。" }
+        let when = roughTime(hour: first.0, minute: first.1)
+        return upcoming.count == 1 ? "今天\(when)还有一件安排。" : "今天还有 \(upcoming.count) 件安排，最早在\(when)。"
+    }
+
+    static func roughTime(hour: Int, minute: Int) -> String {
+        let part = hour < 5 ? "凌晨" : hour < 9 ? "早上" : hour < 12 ? "上午" : hour < 14 ? "中午" : hour < 18 ? "下午" : "晚上"
+        let clock = hour > 12 ? hour - 12 : hour
+        return "\(part) \(clock) 点" + (minute == 0 ? "" : "多")
     }
 
     static func basis(lotCount: Int, taskCount: Int, usesCalendar: Bool) -> String {
@@ -251,13 +271,15 @@ enum BriefModelReply {
 
     /// Reads and checks the model's JSON. Anything outside the closed set, or aimed at a thing that isn't a candidate,
     /// is dropped; if the sentence or the target is unusable the whole reply is refused and the local one is used.
-    static func parse(_ reply: String, candidates: [BriefCandidate]) -> (text: String, target: BriefTarget, actions: [BriefAction])? {
+    static func parse(_ reply: String, candidates: [BriefCandidate]) -> (text: String, target: BriefTarget?, actions: [BriefAction])? {
         guard let json = extractJSON(reply), let data = json.data(using: .utf8),
-              let raw = try? JSONDecoder().decode(Raw.self, from: data),
-              let key = raw.target, let target = BriefTarget(key: key),
-              let candidate = candidates.first(where: { $0.target == target }) else { return nil }
+              let raw = try? JSONDecoder().decode(Raw.self, from: data) else { return nil }
         let text = raw.text.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
         guard (4...120).contains(text.count) else { return nil }
+        // No target, or one of today's upcoming tasks: an overview without buttons. A key that isn't a candidate is refused.
+        guard let key = raw.target, !key.isEmpty, key != "null" else { return (text, nil, []) }
+        guard let target = BriefTarget(key: key), let candidate = candidates.first(where: { $0.target == target }) else { return nil }
+        if candidate.kind == .upcomingTask { return (text, nil, []) }
 
         var actions: [BriefAction] = []
         for item in raw.actions ?? [] where actions.count < 3 {
@@ -302,7 +324,11 @@ enum BriefModelReply {
     /// What is sent to the model.
     static func instructions() -> String {
         """
-        你是家庭管家“小当家”。下面给你此刻家里最需要关心的几件事（JSON）。挑其中最值得现在对用户说的一件作为重点（按钮只针对它），用一到两句口语化的中文对他说，总共不超过 60 个字：先说这件事和该怎么办，如果还有别的要留意的事，可以顺带提一句（不用给它按钮）。像熟悉这个家的人，不要用“建议您”，不要堆数字。再根据重点这件事的实际情况，给 2 到 3 个按钮，让他点一下就能处理。
+        你是家庭管家“小当家”。首页顶部这张卡片是今天的总览，下面另有一张“今日提醒”清单，逐条列出每件事的时间和细节。下面给你此刻的情况（JSON）：items 里 kind 为 upcoming_task 的是今天还没到时间的安排，其余是需要处理的事（过期、到点、快到期、快用完）。
+
+        用一到两句口语化的中文写总览，总共不超过 60 个字：先概括今天的安排（合并同类，例如“今天有两趟车，最早一趟一大早”“下午有三件事”），再说最需要处理的一件事和该怎么办。不要复述车次、具体时间、地点、座位等细节，也不要逐条列清单——这些在下面的清单里已经有了；时间只说大概（一大早、上午、傍晚）。像熟悉这个家的人，不要用“建议您”，不要堆数字。
+
+        target 只能是需要处理的那件事（不能是 upcoming_task）；没有需要处理的事时 target 为 null，actions 为空数组，只写总览。有 target 时，按它的实际情况给 2 到 3 个按钮，让他点一下就能处理。
 
         按钮的 effect 只能从下面选，label 是按钮上的字（2 到 6 个字）：
         - close_depleted：这件东西吃完/用完了，从库存里去掉
@@ -316,10 +342,10 @@ enum BriefModelReply {
 
         weather 若存在，只是值得留意的新鲜天气线索，不是必须说出的提醒。先判断它是否会影响当前事情或用户接下来的活动：有明确关系时，最多把一句具体关心自然融进 text，与其他正文同等呈现；没有关系就完全不提。不要为了凑内容每天提醒穿衣、带伞，不把温差本身当成必须加衣的理由，也不把原始 hint 生硬拼在正文前后。没有 weather 时不编造天气。不要转述温度数值、风速、降雨概率等原始气象数据；这些在天气面板查看。不能凭天气创造库存、任务或自动修改规则。
 
-        按钮要贴合这件事，不要每次都给同一组：过期很久的食物，重点是处理掉；快到期但还能吃的，重点是今晚或明天吃掉，可以给“再放放”一两天；药品要谨慎，不要替用户决定扔；任务到点了，重点是做完或稍后再提醒；今天稍后的任务（upcoming_task）是提前提醒一声几点要做什么，可给“看看详情”“已经办好”；快用完的东西，给“知道了”，不必催促。不要给“其他”按钮，App 会自己加。
+        按钮要贴合这件事，不要每次都给同一组：过期很久的食物，重点是处理掉；快到期但还能吃的，重点是今晚或明天吃掉，可以给“再放放”一两天；药品要谨慎，不要替用户决定扔；任务到点了，重点是做完或稍后再提醒；快用完的东西，给“知道了”，不必催促。不要给“其他”按钮，App 会自己加。
 
         只输出一个 JSON，不要任何别的文字：
-        {"target":"<key>","text":"…","actions":[{"label":"…","effect":"…","value":数字或null}]}
+        {"target":"<key>或null","text":"…","actions":[{"label":"…","effect":"…","value":数字或null}]}
         """
     }
 

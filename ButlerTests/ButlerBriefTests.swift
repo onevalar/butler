@@ -47,21 +47,33 @@ final class ButlerBriefTests: XCTestCase {
         XCTAssertEqual(snoozed.map(\.kind), [.dueTask, .expiringSoon, .lowStock])
     }
 
-    func testTasksLaterTodayAreRaisedSoonOnesBeforeFoodAndADayWithOnlyThemIsNotQuiet() throws {
+    func testTheCardSumsUpTodaysTasksWithoutDetailsAndNeverTakesThemOffTheList() throws {
         let now = at(5)
-        let yogurt = lot("红枣酸奶", package: day(2, from: now), now: now)
-        let train = TimedReminder(text: "G2515 北京北→朔州东", fireDate: at(6, 9), createdAt: day(-1, from: now))
-        let evening = TimedReminder(text: "取快递", fireDate: at(18), createdAt: day(-1, from: now))
-        let agenda = HomeAgenda.build(lots: [yogurt], reminders: [train, evening], events: [], now: now)
+        let yogurt = lot("红枣酸奶", package: day(-3, from: now), now: now)
+        let morning = TimedReminder(text: "G2515 北京北 07:09 → 朔州东", fireDate: at(6, 9), createdAt: day(-1, from: now))
+        let noon = TimedReminder(text: "D6061 朔州东 → 太原南", fireDate: at(12, 30), createdAt: day(-1, from: now))
+        let agenda = HomeAgenda.build(lots: [yogurt], reminders: [morning, noon], events: [], now: now)
         let all = BriefCandidates.make(facts: [yogurt], agenda: agenda, now: now)
-        XCTAssertEqual(all.map(\.kind), [.upcomingTask, .expiringSoon, .upcomingTask])
-        XCTAssertEqual(all.first?.detail, "今天 06:09")
+        XCTAssertEqual(all.map(\.kind), [.expired, .upcomingTask, .upcomingTask])
 
-        let onlyTasks = BriefCandidates.make(facts: [], agenda: HomeAgenda.build(lots: [], reminders: [train], events: [], now: now), now: now)
-        let brief = BriefLocal.compose(candidates: onlyTasks, lotCount: 3, basis: "", now: now)
-        XCTAssertEqual(brief.target, .task(train.id))
-        XCTAssertTrue(brief.text.contains("06:09"), brief.text)
-        XCTAssertEqual(brief.actions.map(\.effect), [.openDetail, .completeTask])
+        let brief = BriefLocal.compose(candidates: all, lotCount: 3, basis: "", now: now)
+        XCTAssertTrue(brief.text.hasPrefix("今天还有 2 件安排，最早在早上 6 点多。"), brief.text)
+        XCTAssertFalse(brief.text.contains("G2515"), "details stay in the list")
+        XCTAssertEqual(brief.target, .lot(yogurt.id), "buttons are for the thing that needs handling")
+
+        let onlyTasks = BriefCandidates.make(facts: [], agenda: HomeAgenda.build(lots: [], reminders: [morning, noon], events: [], now: now), now: now)
+        let overview = BriefLocal.compose(candidates: onlyTasks, lotCount: 3, basis: "", now: now)
+        XCTAssertNil(overview.target)
+        XCTAssertTrue(overview.actions.isEmpty)
+        XCTAssertEqual(overview.hasSubject, true, "not a quiet day: 其他 stays")
+        XCTAssertNotEqual(overview.text, "暂时没有新的提醒，其他安排和记录都在下面。")
+
+        // The model may not aim buttons at an upcoming task; it may answer with an overview only.
+        let upcomingKey = BriefTarget.task(morning.id).key
+        let aimed = BriefModelReply.parse(#"{"target":"\#(upcomingKey)","text":"今天两趟车，一大早就要出门。","actions":[{"label":"做完了","effect":"complete_task","value":null}]}"#, candidates: onlyTasks)
+        XCTAssertNil(aimed?.target)
+        XCTAssertEqual(aimed?.actions.isEmpty, true)
+        XCTAssertNotNil(BriefModelReply.parse(#"{"target":null,"text":"今天两趟车，一大早就要出门。","actions":[]}"#, candidates: onlyTasks))
     }
 
     func testSignatureChangesWithTheSituationAndThePartOfTheDayButNotWithTheClock() {
@@ -131,12 +143,15 @@ final class ButlerBriefTests: XCTestCase {
 
     func testBadPartsOfAReplyAreDroppedAndBadWholesAreRefused() throws {
         let (lot, task) = candidates()
-        func parse(_ json: String) -> (text: String, target: BriefTarget, actions: [BriefAction])? {
+        func parse(_ json: String) -> (text: String, target: BriefTarget?, actions: [BriefAction])? {
             BriefModelReply.parse(json, candidates: [lot, task])
         }
-        // A target that isn't a candidate, or no target at all.
+        // A target that isn't a candidate is refused; no target at all is an overview without buttons.
         XCTAssertNil(parse(#"{"target":"lot:\#(UUID().uuidString)","text":"这是一句话，很正常。","actions":[]}"#))
-        XCTAssertNil(parse(#"{"text":"没有目标的一句话。","actions":[]}"#))
+        let overview = parse(#"{"text":"没有目标的一句话。","actions":[{"label":"做完了","effect":"complete_task","value":null}]}"#)
+        XCTAssertNotNil(overview)
+        XCTAssertNil(overview?.target)
+        XCTAssertEqual(overview?.actions.isEmpty, true)
         XCTAssertNil(parse("完全不是 JSON"))
         // A sentence that is empty or far too long.
         XCTAssertNil(parse(#"{"target":"\#(lot.target.key)","text":"好","actions":[]}"#))

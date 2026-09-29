@@ -62,7 +62,7 @@ final class BriefService {
     func update(candidates: [BriefCandidate], lotCount: Int, taskCount: Int, usesCalendar: Bool, now: Date, weather: WeatherSnapshot? = nil) {
         let basis = BriefLocal.basis(lotCount: lotCount, taskCount: taskCount, usesCalendar: usesCalendar)
         let base = BriefCandidates.signature(candidates, now: now, calendar: calendar)
-        let sig = "optional-weather-v3|" + base + "|" + (weather?.briefSignature(at: now) ?? "")
+        let sig = "overview-v4|" + base + "|" + (weather?.briefSignature(at: now) ?? "")
         if sig == signature {
             if brief.basis != basis { brief.basis = basis }
             return
@@ -100,12 +100,12 @@ final class BriefService {
             guard !Task.isCancelled, signature == sig else { return }
             if let parsed = BriefModelReply.parse(reply, candidates: candidates) {
                 var actions = parsed.actions
-                if actions.isEmpty, let mine = candidates.first(where: { $0.target == parsed.target }) {
+                if actions.isEmpty, let target = parsed.target, let mine = candidates.first(where: { $0.target == target }) {
                     // A sentence without usable buttons still gets sensible ones.
                     actions = BriefLocal.compose(candidates: [mine], lotCount: 1, basis: local.basis, now: now, calendar: calendar).actions
                 }
                 let result = ButlerBrief(greeting: local.greeting, text: parsed.text, basis: local.basis,
-                                         target: parsed.target, actions: actions, source: .model)
+                                         target: parsed.target, actions: actions, source: .model, hasSubject: true)
                 if !interactionStarted { brief = result }
                 store(result, signature: sig, now: now)
                 ChatDiagnostics.log("brief model ok \(String(format: "%.1f", Date.now.timeIntervalSince(started)))s actions=\(actions.map(\.label).joined(separator: ","))")
