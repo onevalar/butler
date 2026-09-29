@@ -111,6 +111,8 @@ struct ButlerChatView: View {
                     ButlerOrb(size: 30, active: chat.working || dictation.listening)
                         .accessibilityHidden(true)
                 }
+                // The system puts its own glass disc behind toolbar items; the orb is glass already.
+                .sharedBackgroundVisibility(.hidden)
                 ToolbarItem(placement: .principal) {
                     VStack(spacing: 1) {
                         Text(chat.contextTitle)
