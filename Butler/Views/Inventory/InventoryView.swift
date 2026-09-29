@@ -1,188 +1,207 @@
 import SwiftUI
 
-/// 家里: every item grouped by place or by expiry, quick questions, and search in the header.
+/// 物品: everything at home as big tiles, sorted by category, place or expiry. Tapping a tile opens just
+/// that group. Anything finer ("修自行车要用什么", "把这两样挪到…") is asked of the orb.
 struct InventoryView: View {
     let facts: [LotFacts]
-    var history: [LotFacts] = []
-    let onOpenLot: (UUID) -> Void
-    let onChat: (ChatStart) -> Void
-    /// Opens the conversation with a sentence already started.
-    let onAsk: (String) -> Void
+    var historyCount = 0
+    let onOpenGroup: (InventoryGroup.Key) -> Void
+    let onOpenHistory: () -> Void
 
-    enum Scope: String, CaseIterable { case category = "按分类", place = "按位置", expiry = "按到期", history = "已处理" }
-
-    @State private var scope: Scope = .category
-    @State private var query = ""
-    @State private var showingSearch = false
-    @FocusState private var searching: Bool
+    @AppStorage("inventoryLens") private var lens: InventoryLens = .category
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private static let quickAsks = ["买了", "用完了", "放哪了？", "什么快过期了？", "今天穿什么？", "家里有适合修东西的工具吗？"]
-
-    private var dueThisWeek: Int {
-        facts.filter { !$0.quantityOnly && (0...7).contains($0.daysLeft ?? -1) }.count
-    }
-
-    private var filtered: [LotFacts] {
-        (scope == .history ? history : facts).filter { $0.matchesSearch(query) }
-    }
-
-    private var groups: [(title: String, lots: [LotFacts])] {
-        let lots = filtered
-        switch scope {
-        case .category:
-            return ItemCategory.allCases.compactMap { category in
-                let found = lots.filter { $0.category == category }.sorted(by: Self.urgencyOrder)
-                return found.isEmpty ? nil : (category.title, found)
-            }
-        case .history:
-            return lots.isEmpty ? [] : [("已处理", lots)]
-        case .place:
-            return Dictionary(grouping: lots) { lot in
-                let place = StorageLocation.groupName(for: lot.storageLocation)
-                return place
-            }
-            .map { ($0.key, $0.value.sorted(by: Self.urgencyOrder)) }
-            .sorted { StorageLocation.sortKey($0.title) < StorageLocation.sortKey($1.title) }
-        case .expiry:
-            let buckets: [(String, (LotFacts) -> Bool)] = [
-                ("已经过期", { !$0.quantityOnly && ($0.daysLeft ?? 1) < 0 }),
-                ("这周", { !$0.quantityOnly && (0...7).contains($0.daysLeft ?? -1) }),
-                ("以后", { !$0.quantityOnly && ($0.daysLeft ?? 0) > 7 }),
-                ("还没日期", { $0.needsDate }),
-                ("只记数量", { $0.quantityOnly }),
-            ]
-            return buckets.compactMap { title, test in
-                let hit = lots.filter(test).sorted(by: Self.urgencyOrder)
-                return hit.isEmpty ? nil : (title, hit)
-            }
-        }
-    }
-
-    private static func urgencyOrder(_ a: LotFacts, _ b: LotFacts) -> Bool {
-        (a.daysLeft ?? .max, a.name) < (b.daysLeft ?? .max, b.name)
-    }
+    private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
 
     var body: some View {
+        let groups = InventoryGroups.make(facts, lens: lens)
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                if showingSearch { searchField.padding(.horizontal, 16) }
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(Self.quickAsks, id: \.self) { ask in
-                            Button { onAsk(ask) } label: {
-                                Text(ask.hasSuffix("？") ? "“\(ask)”" : "“\(ask)…”").font(.subheadline)
-                                    .padding(.horizontal, 14).padding(.vertical, 8)
-                            }
+            VStack(alignment: .leading, spacing: 18) {
+                LazyVGrid(columns: columns, spacing: 12) {
+                    ForEach(groups) { group in
+                        Button { onOpenGroup(group.key) } label: { InventoryTile(group: group) }
                             .buttonStyle(.plain)
-                            .glassEffect(.regular.interactive(), in: .capsule)
-                        }
-                    }
-                    .padding(.horizontal, 16).padding(.vertical, 2)
-                }
-                Picker("显示方式", selection: $scope) {
-                    ForEach(Scope.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 16)
-
-                ForEach(groups, id: \.title) { group in
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text(group.title)
-                            Spacer()
-                            Text("\(group.lots.count) 样")
-                        }
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 22)
-                        GroupCard {
-                            ForEach(Array(group.lots.enumerated()), id: \.element.id) { index, lot in
-                                InventoryRow(lot: lot, showsState: scope == .history) { onOpenLot(lot.id) }
-                                if index < group.lots.count - 1 { RowDivider(inset: 36) }
-                            }
-                        }
-                        .padding(.horizontal, 16)
                     }
                 }
                 if groups.isEmpty {
-                    Text(emptyText)
+                    Text("家里还空着。按住水晶球说一句买了什么，就会出现在这里。")
                         .font(.body).foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 40)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, 24)
+                }
+                if historyCount > 0 {
+                    Button(action: onOpenHistory) {
+                        HStack {
+                            Text("已处理的东西")
+                            Spacer()
+                            Text("\(historyCount)").monospacedDigit()
+                            Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                        }
+                        .font(.subheadline).foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                 }
             }
-            .padding(.bottom, 24)
+            .padding(.horizontal, 16).padding(.top, 6).padding(.bottom, 24)
         }
-        .scrollDismissesKeyboard(.immediately)
         .background { ButlerBackground() }
-        .navigationTitle("家里")
-        .navigationSubtitle(dueThisWeek > 0 ? "\(facts.count) 样在家 · 本周 \(dueThisWeek) 样到期" : "\(facts.count) 样在家")
-        .navigationBarTitleDisplayMode(.large)
-        .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                Button {
-                    showingSearch.toggle()
-                    if showingSearch { searching = true } else { query = "" }
-                } label: {
-                    Image(systemName: showingSearch ? "xmark" : "magnifyingglass")
-                }
-                .accessibilityLabel(showingSearch ? "关闭搜索" : "搜索")
-                Button { onChat(.typing) } label: { Image(systemName: "plus") }
-                    .accessibilityLabel("跟管家说买了什么")
+        .compactTitle("物品") {
+            Picker("查看方式", selection: $lens) {
+                ForEach(InventoryLens.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
+            .pickerStyle(.segmented)
+            .frame(width: 180)
         }
-        .animation(reduceMotion ? nil : .snappy, value: scope)
-        .animation(reduceMotion ? nil : .snappy, value: showingSearch)
-    }
-
-    private var emptyText: String {
-        if !query.isEmpty { return "没有找到“\(query)”" }
-        return scope == .history ? "还没有处理过的东西" : "家里还空着，跟管家说一句买了什么"
-    }
-
-    private var searchField: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-            TextField("搜索名称、位置、用途或属性", text: $query)
-                .focused($searching)
-                .submitLabel(.search)
-            if !query.isEmpty {
-                Button { query = "" } label: {
-                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("清除搜索")
-            }
-        }
-        .padding(.horizontal, 16)
-        .frame(height: 44)
-        .glassEffect(.regular.interactive(), in: .capsule)
-        .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
+        .animation(reduceMotion ? nil : .snappy, value: lens)
+        .sensoryFeedback(.selection, trigger: lens)
     }
 }
 
-/// One item: a colour bar for its urgency, name and amount, and how long it has left.
+/// One tile: an icon, the group's name, how many, and the first few things in it.
+struct InventoryTile: View {
+    let group: InventoryGroup
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top) {
+                Image(systemName: group.symbol)
+                    .font(.system(size: 24, weight: .regular))
+                    .frame(height: 30, alignment: .topLeading)
+                Spacer(minLength: 4)
+                if group.urgent > 0 {
+                    Text("\(group.urgent)")
+                        .font(.footnote.weight(.bold)).monospacedDigit()
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 7)
+                        .frame(minWidth: 22, minHeight: 22)
+                        .background(group.pressing ? Color.red : Color.orange, in: Capsule())
+                        .accessibilityLabel("\(group.urgent) 样需要留意")
+                }
+            }
+            Spacer(minLength: 14)
+            Text(group.title)
+                .font(.title3.weight(.bold))
+                .lineLimit(1).minimumScaleFactor(0.8)
+            Text("\(group.lots.count) 样").font(.subheadline).foregroundStyle(.secondary)
+            Text(group.preview)
+                .font(.footnote).foregroundStyle(.tertiary)
+                .lineLimit(1)
+                .padding(.top, 5)
+        }
+        .foregroundStyle(.primary)
+        .padding(.horizontal, 16).padding(.vertical, 14)
+        .frame(maxWidth: .infinity, minHeight: 142, alignment: .leading)
+        .contentShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .glassCard(radius: 26)
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("打开这一组")
+    }
+}
+
+/// One group opened from a tile: just the things in it.
+struct InventoryGroupView: View {
+    let key: InventoryGroup.Key
+    let facts: [LotFacts]
+    let onOpenLot: (UUID) -> Void
+
+    var body: some View {
+        let group = InventoryGroups.group(key, facts: facts)
+        ScrollView {
+            if let group {
+                GroupCard {
+                    ForEach(Array(group.lots.enumerated()), id: \.element.id) { index, lot in
+                        InventoryRow(lot: lot, showsPlace: !isPlace) { onOpenLot(lot.id) }
+                        if index < group.lots.count - 1 { RowDivider(inset: 70) }
+                    }
+                }
+                .padding(.horizontal, 16).padding(.top, 6).padding(.bottom, 24)
+            } else {
+                Text("这里已经没有东西了").foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity).padding(.top, 60)
+            }
+        }
+        .background { ButlerBackground() }
+        .compactTitle(InventoryGroups.title(key)) { EmptyView() }
+    }
+
+    private var isPlace: Bool {
+        if case .place = key { return true }
+        return false
+    }
+}
+
+/// Things that were used up, thrown away or given away.
+struct InventoryHistoryView: View {
+    let history: [LotFacts]
+    let onOpenLot: (UUID) -> Void
+
+    var body: some View {
+        ScrollView {
+            if history.isEmpty {
+                Text("还没有处理过的东西").foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity).padding(.top, 60)
+            } else {
+                GroupCard {
+                    ForEach(Array(history.enumerated()), id: \.element.id) { index, lot in
+                        InventoryRow(lot: lot, showsState: true) { onOpenLot(lot.id) }
+                        if index < history.count - 1 { RowDivider(inset: 70) }
+                    }
+                }
+                .padding(.horizontal, 16).padding(.top, 6).padding(.bottom, 24)
+            }
+        }
+        .background { ButlerBackground() }
+        .compactTitle("已处理的东西") { EmptyView() }
+    }
+}
+
+extension View {
+    /// Back button, a bold title and an optional control on one line, so the content starts right below.
+    func compactTitle<Trailing: View>(_ title: String, @ViewBuilder trailing: () -> Trailing) -> some View {
+        let control = trailing()
+        return navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .principal) { Color.clear.frame(width: 1, height: 1).accessibilityHidden(true) }
+                ToolbarItem(placement: .topBarLeading) {
+                    Text(title).font(.title2.bold()).lineLimit(1).fixedSize()
+                        .accessibilityAddTraits(.isHeader)
+                }
+                .sharedBackgroundVisibility(.hidden)
+                if !(control is EmptyView) {
+                    ToolbarItem(placement: .topBarTrailing) { control }
+                }
+            }
+    }
+}
+
+/// One thing: its picture (or its kind's symbol), name and amount, and one plain status on the right.
 struct InventoryRow: View {
     let lot: LotFacts
     var showsState = false
+    var showsPlace = true
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 14) {
-                if lot.isDurable || lot.profile?.photo != nil {
-                    ItemPhoto(profile: lot.profile ?? ItemProfile(category: lot.category), size: 44)
-                } else { KindBar(color: barColor, height: 34) }
+                ItemPhoto(profile: lot.profile ?? ItemProfile(category: lot.category), size: 42)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(lot.name).font(.body).foregroundStyle(.primary).fixedSize(horizontal: false, vertical: true)
-                    Text(detail).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                    if !detail.isEmpty {
+                        Text(detail).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                    }
                 }
                 Spacer(minLength: 8)
-                Text(status).font(.subheadline).foregroundStyle(statusColor).lineLimit(1)
+                if !status.isEmpty {
+                    Text(status).font(.subheadline).foregroundStyle(statusColor).lineLimit(1)
+                }
             }
-            .padding(.leading, 16).padding(.trailing, 16).padding(.vertical, 9)
-            .frame(minHeight: 52)
+            .padding(.horizontal, 16).padding(.vertical, 9)
+            .frame(minHeight: 58)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -191,28 +210,29 @@ struct InventoryRow: View {
     }
 
     private var detail: String {
-        [lot.brand, "\(lot.quantity) \(lot.unit)"].compactMap { $0 }.joined(separator: " · ")
+        // A quantity-only thing shows its amount on the right ("剩 6 瓶"); don't say it twice.
+        let amount = lot.quantityOnly && !lot.isDurable && !showsState ? nil : "\(lot.quantity) \(lot.unit)"
+        let place = showsPlace ? lot.storageLocation.flatMap { $0.isEmpty ? nil : $0 } : nil
+        return [lot.brand, amount, place].compactMap { $0 }.joined(separator: " · ")
     }
 
     private var status: String {
         if showsState { return lot.stateLabel }
+        if lot.isDurable {
+            let availability = lot.profile?.availability ?? "ready"
+            return availability == "ready" ? "" : lot.profile?.availabilityLabel ?? ""
+        }
         if lot.quantityOnly { return lot.dateStatusLabel }
         guard let days = lot.daysLeft else { return "待补日期" }
-        if days < 0 { return "已过期 \(-days) 天" }
-        return days == 0 ? "今天到期" : lot.timeLeftLabel
-    }
-
-    private var barColor: Color {
-        if showsState { return .gray }
-        if lot.quantityOnly { return lot.isRunningLow ? .red : .gray }
-        guard let days = lot.daysLeft else { return .gray }
-        return days <= 0 ? .red : days <= 7 ? .orange : .gray
+        if days < 0 { return lot.dateStatusLabel }
+        return days == 0 ? "今天到期" : "还有 \(lot.timeLeftLabel)"
     }
 
     private var statusColor: Color {
         if showsState { return .secondary }
+        if lot.isDurable { return .orange }
         if lot.quantityOnly { return lot.isRunningLow ? .red : .secondary }
         guard let days = lot.daysLeft else { return .blue }
-        return days <= 0 ? .red : days <= 3 ? .orange : .secondary
+        return days < 0 ? .red : days <= 3 ? .orange : .secondary
     }
 }

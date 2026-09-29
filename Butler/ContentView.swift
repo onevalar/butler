@@ -11,8 +11,12 @@ enum Route: Hashable {
     /// 这周还有…: the schedule overview opened on its list.
     case upcoming
     case memories
-    /// 家里: everything at home.
+    /// 物品: everything at home, as tiles.
     case items
+    /// One tile opened from 物品.
+    case itemGroup(InventoryGroup.Key)
+    /// 物品 › 已处理的东西.
+    case itemHistory
     /// 管家与设置.
     case butler
 }
@@ -48,6 +52,8 @@ struct ContentView: View {
     /// Opens the conversation ready to type (tap on the orb) or with something already said.
     @State private var chatRequest: ChatRequest?
     @State private var showingChat = Self.launchesChat
+    /// One conversation panel everywhere: half height after speaking (the page stays in view), full height to type.
+    @State private var chatDetent: PresentationDetent = .large
     @State private var orbDock = OrbDock()
     @AppStorage(AccentChoice.modeKey) private var appearanceMode: AppearanceMode = .system
     @AppStorage(AccentChoice.storageKey) private var accentChoice: AccentChoice = .glass
@@ -179,9 +185,12 @@ struct ContentView: View {
                 onSettingsChat: { selectChat(.settings) }, onOpenLot: { id in
                     showingChat = false; path.append(.lot(id))
                 }, hasOtherWork: sessions?.working ?? false,
-                diaryTurns: sessions?.allTurns, onClose: { showingChat = false })
+                diaryTurns: sessions?.allTurns, onNeedsRoom: { chatDetent = .large }, onClose: { showingChat = false })
                 .id(chat.scope.key)
                 .environment(calendarFeed)
+                .presentationDetents([.medium, .large], selection: $chatDetent)
+                .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+                .presentationDragIndicator(.visible)
             }
         }
         .fullScreenCover(isPresented: Binding(get: { showsOnboarding }, set: { if !$0 { onboardingDone = true } })) {
@@ -300,16 +309,16 @@ struct ContentView: View {
         case .lot(let id):
             LotDetailView(lotID: id)
                 .toolbar { ToolbarItem(placement: .topBarTrailing) {
-                    NavigationLink { RelatedConversationView(scope: .lot(id), sessions: sessions) { scope in selectChat(scope); showingChat = true } } label: { Image(systemName: "bubble.left.and.bubble.right") }
+                    NavigationLink { RelatedConversationView(scope: .lot(id), sessions: sessions) { scope in selectChat(scope); presentChat() } } label: { Image(systemName: "bubble.left.and.bubble.right") }
                         .accessibilityLabel("相关对话")
                 } }
         case .task(let id):
-            TaskDetailView(id: id, store: reminders, sessions: sessions, onChat: { selectChat(.task(id)); showingChat = true }, onOpenScope: { scope in selectChat(scope); showingChat = true })
+            TaskDetailView(id: id, store: reminders, sessions: sessions, onChat: { selectChat(.task(id)); presentChat() }, onOpenScope: { scope in selectChat(scope); presentChat() })
         case .tasks:
             TaskListView(store: reminders, onOpen: { path.append(.task($0)) }, onCreate: {
                 selectChat(.general)
                 prefillDraft("帮我安排一个任务：")
-                showingChat = true
+                presentChat()
             })
         case .day(let day):
             DayScheduleView(agenda: yearAgenda(facts: facts), day: day, onOpen: open)
@@ -328,8 +337,12 @@ struct ContentView: View {
         case .memories:
             if let chat { MemoriesView(chat: chat) }
         case .items:
-            InventoryView(facts: facts, history: history, onOpenLot: { path.append(.lot($0)) },
-                          onChat: openChat, onAsk: ask)
+            InventoryView(facts: facts, historyCount: lots.count - facts.count,
+                          onOpenGroup: { path.append(.itemGroup($0)) }, onOpenHistory: { path.append(.itemHistory) })
+        case .itemGroup(let key):
+            InventoryGroupView(key: key, facts: facts, onOpenLot: { path.append(.lot($0)) })
+        case .itemHistory:
+            InventoryHistoryView(history: history, onOpenLot: { path.append(.lot($0)) })
         case .butler:
             if let sessions {
                 ButlerSettingsView(chat: sessions.chat(for: .settings), hasOtherWork: sessions.working, diaryTurns: sessions.allTurns)
@@ -362,6 +375,12 @@ struct ContentView: View {
     private func openChat(scope: ChatScope, _ start: ChatStart) {
         selectChat(scope)
         chatRequest = ChatRequest(start: start)
+        presentChat()
+    }
+
+    /// Typing, a photo or reading back: the panel opens full height (the keyboard needs the room).
+    private func presentChat(_ detent: PresentationDetent = .large) {
+        chatDetent = detent
         showingChat = true
     }
 
@@ -393,12 +412,6 @@ struct ContentView: View {
         }
     }
 
-    /// Opens the conversation with a sentence already started, e.g. "买了".
-    private func ask(_ text: String) {
-        openChat(.typing)
-        prefillDraft(text)
-    }
-
     private func prefillDraft(_ text: String) {
         guard let chat else { return }
         let existing = chat.draft.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -414,7 +427,8 @@ struct ContentView: View {
         chat.draft = existing.isEmpty ? text : existing + " " + text
         if chat.canSend { chat.send() }
         chatRequest = nil
-        showingChat = true
+        // Spoken while looking at a page: half height, so the page (and any change to it) stays in view.
+        presentChat(.medium)
     }
 
     private func open(_ target: AgendaEntry.Target) {
@@ -431,7 +445,7 @@ struct ContentView: View {
         case .lot(let id): .lot(id)
         case .task(let id): .task(id)
         case .butler, .memories: .settings
-        case .items: .inventory
+        case .items, .itemGroup, .itemHistory: .inventory
         case .day(let date): .day(date.isoDay)
         default: .general
         }

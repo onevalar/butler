@@ -53,6 +53,9 @@ final class ButlerTools {
     var weather: WeatherStore = .shared
     var inputPhotos: [Data] = []
     var displayedCollection: ItemCollection?
+    /// The list the conversation is currently showing, and this turn's edit of it (applied in place).
+    var shownList: (() -> ItemCollection?)?
+    var shownListEdit: ItemCollection?
     var conversationScope: ChatScope = .general
     var relatedScopes: Set<ChatScope> = []
     var settingsDefaults: UserDefaults = .standard
@@ -88,6 +91,7 @@ final class ButlerTools {
         raisedConcerns = []
         relatedScopes = []
         displayedCollection = nil
+        shownListEdit = nil
     }
 
     func removePending(_ id: UUID) { pending.removeAll { $0.id == id } }
@@ -591,6 +595,9 @@ final class ButlerTools {
                                   uniquingKeysWith: { first, _ in first })
         return try context.fetch(FetchDescriptor<InventoryLot>()).map { ($0, products[$0.productID]) }
     }
+
+    /// Everything at home right now.
+    func activeFacts() throws -> [LotFacts] { try activeLots() }
 
     private func activeLots() throws -> [LotFacts] {
         try allLots().filter { $0.0.state == .active }.map { LotFacts(lot: $0.0, product: $0.1) }

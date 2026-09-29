@@ -27,7 +27,7 @@ struct ItemProfileInput: Decodable {
 struct ItemCollection: Codable, Equatable, Identifiable {
     var id = UUID()
     let title: String
-    let items: [Entry]
+    var items: [Entry]
     struct Entry: Codable, Equatable, Identifiable { let id: UUID; let name: String; let reason: String }
 }
 
@@ -70,7 +70,9 @@ extension ButlerTools {
             functionSchema("propose_item_profile", "修改物品分类、属性、用途标签、可用状态或照片。先查询真实lot_id和revision；profile是完整替换，必须保留未要求改变的资料。photo_index=null且remove_photo=false保留原照片。确认后保存。", ["lot_id": string, "expected_revision": revision, "profile": profileSchema]),
             functionSchema("get_inventory_history", "查询某件物品的变动记录及当前版本，undoable标明能否撤销最近一次数量/处理操作；不会删除历史。", ["lot_id": string]),
             functionSchema("propose_undo_inventory", "纠正误操作：撤销最近一次数量或处理操作。必须先get_inventory_history，只能用undoable=true的operation_id和当前revision。确认后执行。", ["lot_id": string, "operation_id": string, "expected_revision": revision]),
-            functionSchema("show_inventory", "把查询得到的真实物品显示为可点击的图形清单或对比/搭配卡片，不修改库存。先查库存，建议说明理由及缺失资料；不可把尚未购买的东西列成家里已有。", ["title": string, "items": ["type": "array", "minItems": 1, "maxItems": 30, "items": objectSchema(["lot_id": string, "reason": string])]])
+            functionSchema("show_inventory", "把查询得到的真实物品显示为可点击的图形清单或对比/搭配卡片，不修改库存。场景类问题（修自行车、野餐要带什么、我有什么衣服）先查库存，再用本工具把相关物品列出来，可以跨分类、位置和到期状态。title写清是什么清单（不带数量），reason一句话说为什么用得上，没有可写空字符串。不可把尚未购买的东西列成家里已有。", ["title": string, "items": ["type": "array", "minItems": 1, "maxItems": 30, "items": objectSchema(["lot_id": string, "reason": string])]]),
+            functionSchema("update_shown_list", "修改对话里最近显示的那张清单（current_context 的 shown_list）：remove 去掉某几行（只是不列在清单里，东西仍在家里，不改库存），add 追加真实物品。用户说“去掉某样/不用带某样/再加上某样”时用它，不要重新 show_inventory 出一张新清单。", ["remove": ["type": "array", "maxItems": 30, "items": string], "add": ["type": "array", "maxItems": 30, "items": objectSchema(["lot_id": string, "reason": string])]]),
+            functionSchema("propose_regroup", "一次调整多件物品的存放位置和/或分类，例如“把酸奶和饮用水放到卫生间架子”“这几样归到工具”。location为新位置（不改则null），category为新分类（不改则null）；每件生成一条待确认修改，用户确认后才保存。", ["lot_ids": ["type": "array", "minItems": 1, "maxItems": 30, "items": string], "location": ["type": ["string", "null"]], "category": ["type": ["string", "null"], "enum": ItemCategory.allCases.map { $0.rawValue as Any } + [NSNull()]]])
         ]
         return tools.map { String(decoding: try! JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys]), as: UTF8.self) }.joined(separator: ",")
     }
@@ -115,6 +117,43 @@ extension ButlerTools {
             }
             displayedCollection = ItemCollection(title: args.title, items: entries)
             return try encode(["displayed": true, "count": entries.count] as [String: Any])
+        case "update_shown_list":
+            struct Args: Decodable { struct Entry: Decodable { let lot_id: UUID; let reason: String }; let remove: [UUID]; let add: [Entry] }
+            let args = try JSONDecoder().decode(Args.self, from: data)
+            guard var list = shownListEdit ?? shownList?() else { throw ToolError("对话里还没有显示过清单，请用 show_inventory") }
+            let known = Set(list.items.map(\.id))
+            guard Set(args.remove).isSubset(of: known) else { throw ToolError("要去掉的物品不在这张清单里，请按 shown_list 的 lot_id") }
+            list.items.removeAll { args.remove.contains($0.id) }
+            for item in args.add where !list.items.contains(where: { $0.id == item.lot_id }) {
+                guard item.reason.count <= 600 else { throw ToolError("说明过长") }
+                let lot = try activeLot(item.lot_id.uuidString)
+                list.items.append(.init(id: lot.id, name: lot.name, reason: item.reason))
+            }
+            guard list.items.count <= 30 else { throw ToolError("清单最多30件") }
+            shownListEdit = list
+            return try encode(["updated": true, "count": list.items.count, "items": list.items.map(\.name)] as [String: Any])
+        case "propose_regroup":
+            struct Args: Decodable { let lot_ids: [String]; let location: String?; let category: ItemCategory? }
+            let args = try JSONDecoder().decode(Args.self, from: data)
+            let location = args.location?.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard (1...30).contains(args.lot_ids.count), Set(args.lot_ids).count == args.lot_ids.count else { throw ToolError("需要1到30件不同物品") }
+            guard location != nil || args.category != nil else { throw ToolError("location和category至少改一项") }
+            if let location { guard !location.isEmpty, location.count <= 40 else { throw ToolError("位置不能为空，最多40字") } }
+            let lots = try args.lot_ids.map { try activeLot($0) }
+            var count = 0
+            for lot in lots {
+                if let location, lot.storageLocation != location {
+                    add(.move(lot, location), title: "\(lot.name) 放到 \(location)", detail: lot.storageLocation.map { "原来在 \($0)" })
+                    count += 1
+                }
+                if let category = args.category, lot.category != category {
+                    var profile = lot.profile ?? ItemProfile(category: lot.category)
+                    profile.category = category
+                    add(.itemProfile(lot, profile), title: "\(lot.name) 归到 \(category.title)", detail: "原来是 \(lot.category.title)")
+                    count += 1
+                }
+            }
+            guard count > 0 else { throw ToolError("这些物品已经是这个位置和分类了") }
         default: return nil
         }
         return pendingContext

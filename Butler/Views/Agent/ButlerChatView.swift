@@ -25,6 +25,8 @@ struct ButlerChatView: View {
     var onOpenLot: ((UUID) -> Void)? = nil
     var hasOtherWork = false
     var diaryTurns: [ChatTurn]? = nil
+    /// Typing needs the full height; the panel may be sitting at half height after something was said.
+    var onNeedsRoom: (() -> Void)? = nil
     let onClose: () -> Void
 
     @Environment(\.butlerAccent) private var accent
@@ -206,6 +208,9 @@ struct ButlerChatView: View {
                     }
                 }
             }
+            .onChange(of: composing) { _, focused in
+                if focused { onNeedsRoom?() }
+            }
             .onAppear { visible = true }
             .onDisappear {
                 visible = false
@@ -374,7 +379,8 @@ struct ButlerChatView: View {
                 }
             }
             if let collection = turn.collection, let onOpenLot {
-                InventoryResultView(collection: collection, onOpen: onOpenLot)
+                InventoryResultView(collection: collection, onOpen: onOpenLot,
+                                    onRemove: { chat.removeFromCollection(collection.id, lot: $0) })
             }
             if !turn.receipts.isEmpty {
                 VStack(alignment: .leading, spacing: 3) {

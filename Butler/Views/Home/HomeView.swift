@@ -141,9 +141,9 @@ struct HomeView: View {
             GlassEffectContainer(spacing: 8) {
                 HStack(spacing: 0) {
                     Button(action: onOpenInventory) {
-                        Image(systemName: "cabinet").font(.system(size: 18, weight: .medium)).frame(width: 44, height: 44)
+                        ItemsGlyph(size: 21, lineWidth: 1.7).frame(width: 44, height: 44)
                     }
-                    .accessibilityLabel("家里")
+                    .accessibilityLabel("物品")
                     Button(action: onOpenButler) {
                         Image(systemName: "gearshape").font(.system(size: 18, weight: .medium)).frame(width: 44, height: 44)
                     }
@@ -270,7 +270,7 @@ struct HomeView: View {
                 quietRow("这周还有 \(week.count) 件", week.preview, action: onOpenUpcoming)
                 Divider().padding(.horizontal, 6)
             }
-            quietRow(facts.isEmpty ? "家里还没有东西" : "家里 \(facts.count) 样",
+            quietRow(facts.isEmpty ? "家里还没有东西" : "物品 \(facts.count) 样",
                      facts.isEmpty ? "买了什么，跟管家说一句" : HomeList.places(facts: facts), action: onOpenInventory)
         }
     }
