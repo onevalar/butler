@@ -52,7 +52,7 @@ struct ContentView: View {
     /// Opens the conversation ready to type (tap on the orb) or with something already said.
     @State private var chatRequest: ChatRequest?
     @State private var showingChat = Self.launchesChat
-    /// One conversation panel everywhere: half height after speaking (the page stays in view), full height to type.
+    /// One conversation panel everywhere: three-quarter height after speaking (the top of the page stays in view), full height to type.
     @State private var chatDetent: PresentationDetent = .large
     @State private var orbDock = OrbDock()
     @AppStorage(AccentChoice.modeKey) private var appearanceMode: AppearanceMode = .system
@@ -188,8 +188,8 @@ struct ContentView: View {
                 diaryTurns: sessions?.allTurns, onNeedsRoom: { chatDetent = .large }, onClose: { showingChat = false })
                 .id(chat.scope.key)
                 .environment(calendarFeed)
-                .presentationDetents([.medium, .large], selection: $chatDetent)
-                .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+                .presentationDetents([Self.spokenDetent, .large], selection: $chatDetent)
+                .presentationBackgroundInteraction(.enabled(upThrough: Self.spokenDetent))
                 .presentationDragIndicator(.visible)
             }
         }
@@ -378,6 +378,9 @@ struct ContentView: View {
         presentChat()
     }
 
+    /// After speaking the panel leaves the top quarter of the page visible; half height showed too little of the answer.
+    static let spokenDetent = PresentationDetent.fraction(0.75)
+
     /// Typing, a photo or reading back: the panel opens full height (the keyboard needs the room).
     private func presentChat(_ detent: PresentationDetent = .large) {
         chatDetent = detent
@@ -427,8 +430,8 @@ struct ContentView: View {
         chat.draft = existing.isEmpty ? text : existing + " " + text
         if chat.canSend { chat.send() }
         chatRequest = nil
-        // Spoken while looking at a page: half height, so the page (and any change to it) stays in view.
-        presentChat(.medium)
+        // Spoken while looking at a page: three-quarter height, so the top of the page (and any change to it) stays in view.
+        presentChat(Self.spokenDetent)
     }
 
     private func open(_ target: AgendaEntry.Target) {
