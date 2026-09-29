@@ -89,5 +89,5 @@ GitHub 仓库授权已完成，以上工作流已在 App Store Connect 保存并
 - 功能提交 `f58fd47` 已推送 main；构建25归档成功，但美国区域下两条时间断言失败，Required to Pass 正确阻止内外部分发。不要分发25。
 - 修复提交 `85f14df` 明确首页24小时时间，并修正测试输入的区域/跨午夜依赖；本机英文美国区域348项测试，1项既有跳过，0失败。
 - 手动[构建26](https://appstoreconnect.apple.com/teams/52049831-307a-44f3-95af-623b83d68dc0/xcode-cloud/products/ECE4419A-60C4-420A-A42F-FEB1AC95BFB8/builds/3580b058-d8ce-435e-91ce-752ae5f59592/summary)使用 `85f14df`。Test、Archive、TestFlight Internal Testing 均 Succeeded；中文测试说明自动保存。
-- `1.0 (26)` 已关联内部 test 组。外部自动分发已提交，17:52 核对为 Pending Beta Review；此时详情只列内部组，不能宣称外部已可安装。审核通过后再以外部组/Testing状态为准，无需重新构建。
-- 本次构建页面时长约9分钟（另排队31秒）；Usage尚未返回，不将墙钟时长当成计算用量。本记录提交仅保存结果，不再触发新构建。
+- `1.0 (26)` 先进入 Pending Beta Review，随后审核通过，外部步骤自动变为 Succeeded。版本详情已核对 Groups (2)：内部 test（1人）、外部 test（2人），内外部分发完整跑通，无需手动补加构建。手机通知送达和实际更新仍由测试者确认。
+- 本次构建页面最终时长约10分钟（另排队31秒），Usage为7计算分钟。本记录提交仅保存结果，不再触发新构建。
