@@ -360,20 +360,21 @@ struct BriefCard: View {
                         .buttonStyle(.plain)
                         .disabled(busy)
                     }
-                    Button { onOther(target) } label: {
-                        HStack(spacing: 5) {
-                            Text("其他…").font(.system(size: 15, weight: .semibold))
-                            Image(systemName: "mic").font(.system(size: 13, weight: .semibold))
-                        }
-                        .padding(.horizontal, 14).frame(height: 36).foregroundStyle(Color.primary)
-                        .glassEffect(.regular.interactive(), in: .capsule)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("其他安排，打字或说给管家听")
                 }
                 .opacity(busy ? 0.45 : 1)
+                // Nothing here fits? A quiet line, not another button: it opens the conversation about just this thing.
+                Button { onOther(target) } label: {
+                    HStack(spacing: 4) {
+                        Text("都不合适？告诉我你的安排")
+                        Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold))
+                    }
+                    .font(.subheadline).foregroundStyle(.secondary)
+                    .frame(minHeight: 32, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("打开只关于这件事的对话，可以打字，也可以说话")
             }
-            Text(brief.basis).font(.caption).foregroundStyle(.tertiary)
         }
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
