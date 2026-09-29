@@ -37,6 +37,8 @@ final class BriefService {
     @ObservationIgnored private var interactionStarted = false
     @ObservationIgnored private var task: Task<Void, Never>?
     @ObservationIgnored private var failedAt: [String: Date] = [:]
+    /// The last situation seen, so a model that connects later (at launch, or after signing in) is still asked.
+    @ObservationIgnored private var lastUpdate: (() -> Void)?
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let calendar: Calendar
 
@@ -56,10 +58,20 @@ final class BriefService {
 
     func beginInteraction() { interactionStarted = true }
 
-    func attach(_ connection: SubscriptionConnection) { model = CloudBriefModel(connection: connection) }
-    func attach(model: BriefModel) { self.model = model }
+    func attach(_ connection: SubscriptionConnection) { attach(model: CloudBriefModel(connection: connection)) }
+    func attach(model: BriefModel) {
+        self.model = model
+        // Home computes the card before the conversation services exist; ask again now that the model is here.
+        if brief.source == .local, let lastUpdate {
+            signature = ""
+            lastUpdate()
+        }
+    }
 
     func update(candidates: [BriefCandidate], lotCount: Int, taskCount: Int, usesCalendar: Bool, now: Date, weather: WeatherSnapshot? = nil) {
+        lastUpdate = { [weak self] in
+            self?.update(candidates: candidates, lotCount: lotCount, taskCount: taskCount, usesCalendar: usesCalendar, now: now, weather: weather)
+        }
         let basis = BriefLocal.basis(lotCount: lotCount, taskCount: taskCount, usesCalendar: usesCalendar)
         let base = BriefCandidates.signature(candidates, now: now, calendar: calendar)
         let sig = "overview-v4|" + base + "|" + (weather?.briefSignature(at: now) ?? "")
@@ -80,7 +92,10 @@ final class BriefService {
             return
         }
         if !interactionStarted { brief = local }
-        guard let model, model.isAvailable else { return }
+        guard let model, model.isAvailable else {
+            ChatDiagnostics.log("brief local only: \(self.model == nil ? "model not attached yet" : "not signed in")")
+            return
+        }
         if let failed = failedAt[sig], now.timeIntervalSince(failed) < Self.retryAfter { return }
         isThinking = true
         task = Task { [weak self] in

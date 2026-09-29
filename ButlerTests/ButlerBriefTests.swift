@@ -328,6 +328,19 @@ final class ButlerBriefTests: XCTestCase {
         """
     }
 
+    func testAModelThatConnectsAfterTheFirstCardIsStillAsked() async {
+        // At launch home builds the card before the conversation services (and the model) exist.
+        let item = candidate()
+        let service = BriefService(defaults: defaults())
+        service.update(candidates: [item], lotCount: 4, taskCount: 0, usesCalendar: false, now: at(19))
+        XCTAssertEqual(service.brief.source, .local)
+        let model = FakeModel { self.reply(for: item) }
+        service.attach(model: model)
+        await service.settle()
+        XCTAssertEqual(model.requests.count, 1)
+        XCTAssertEqual(service.brief.source, .model)
+    }
+
     func testInteractingWithLocalCardKeepsItsActionsWhileBackgroundReplyIsCached() async {
         let storage = defaults()
         let item = candidate()
