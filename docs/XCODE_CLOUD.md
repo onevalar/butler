@@ -91,3 +91,17 @@ GitHub 仓库授权已完成，以上工作流已在 App Store Connect 保存并
 - 手动[构建26](https://appstoreconnect.apple.com/teams/52049831-307a-44f3-95af-623b83d68dc0/xcode-cloud/products/ECE4419A-60C4-420A-A42F-FEB1AC95BFB8/builds/3580b058-d8ce-435e-91ce-752ae5f59592/summary)使用 `85f14df`。Test、Archive、TestFlight Internal Testing 均 Succeeded；中文测试说明自动保存。
 - `1.0 (26)` 先进入 Pending Beta Review，随后审核通过，外部步骤自动变为 Succeeded。版本详情已核对 Groups (2)：内部 test（1人）、外部 test（2人），内外部分发完整跑通，无需手动补加构建。手机通知送达和实际更新仍由测试者确认。
 - 本次构建页面最终时长约10分钟（另排队31秒），Usage为7计算分钟。本记录提交仅保存结果，不再触发新构建。
+
+### 新增系统能力的签名要求（2026-10-01）
+
+构建27在ba7b81a的编译阶段失败；发布修复已推送至04e5aa9，本机571项测试（1项既有跳过）0失败，Release编译通过。构建28完成归档编译，但签名导出失败，原因是Xcode Cloud不能自动注册新扩展或开启主应用的新能力。此类错误必须先补齐Apple Developer配置，再重试，不能用关闭测试或删掉entitlement绕过。
+
+需要配置：
+
+| 应用/扩展 | Bundle ID | 能力与容器 |
+|---|---|---|
+| Butler | com.anvalar.Butler | 保留WeatherKit；HealthKit、HomeKit、iCloud/CloudKit；iCloud.com.anvalar.Butler；以下两个App Group |
+| 分享扩展 | com.anvalar.Butler.ShareExtension | group.com.anvalar.Butler.share |
+| 闹钟/小组件扩展 | com.anvalar.Butler.AlarmWidget | group.com.anvalar.Butler.widgets |
+
+用户已明确授权补齐这些能力。主应用四项能力已保存；两个App Group和iCloud容器已注册，分享扩展App ID已注册。剩余扩展注册与容器关联因浏览器网站访问权限被拒绝暂未完成；不代表已可TestFlight安装。待权限恢复继续补齐，并以最终云端签名/分发结果验证。
