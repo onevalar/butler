@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		04A000012F20000100A00001 /* ButlerShareExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 04A000022F20000100A00001; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		03A000012F20000100A00001 /* ButlerAlarmWidget.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 03A000022F20000100A00001 /* ButlerAlarmWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
@@ -16,7 +17,7 @@
 			buildActionMask = 2147483647;
 			dstPath = "";
 			dstSubfolderSpec = 13;
-			files = (03A000012F20000100A00001 /* ButlerAlarmWidget.appex in Embed App Extensions */, );
+			files = (03A000012F20000100A00001 /* ButlerAlarmWidget.appex in Embed App Extensions */, 04A000012F20000100A00001 /* ButlerShareExtension.appex in Embed App Extensions */, );
 			name = "Embed App Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -33,6 +34,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		04A000022F20000100A00001 /* ButlerShareExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ButlerShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		03A000022F20000100A00001 /* ButlerAlarmWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ButlerAlarmWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		01CCDCF62F0CFA8A00A689B2 /* Butler.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Butler.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		01FD43212F16AA73001F6B04 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -40,6 +42,16 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		05A000042F20000100A00001 /* Widget entitlements exclusion */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (ButlerWidget.entitlements, );
+			target = 03A000072F20000100A00001;
+		};
+		04A000042F20000100A00001 /* Share configuration exclusion */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (Info.plist, ButlerShareExtension.entitlements, );
+			target = 04A000072F20000100A00001;
+		};
 		03A000042F20000100A00001 /* Alarm widget Info.plist exclusion */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (Info.plist, );
@@ -57,6 +69,10 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		05A000052F20000100A00001 /* ButlerWidgetShared */ = {isa = PBXFileSystemSynchronizedRootGroup; path = ButlerWidgetShared; sourceTree = "<group>"; };
+		05A000062F20000100A00001 /* ButlerWidget */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (05A000042F20000100A00001, ); path = ButlerWidget; sourceTree = "<group>"; };
+		04A000052F20000100A00001 /* ButlerShareShared */ = {isa = PBXFileSystemSynchronizedRootGroup; path = ButlerShareShared; sourceTree = "<group>"; };
+		04A000062F20000100A00001 /* ButlerShareExtension */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (04A000042F20000100A00001, ); path = ButlerShareExtension; sourceTree = "<group>"; };
 		03A000052F20000100A00001 /* ButlerAlarmShared */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = ButlerAlarmShared;
@@ -108,6 +124,10 @@
 				02A000022F20000100A00001 /* ButlerTests */,
 				03A000052F20000100A00001 /* ButlerAlarmShared */,
 				03A000062F20000100A00001 /* ButlerAlarmWidget */,
+				04A000052F20000100A00001 /* ButlerShareShared */,
+				04A000062F20000100A00001 /* ButlerShareExtension */,
+				05A000052F20000100A00001 /* ButlerWidgetShared */,
+				05A000062F20000100A00001 /* ButlerWidget */,
 				01CCDCF72F0CFA8A00A689B2 /* Products */,
 				01FD43212F16AA73001F6B04 /* Info.plist */,
 			);
@@ -119,6 +139,7 @@
 				01CCDCF62F0CFA8A00A689B2 /* Butler.app */,
 				02A000012F20000100A00001 /* ButlerTests.xctest */,
 				03A000022F20000100A00001 /* ButlerAlarmWidget.appex */,
+				04A000022F20000100A00001 /* ButlerShareExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -126,6 +147,18 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		04A000072F20000100A00001 /* ButlerShareExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 04A0000B2F20000100A00001;
+			buildPhases = (04A000082F20000100A00001, );
+			buildRules = ();
+			dependencies = ();
+			fileSystemSynchronizedGroups = (04A000052F20000100A00001, 04A000062F20000100A00001, );
+			name = ButlerShareExtension;
+			productName = ButlerShareExtension;
+			productReference = 04A000022F20000100A00001;
+			productType = "com.apple.product-type.app-extension";
+		};
 		03A000072F20000100A00001 /* ButlerAlarmWidget */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 03A0000B2F20000100A00001;
@@ -135,6 +168,8 @@
 			fileSystemSynchronizedGroups = (
 				03A000052F20000100A00001 /* ButlerAlarmShared */,
 				03A000062F20000100A00001 /* ButlerAlarmWidget */,
+				05A000052F20000100A00001 /* ButlerWidgetShared */,
+				05A000062F20000100A00001 /* ButlerWidget */,
 			);
 			name = ButlerAlarmWidget;
 			productName = ButlerAlarmWidget;
@@ -154,10 +189,13 @@
 			);
 			dependencies = (
 				03A0000C2F20000100A00001 /* Alarm widget dependency */,
+				04A0000C2F20000100A00001 /* Share extension dependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				01CCDCF82F0CFA8A00A689B2 /* Butler */,
 				03A000052F20000100A00001 /* ButlerAlarmShared */,
+				04A000052F20000100A00001 /* ButlerShareShared */,
+				05A000052F20000100A00001 /* ButlerWidgetShared */,
 			);
 			name = Butler;
 			packageProductDependencies = (
@@ -225,6 +263,7 @@
 				01CCDCF52F0CFA8A00A689B2 /* Butler */,
 				02A000032F20000100A00001 /* ButlerTests */,
 				03A000072F20000100A00001 /* ButlerAlarmWidget */,
+				04A000072F20000100A00001 /* ButlerShareExtension */,
 			);
 		};
 /* End PBXProject section */
@@ -247,6 +286,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		04A000082F20000100A00001 /* Share Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		03A000082F20000100A00001 /* Alarm Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -270,6 +310,7 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		04A0000C2F20000100A00001 /* Share extension dependency */ = {isa = PBXTargetDependency; target = 04A000072F20000100A00001; };
 		03A0000C2F20000100A00001 /* Alarm widget dependency */ = {
 			isa = PBXTargetDependency;
 			target = 03A000072F20000100A00001 /* ButlerAlarmWidget */;
@@ -282,11 +323,56 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		04A000092F20000100A00001 /* Share Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGN_ENTITLEMENTS = ButlerShareExtension/ButlerShareExtension.entitlements;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = H4982D35ZR;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ButlerShareExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "小当家";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", );
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.anvalar.Butler.ShareExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		04A0000A2F20000100A00001 /* Share Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGN_ENTITLEMENTS = ButlerShareExtension/ButlerShareExtension.entitlements;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = H4982D35ZR;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ButlerShareExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "小当家";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", );
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.anvalar.Butler.ShareExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 		03A000092F20000100A00001 /* Alarm Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGN_ENTITLEMENTS = ButlerWidget/ButlerWidget.entitlements;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = H4982D35ZR;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -308,6 +394,7 @@
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGN_ENTITLEMENTS = ButlerWidget/ButlerWidget.entitlements;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = H4982D35ZR;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -564,6 +651,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		04A0000B2F20000100A00001 /* Share configurations */ = {isa = XCConfigurationList; buildConfigurations = (04A000092F20000100A00001, 04A0000A2F20000100A00001, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 		03A0000B2F20000100A00001 /* Alarm configuration list */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (03A000092F20000100A00001, 03A0000A2F20000100A00001, );

@@ -18,6 +18,8 @@ struct TimedReminder: Codable, Identifiable, Equatable {
     var phases: [ReminderPhase]?
     var timeZoneIdentifier: String
     var activity: [ReminderActivity]
+    /// Device-local: a received task is visible but does not acquire notification ownership.
+    var syncReceived: Bool? = nil
 
     init(id: UUID = UUID(), text: String, fireDate: Date, repeats: Repeat = .none, createdAt: Date = .now,
          status: Status = .active, revision: Int = 1, endDate: Date? = nil, autoCompleteAt: Date? = nil,
@@ -29,7 +31,7 @@ struct TimedReminder: Codable, Identifiable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, text, fireDate, repeats, createdAt, status, revision, endDate, autoCompleteAt, phases, timeZoneIdentifier, activity
+        case id, text, fireDate, repeats, createdAt, status, revision, endDate, autoCompleteAt, phases, timeZoneIdentifier, activity, syncReceived
     }
 
     init(from decoder: Decoder) throws {
@@ -46,6 +48,7 @@ struct TimedReminder: Codable, Identifiable, Equatable {
         phases = try values.decodeIfPresent([ReminderPhase].self, forKey: .phases)
         timeZoneIdentifier = try values.decodeIfPresent(String.self, forKey: .timeZoneIdentifier) ?? TimeZone.current.identifier
         activity = try values.decodeIfPresent([ReminderActivity].self, forKey: .activity) ?? []
+        syncReceived = try values.decodeIfPresent(Bool.self, forKey: .syncReceived)
     }
 
     var statusLabel: String {
@@ -135,6 +138,71 @@ final class ReminderStore {
 
     func reminder(id: UUID) -> TimedReminder? { reminders.first { $0.id == id } }
 
+    /// System entry points must not report unreadable storage as an empty task list.
+    func tasksForSystemEntry(now: Date = .now) throws -> [TimedReminder] {
+        guard !loadFailed else { throw ReminderSchedule.InvalidRule(message: "任务记录无法读取，请先打开小当家检查；不能把读取失败当成没有待办") }
+        try refresh(now: now)
+        return reminders
+    }
+
+    func todayTasksForSystemEntry(now: Date = .now, calendar: Calendar = .current) throws -> [TimedReminder] {
+        _ = try tasksForSystemEntry(now: now)
+        return try todayTaskSnapshot(now: now, calendar: calendar)
+    }
+
+    /// Read-only projection: widget refresh must not itself complete or reschedule a task.
+    func todayTaskSnapshot(now: Date = .now, calendar: Calendar = .current) throws -> [TimedReminder] {
+        let today = calendar.startOfDay(for: now)
+        return try taskSnapshot().filter { task in
+            guard task.status == .active, task.autoCompleteAt.map({ $0 > now }) ?? true else { return false }
+            return !ReminderSchedule.occurrences(task, on: today, calendar: calendar).isEmpty
+                || (task.fireDate < today && ReminderSchedule.preview(task, now: today.addingTimeInterval(-0.001), limit: 1).isEmpty)
+        }.sorted { $0.fireDate < $1.fireDate }
+    }
+
+    func taskSnapshot() throws -> [TimedReminder] {
+        guard !loadFailed else { throw ReminderSchedule.InvalidRule(message: "任务记录无法读取") }
+        return reminders
+    }
+
+    func tasksForSync() throws -> [TimedReminder] {
+        let current = try taskSnapshot()
+        let disk = FileManager.default.fileExists(atPath: file.path)
+            ? try JSONDecoder().decode([TimedReminder].self, from: Data(contentsOf: file)) : []
+        guard disk == current else { throw SyncFailure("任务文件在其他位置变化，先重新载入再同步。") }
+        return current
+    }
+
+    /// Called by the sync journal after comparing the complete portable record.
+    func receiveSyncedTask(_ id: UUID, value: TimedReminder?) throws {
+        _ = try taskSnapshot()
+        let old = reminder(id: id)
+        var next = reminders.filter { $0.id != id }
+        if var value {
+            guard value.id == id else { throw SyncFailure("任务编号不一致。") }
+            try ReminderSchedule.validate(value)
+            value.revision = max(value.revision, (old?.revision ?? 0) + 1)
+            value.syncReceived = old?.syncReceived ?? (old == nil ? true : nil)
+            next.append(value)
+        }
+        try save(next)
+        // Reconcile cancellations without executing automatic completion inside this import.
+        guard schedules else { return }
+        scheduleGeneration += 1
+        let previous = scheduleTask
+        scheduleTask = Task { [weak self] in await previous?.value; await self?.rebuildNotifications() }
+    }
+
+    /// Recheck after an asynchronous Siri confirmation. No await between validation and save.
+    func complete(_ id: UUID, expectedRevision: Int) throws {
+        _ = try tasksForSystemEntry()
+        guard let task = reminder(id: id), task.revision == expectedRevision,
+              task.status == .active || task.status == .paused else {
+            throw ReminderSchedule.InvalidRule(message: "任务已改变、结束或不存在，请重新选择并确认")
+        }
+        try complete(id)
+    }
+
     func add(_ reminder: TimedReminder) throws {
         try ReminderSchedule.validate(reminder)
         guard self.reminder(id: reminder.id) == nil else { throw ReminderSchedule.InvalidRule(message: "这个任务已经保存") }
@@ -152,6 +220,7 @@ final class ReminderStore {
         var saved = reminder
         saved.createdAt = old.createdAt
         saved.status = old.status
+        saved.syncReceived = old.syncReceived
         saved.revision = old.revision + 1
         saved.activity = old.activity + [ReminderActivity(kind: "updated", detail: "修改提醒规则：\(reminder.whenLabel)")]
         try save(reminders.map { $0.id == saved.id ? saved : $0 })
@@ -233,6 +302,7 @@ final class ReminderStore {
                 scheduleWarning = "提醒记录暂时无法读取，未替换现有任务；暂不能覆盖保存。"
             }
         }
+        if schedules { WidgetSnapshotPublisher.shared.refresh(); TaskDisplayService.reconcile() }
     }
 
     func rescheduleAll() {
@@ -276,7 +346,7 @@ final class ReminderStore {
     }
 
     func snooze(id: UUID, revision: Int, minutes: Int = 10) async throws {
-        guard let reminder = reminder(id: id), reminder.status == .active, reminder.revision == revision else { return }
+        guard let reminder = reminder(id: id), reminder.syncReceived != true, reminder.status == .active, reminder.revision == revision else { return }
         let fire = Date.now.addingTimeInterval(Double(minutes) * 60)
         guard minutes >= 1, reminder.endDate.map({ fire <= $0 }) ?? true,
               reminder.autoCompleteAt.map({ fire < $0 }) ?? true else {
@@ -310,6 +380,7 @@ final class ReminderStore {
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try JSONEncoder().encode(next).write(to: file, options: .atomic)
         reminders = next
+        if schedules { WidgetSnapshotPublisher.shared.refresh(); TaskDisplayService.reconcile() }
     }
 
     private func content(_ reminder: TimedReminder) -> UNMutableNotificationContent {
@@ -337,7 +408,7 @@ final class ReminderStore {
         let pending = await center.pendingNotificationRequests()
         guard !loadFailed else { return }
         let generation = scheduleGeneration
-        let snapshot = reminders
+        let snapshot = reminders.filter { $0.syncReceived != true }
         let now = Date.now
         var candidates: [(Date, UNNotificationRequest)] = []
         var limited = Set<String>()

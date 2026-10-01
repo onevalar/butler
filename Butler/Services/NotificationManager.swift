@@ -86,6 +86,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         let action = response.actionIdentifier
         let content = response.notification.request.content
         let lotID = (content.userInfo["lotID"] as? String).flatMap(UUID.init)
+        let placeReminderID = (content.userInfo["placeReminderID"] as? String).flatMap(UUID.init)
         let reminderID = (content.userInfo["reminderID"] as? String).flatMap(UUID.init)
             ?? Self.legacyReminderID(response.notification.request.identifier)
         let reminderRevision = content.userInfo["reminderRevision"] as? Int ?? 1
@@ -99,6 +100,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
             case UNNotificationDefaultActionIdentifier:
                 if let lotID { self.pendingLotID = lotID }
                 if let reminderID { self.pendingReminderID = reminderID }
+                if placeReminderID != nil { try? ShortcutNavigation.shared.open(.general) }
             case Self.usedUpAction:
                 if let lotID { self.markUsedUp(lotID) }
             case Self.snoozeLotAction:

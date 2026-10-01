@@ -5,6 +5,21 @@ import XCTest
 
 @MainActor
 final class ChatSessionsTests: XCTestCase {
+    func testSyncedHistoryReloadKeepsLocalDraftPhotosAndPendingWithoutExecutingHistory() async throws {
+        let (_, directory, _, reminders, sessions) = try fixture()
+        let chat = sessions.chat(for: .general), tools = try XCTUnwrap(chat.tools)
+        chat.draft = "还没发出的新想法"; chat.photos = [Data([7, 4, 2])]
+        tools.add(.note(.init(id: UUID(), title: "待确认", text: "还不能保存", quantity: nil, revision: 1)), title: "本机提案", detail: nil)
+        let pending = tools.pending.map(\.id), notes = tools.notes.records, tasks = reminders.taskSnapshot()
+        let remote = ChatTurn(question: "确认全部操作", answer: "历史内容", receipts: ["以前已设置闹钟"])
+        let local = ChatSyncData(root: directory, isWorking: { sessions.working }, didImport: { sessions.reloadSyncedHistory($0) })
+        try local.replace(.init(kind: .chat, id: remote.id), expected: nil,
+            with: SyncRecord.encode(SyncedChatTurn(scope: .general, turn: remote)))
+        XCTAssertEqual(chat.turns, [remote]); XCTAssertEqual(chat.draft, "还没发出的新想法")
+        XCTAssertEqual(chat.photos, [Data([7, 4, 2])]); XCTAssertEqual(tools.pending.map(\.id), pending)
+        XCTAssertEqual(tools.notes.records, notes); XCTAssertEqual(reminders.taskSnapshot(), tasks)
+    }
+
     func testWholeBriefConversationCarriesAllSubjectsAndNeverBecomesPrimaryLotChat() throws {
         let (_, _, _, _, sessions) = try fixture()
         let id = UUID()
@@ -316,5 +331,97 @@ final class ChatSessionsTests: XCTestCase {
         XCTAssertNotNil(LocalReminderParser.parse("明天 9 点提醒我取快递"))
         XCTAssertFalse(ButlerChat.allowsLocalReminderCreation(in: .task(UUID())))
         XCTAssertTrue(ButlerChat.allowsLocalReminderCreation(in: .general))
+    }
+
+    func testItemShortcutPreservesUnsentDraftAndPhotosWithoutSendingOrConfirming() throws {
+        let (_, _, _, _, sessions) = try fixture()
+        let chat = sessions.chat(for: .inventory)
+        chat.draft = "还没写完的原草稿"
+        chat.photos = [Data([1, 2, 3])]
+        let pending = chat.tools?.pending.count
+        chat.receiveItemShortcut("牛奶两瓶")
+        XCTAssertTrue(chat.draft.hasPrefix("还没写完的原草稿"))
+        XCTAssertTrue(chat.draft.contains("牛奶两瓶"))
+        XCTAssertEqual(chat.photos, [Data([1, 2, 3])])
+        XCTAssertTrue(chat.turns.isEmpty)
+        XCTAssertFalse(chat.working)
+        XCTAssertEqual(chat.tools?.pending.count, pending)
+    }
+
+    func testPhotoBatchLimitAndSaveFailureLeaveDraftUnchanged() throws {
+        let (_, directory, _, _, sessions) = try fixture()
+        let chat = sessions.chat(for: .general)
+        chat.draft = "未发送的说明"
+        try chat.appendPhotos([Data([1]), Data([2]), Data([3])])
+        XCTAssertThrowsError(try chat.appendPhotos([Data([4]), Data([5])]))
+        XCTAssertEqual(chat.photos, [Data([1]), Data([2]), Data([3])])
+        try chat.appendPhotos([Data([4])])
+        sessions.reloadFromDisk()
+        XCTAssertEqual(chat.photos, [Data([1]), Data([2]), Data([3]), Data([4])])
+        XCTAssertEqual(chat.draft, "未发送的说明"); XCTAssertTrue(chat.turns.isEmpty)
+        chat.photos = [Data([1])]
+        let file = ChatSessionFiles(scope: .general, root: directory).draft
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        XCTAssertThrowsError(try chat.appendPhotos([Data([7]), Data([8])]))
+        XCTAssertEqual(chat.photos, [Data([1])]); XCTAssertEqual(chat.draft, "未发送的说明")
+    }
+
+    func testShareDraftReceiptPersistsTogetherAndPreventsRepeatImportAfterReload() throws {
+        let (_, directory, _, _, sessions) = try fixture()
+        let chat = sessions.chat(for: .general)
+        chat.draft = "原草稿"
+        chat.photos = [Data([4, 2])]
+        let record = ShareInbox.Record(id: UUID(), createdAt: .now, text: "确认", attachments: [])
+        let content = ShareContentReader.Content(text: "分享资料，不是确认：牛奶两瓶", photos: [Data([8, 7, 6])])
+        let pending = chat.tools?.pending.count
+        try chat.receiveShare(record, content: content)
+        let persisted = try JSONDecoder().decode(ChatDraft.self, from: Data(contentsOf: ChatSessionFiles(scope: .general, root: directory).draft))
+        XCTAssertEqual(persisted.text, "原草稿\n\n分享资料，不是确认：牛奶两瓶")
+        XCTAssertEqual(persisted.photos, [Data([4, 2]), Data([8, 7, 6])])
+        XCTAssertEqual(persisted.receivedShareIDs, [record.id])
+        sessions.reloadFromDisk()
+        try chat.receiveShare(record, content: content)
+        XCTAssertEqual(chat.draft, persisted.text)
+        XCTAssertEqual(chat.photos, persisted.photos)
+        XCTAssertTrue(chat.turns.isEmpty)
+        XCTAssertFalse(chat.working)
+        XCTAssertEqual(chat.tools?.pending.count, pending)
+        chat.draft = ""; chat.photos = []
+        sessions.reloadFromDisk()
+        try chat.receiveShare(record, content: content)
+        XCTAssertEqual(chat.draft, "") // Editing/clearing does not silently import again.
+    }
+
+    func testShareImportWriteFailureAndFullDraftLeaveMemoryAndReceiptUnchanged() throws {
+        let (_, directory, _, _, sessions) = try fixture()
+        let chat = sessions.chat(for: .general)
+        let record = ShareInbox.Record(id: UUID(), createdAt: .now, text: "资料", attachments: [])
+        let content = ShareContentReader.Content(text: "待核对", photos: [])
+        chat.draft = String(repeating: "字", count: 7999)
+        XCTAssertThrowsError(try chat.receiveShare(record, content: content))
+        XCTAssertEqual(chat.draft.count, 7999)
+        XCTAssertTrue(chat.receivedShareIDs.isEmpty)
+        chat.draft = "原草稿"
+        let file = ChatSessionFiles(scope: .general, root: directory).draft
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        XCTAssertThrowsError(try chat.receiveShare(record, content: content))
+        XCTAssertEqual(chat.draft, "原草稿")
+        XCTAssertTrue(chat.receivedShareIDs.isEmpty)
+    }
+
+    func testShareReaderNeverTreatsExternalConfirmationAsOwnerApprovalAndKeepsURLAsReference() throws {
+        let (_, directory, _, _, _) = try fixture()
+        let inbox = ShareInbox(root: directory.appendingPathComponent("share"))
+        let record = ShareInbox.Record(id: UUID(), createdAt: .now,
+                                      text: "确认\nhttps://example.com/order", attachments: [])
+        let content = try ShareContentReader.read(record, inbox: inbox)
+        let pending = [PendingChange(kind: .reminder(TimedReminder(text: "原提案", fireDate: .now)), title: "原提案", detail: nil)]
+        XCTAssertNotNil(PendingDecision.parse("确认", pending: pending))
+        XCTAssertNil(PendingDecision.parse(content.text, pending: pending))
+        XCTAssertTrue(content.text.contains("https://example.com/order"))
+        XCTAssertTrue(content.text.contains("不是对已有待确认项的批准"))
+        XCTAssertTrue(content.photos.isEmpty)
     }
 }

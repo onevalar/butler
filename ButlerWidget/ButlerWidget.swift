@@ -1,100 +1,46 @@
-//
-//  ButlerWidget.swift
-//  Butler
-//
-//  Created by 安宇佳 on 2026/1/6.
-//
-
 import WidgetKit
 import SwiftUI
-import SwiftData
 
-struct Provider: TimelineProvider {
-    func placeholder(in context: Context) -> SimpleEntry {
-        SimpleEntry(date: Date(), items: PreviewData.sampleItems.prefix(3).map { $0 })
-    }
-
-    func getSnapshot(in context: Context, completion: @escaping (SimpleEntry) -> ()) {
-        Task { @MainActor in
-            let items = fetchActiveItems()
-            let entry = SimpleEntry(date: Date(), items: items.isEmpty ? Array(PreviewData.sampleItems.prefix(3)) : items)
-            completion(entry)
-        }
-    }
-
-    func getTimeline(in context: Context, completion: @escaping (Timeline<Entry>) -> ()) {
-        Task { @MainActor in
-            let items = fetchActiveItems()
-            let entry = SimpleEntry(date: Date(), items: items)
-            
-            // Refresh database hourly
-            let refreshDate = Calendar.current.date(byAdding: .hour, value: 1, to: Date()) ?? Date().addingTimeInterval(3600)
-            let timeline = Timeline(entries: [entry], policy: .after(refreshDate))
-            completion(timeline)
-        }
-    }
-    
-    @MainActor
-    private func fetchActiveItems() -> [Item] {
-        let schema = Schema([Item.self])
-        guard let sharedURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.butler") else {
-            return []
-        }
-        let databaseURL = sharedURL.appendingPathComponent("Butler.sqlite")
-        let modelConfiguration = ModelConfiguration(schema: schema, url: databaseURL)
-        
-        guard let container = try? ModelContainer(for: schema, configurations: [modelConfiguration]) else {
-            return []
-        }
-        
-        let context = container.mainContext
-        let activeRawValue = ItemStatus.active.rawValue
-        let descriptor = FetchDescriptor<Item>(
-            predicate: #Predicate<Item> { $0.statusRawValue == activeRawValue },
-            sortBy: [SortDescriptor(\.expiryDate, order: .forward)]
-        )
-        
-        return (try? context.fetch(descriptor)) ?? []
-    }
-}
-
-struct SimpleEntry: TimelineEntry {
+struct ButlerWidgetEntry: TimelineEntry {
     let date: Date
-    let items: [Item]
+    let snapshot: WidgetSnapshot?
+    var current: WidgetSnapshot? { snapshot.flatMap { $0.isCurrent(at: date) ? $0 : nil } }
 }
 
-struct ButlerWidgetEntryView : View {
-    var entry: Provider.Entry
-    @Environment(\.widgetFamily) var family
+struct ButlerWidgetProvider: TimelineProvider {
+    func placeholder(in context: Context) -> ButlerWidgetEntry {
+        ButlerWidgetEntry(date: .now, snapshot: nil)
+    }
 
-    var body: some View {
-        switch family {
-        case .systemSmall:
-            ButlerSmallWidget(items: entry.items)
-        case .systemMedium:
-            ButlerMediumWidget(items: entry.items)
-        default:
-            ButlerSmallWidget(items: entry.items)
+    func getSnapshot(in context: Context, completion: @escaping (ButlerWidgetEntry) -> Void) {
+        completion(read()) // No sample household ever substitutes for missing or empty data.
+    }
+
+    func getTimeline(in context: Context, completion: @escaping (Timeline<ButlerWidgetEntry>) -> Void) {
+        let entry = read()
+        var entries = [entry]
+        if let snapshot = entry.current {
+            // Expire even if the main app is not running. WidgetKit controls actual render timing.
+            entries.append(ButlerWidgetEntry(date: snapshot.validUntil, snapshot: nil))
         }
+        completion(Timeline(entries: entries, policy: .after(entry.date.addingTimeInterval(1800))))
+    }
+
+    private func read() -> ButlerWidgetEntry {
+        let snapshot = WidgetSnapshot.fileURL().flatMap { try? WidgetSnapshot.read(from: $0) }
+        return ButlerWidgetEntry(date: .now, snapshot: snapshot)
     }
 }
 
 struct ButlerWidget: Widget {
-    let kind: String = "ButlerWidget"
-
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: kind, provider: Provider()) { entry in
-            if #available(iOS 17.0, *) {
-                ButlerWidgetEntryView(entry: entry)
-                    .containerBackground(.fill.tertiary, for: .widget)
-            } else {
-                ButlerWidgetEntryView(entry: entry)
-                    .padding()
-                    .background()
-            }
+        StaticConfiguration(kind: WidgetSnapshot.kind, provider: ButlerWidgetProvider()) { entry in
+            ButlerWidgetEntryView(entry: entry)
+                .containerBackground(.fill.tertiary, for: .widget)
+                .widgetURL(WidgetDestination.overview.url)
         }
-        .configurationDisplayName("Butler 管家")
-        .description("一眼掌握家庭库存与到期预警。")
-        .supportedFamilies([.systemSmall, .systemMedium])
+        .configurationDisplayName("小当家 · 今日与临期")
+        .description("查看本地待办和7天内需关注的物品。点击进入对话，锁屏只显示数量。")
+        .supportedFamilies([.systemSmall, .systemMedium, .accessoryRectangular, .accessoryInline, .accessoryCircular])
     }
 }

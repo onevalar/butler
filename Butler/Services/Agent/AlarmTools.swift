@@ -136,26 +136,4 @@ extension ButlerTools {
                 "previous_system_alarms_remaining": live.filter { value.operation?.retiredIDs.contains($0.id) == true }.count,
                 "last_error": value.lastError as Any? ?? NSNull()]
     }
-
-    /// Existing synchronous callers never accidentally commit an asynchronous system operation.
-    func confirmIncludingAlarms(ids: Set<UUID>? = nil) async -> [String] {
-        let selected = pending.filter { ids == nil || ids!.contains($0.id) }
-        let alarmChanges = selected.filter { if case .alarm = $0.kind { true } else { false } }
-        let localIDs = Set(selected.map(\.id)).subtracting(alarmChanges.map(\.id))
-        var results = confirmAll(ids: localIDs)
-        // Remove before awaiting permission; another confirm cannot execute the same proposal twice.
-        alarmChanges.forEach { removePending($0.id) }
-        for proposal in alarmChanges {
-            guard case .alarm(let change) = proposal.kind else { continue }
-            do {
-                try await alarms.apply(change, operationID: proposal.id)
-                results.append("✓ \(proposal.title)；已核对系统状态（不代表已实际响铃）")
-            } catch is CancellationError {
-                results.append("✗ \(proposal.title)：已停止执行，这一项尚未设置；之前已完成的操作不会自动撤销。")
-            } catch {
-                results.append("✗ \(proposal.title)：\(error.localizedDescription)")
-            }
-        }
-        return results
-    }
 }

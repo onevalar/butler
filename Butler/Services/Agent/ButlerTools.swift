@@ -21,7 +21,26 @@ struct PendingChange: Identifiable, Codable {
         case settings([ButlerSettingChange])
         case weatherLocation(WeatherLocation, before: WeatherLocation)
         case alarm(ButlerAlarm.Change)
+        case appleReminder(AppleReminderChange)
+        case calendar(SystemCalendarChange)
+        case taskDisplay(TaskDisplayChange)
+        case health(HealthChange)
+        case home(HomeChange)
+        case contacts(ContactChange)
+        case travel(TravelChange)
+        case sync(SyncChange)
+        case webPage(String)
+        case folder(FolderChange)
     }
+
+    var requiresAsyncConfirmation: Bool {
+        switch kind { case .alarm, .appleReminder, .calendar, .taskDisplay, .health, .home, .contacts, .travel, .sync, .webPage, .folder: true; default: false }
+    }
+
+    var requiresSoleConfirmation: Bool {
+        switch kind { case .home(let change): change.risky; case .sync, .webPage, .folder: true; default: false }
+    }
+    var persists: Bool { switch kind { case .health, .home, .contacts, .travel, .sync, .webPage, .folder: false; default: true } }
 
     var id = UUID()
     let kind: Kind
@@ -53,6 +72,21 @@ final class ButlerTools {
     var currentContext: (() -> String)?
     var weather: WeatherStore = .shared
     @ObservationIgnored lazy var alarms: AlarmStore = .shared
+    @ObservationIgnored lazy var appleReminders: AppleReminderStore = .shared
+    @ObservationIgnored lazy var systemCalendar: SystemCalendarStore = .shared
+    @ObservationIgnored lazy var taskDisplays: TaskDisplayStore = TaskDisplayService.store
+    @ObservationIgnored lazy var health: HealthStore = .shared
+    @ObservationIgnored lazy var home: HomeStore = .shared
+    @ObservationIgnored lazy var contacts: ContactsStore = .shared
+    @ObservationIgnored lazy var travel: TravelStore = .shared
+    @ObservationIgnored lazy var synchronization: SyncStore? = SyncService.shared.store
+    @ObservationIgnored lazy var chatSynchronization: SyncStore? = SyncService.shared.chatStore
+    @ObservationIgnored lazy var photoSynchronization: SyncStore? = SyncService.shared.photoStore
+    @ObservationIgnored var webPageReader = WebPageReader(transport: AppleWebPageTransport())
+    @ObservationIgnored lazy var folders = AppleFolderDevice.store
+    var folderSelectionRequest: UUID?
+    /// Display-only delivery; never append this payload to model messages or archived receipts.
+    var onLocalHealthResult: ((String) -> Void)?
     var inputPhotos: [Data] = []
     var displayedCollection: ItemCollection?
     /// The list the conversation is currently showing, and this turn's edit of it (applied in place).
@@ -101,7 +135,8 @@ final class ButlerTools {
     // MARK: - Tool definitions
 
     var toolJSON: String {
-        var tools = Self.inventoryTools + "," + Self.contextTools + "," + Self.pendingTools + "," + Self.itemTools + "," + Self.weatherTools + "," + Self.alarmTools
+        var tools = Self.inventoryTools + "," + Self.contextTools + "," + Self.pendingTools + "," + Self.itemTools + "," + Self.weatherTools + "," + Self.alarmTools + "," + Self.appleReminderTools + "," + Self.systemCalendarTools + "," + Self.taskDisplayTools + "," + Self.healthTools + "," + Self.homeTools
+        tools += "," + Self.contactsTools + "," + Self.travelTools + "," + Self.syncTools + "," + Self.webPageTools + "," + Self.folderTools
         if conversation != nil { tools += "," + Self.conversationTools }
         if jev.isAvailable { tools += "," + Self.jevTool }
         return "[" + tools + "]"
@@ -174,6 +209,16 @@ final class ButlerTools {
         do {
             let data = Data(call.arguments.utf8)
             if let output = try executeAlarmTool(call.name, data: data) { return output }
+            if let output = try await executeAppleReminderTool(call.name, data: data) { return output }
+            if let output = try executeSystemCalendarTool(call.name, data: data) { return output }
+            if let output = try await executeTaskDisplayTool(call.name, data: data) { return output }
+            if let output = try executeHealthTool(call.name, data: data) { return output }
+            if let output = try await executeHomeTool(call.name, data: data) { return output }
+            if let output = try executeContactsTool(call.name, data: data) { return output }
+            if let output = try await executeTravelTool(call.name, data: data) { return output }
+            if let output = try await executeSyncTool(call.name, data: data) { return output }
+            if let output = try executeWebPageTool(call.name, data: data) { return output }
+            if let output = try await executeFolderTool(call.name, data: data) { return output }
             if let output = try await executeWeatherTool(call.name, data: data) { return output }
             if let output = try executeItemTool(call.name, data: data) { return output }
             if let output = try executePendingTool(call.name, data: data) { return output }
@@ -308,7 +353,8 @@ final class ButlerTools {
                 add(.reminder(reminder), title: "提醒：\(text)", detail: reminder.whenLabel)
             case "list_reminders":
                 return try encode(["now": Self.nowLabel, "reminders": reminders.upcoming.map {
-                    ["id": $0.id.uuidString, "text": $0.text, "when": $0.whenLabel] as [String: Any]
+                    ["id": $0.id.uuidString, "text": $0.text, "when": $0.whenLabel,
+                     "notification_policy": $0.syncReceived == true ? "同步收到的任务，本机不新增通知" : "本机按规则尽力安排"] as [String: Any]
                 }] as [String: Any])
             case "propose_cancel_reminder":
                 struct Args: Decodable { var id: String }
@@ -357,6 +403,20 @@ final class ButlerTools {
             return (try? encode(["error": error.localizedDescription, "saved": false] as [String: Any])) ?? #"{"error":"invalid_rule"}"#
         } catch let error as AlarmFailure {
             return (try? encode(["error": error.localizedDescription, "saved": false] as [String: Any])) ?? #"{"error":"alarm_failed"}"#
+        } catch let error as AppleReminderFailure {
+            return (try? encode(["error": error.localizedDescription, "saved": false] as [String: Any])) ?? #"{"error":"system_reminder_failed"}"#
+        } catch let error as CalendarFailure {
+            return (try? encode(["error": error.localizedDescription, "saved": false] as [String: Any])) ?? #"{"error":"calendar_failed"}"#
+        } catch let error as HealthFailure {
+            return (try? encode(["error": error.message, "saved": false] as [String: Any])) ?? #"{"error":"health_failed"}"#
+        } catch let error as HomeFailure {
+            return (try? encode(["error": error.message, "saved": false] as [String: Any])) ?? #"{"error":"home_failed"}"#
+        } catch let error as ContactFailure {
+            return (try? encode(["error": error.message, "saved": false] as [String: Any])) ?? #"{"error":"contacts_failed"}"#
+        } catch let error as TravelFailure {
+            return (try? encode(["error": error.message, "saved": false] as [String: Any])) ?? #"{"error":"travel_failed"}"#
+        } catch let error as SyncFailure {
+            return (try? encode(["error": error.message] as [String: Any])) ?? #"{"error":"sync_failed"}"#
         } catch let error as JevClient.JevError {
             return (try? encode(["error": "jev_failed", "detail": error.localizedDescription,
                                  "hint": "自己判断并继续"] as [String: Any])) ?? #"{"error":"jev_failed"}"#
@@ -367,8 +427,12 @@ final class ButlerTools {
 
     /// Applies every pending change in order. Returns one line per change for the chat and the model.
     func confirmAll(ids: Set<UUID>? = nil) -> [String] {
+        let batch = pending.filter { ids == nil || ids!.contains($0.id) }
+        guard batch.count <= 1 || !batch.contains(where: \.requiresSoleConfirmation) else {
+            return ["✗ 高风险家庭操作须单独确认；本批没有执行，提案均已保留。"]
+        }
         let selected = pending.filter {
-            if case .alarm = $0.kind { return false } // Committed only by confirmIncludingAlarms.
+            if $0.requiresAsyncConfirmation { return false }
             return ids == nil || ids!.contains($0.id)
         }
         let selectedIDs = Set(selected.map(\.id))
@@ -437,7 +501,7 @@ final class ButlerTools {
                     Task { await weather.refresh(force: true) }
                 case .settings(let changes):
                     try ButlerSettingsService.apply(changes, defaults: settingsDefaults, jev: jev as? JevClient)
-                case .alarm: continue
+                case .alarm, .appleReminder, .calendar, .taskDisplay, .health, .home, .contacts, .travel, .sync, .webPage, .folder: continue
                 }
                 results.append("✓ \(change.title)")
             } catch {
@@ -445,6 +509,122 @@ final class ButlerTools {
             }
         }
         pending.removeAll { selectedIDs.contains($0.id) }
+        return results
+    }
+
+    /// Shared confirmation boundary for asynchronous system permissions and writes.
+    func confirmIncludingSystemChanges(ids: Set<UUID>? = nil, progress: (([String]) throws -> Void)? = nil) async -> [String] {
+        let selected = pending.filter { ids == nil || ids!.contains($0.id) }
+        guard selected.count <= 1 || !selected.contains(where: \.requiresSoleConfirmation) else {
+            return ["✗ 此操作须单独确认；本批没有执行，提案均已保留。"]
+        }
+        guard !Task.isCancelled else {
+            selected.forEach { removePending($0.id) }
+            return ["✗ 已停止执行，没有开始本批修改；原确认已消费，重新执行须重新提议。"]
+        }
+        let systemChanges = selected.filter(\.requiresAsyncConfirmation)
+        let localIDs = Set(selected.map(\.id)).subtracting(systemChanges.map(\.id))
+        var results = confirmAll(ids: localIDs)
+        // Consume before any await so another confirmation cannot start the same proposal.
+        systemChanges.forEach { removePending($0.id) }
+        do { try progress?(results) }
+        catch { return results + ["✗ 执行进度无法保存，未开始剩余系统操作；请核查之前的结果，不会自动重试。"] }
+        for proposal in systemChanges {
+            do {
+                try Task.checkCancellation()
+                let receipt: String
+                switch proposal.kind {
+                case .alarm(let change):
+                    try await alarms.apply(change, operationID: proposal.id)
+                    receipt = "已核对系统状态（不代表已实际响铃）"
+                case .appleReminder(let change):
+                    receipt = try await appleReminders.apply(change, operationID: proposal.id)
+                case .calendar(let change):
+                    receipt = try await systemCalendar.apply(change, operationID: proposal.id)
+                case .taskDisplay(let change):
+                    defer { TaskDisplayService.reconcile() }
+                    receipt = try await taskDisplays.apply(change, operationID: proposal.id,
+                        tasks: { try TaskDisplayService.tasks(self.reminders) })
+                case .health(let change):
+                    let result = try await health.apply(change, operationID: proposal.id)
+                    if let text = result.localText { onLocalHealthResult?(text) }
+                    receipt = result.receipt
+                case .home(let change):
+                    receipt = try await home.apply(change, operationID: proposal.id, soleConfirmation: selected.count == 1)
+                case .contacts(let change):
+                    receipt = try await contacts.apply(change, operationID: proposal.id)
+                case .travel(let change):
+                    receipt = try await travel.apply(change, operationID: proposal.id)
+                case .folder(let change):
+                    switch change {
+                    case .authorize:
+                        folderSelectionRequest = UUID()
+                        receipt = "请点“选择文件夹”完成系统授权；当前尚未获得目录访问权。"
+                    case .revoke(let id):
+                        try folders.revoke(id)
+                        receipt = "已撤销后续文件夹访问，原文件和聊天资料保留。"
+                    case .export(let value):
+                        receipt = try await folders.export(value, operationID: proposal.id)
+                    }
+                case .webPage(let address):
+                    do { receipt = try await webPageReader.read(address) }
+                    catch is CancellationError { throw CancellationError() }
+                    catch let error as WebPageFailure { throw error }
+                    catch { throw WebPageFailure("网页读取未完成，请检查网络后重新提议并确认；没有自动重试或修改库存。") }
+                case .sync(let change):
+                    switch change {
+                    case .enabled(let enabled):
+                        if enabled { try await syncStore().setEnabled(true) }
+                        else {
+                            let main = Result { try syncStore().pause() }
+                            let chats = Result { try chatSynchronization?.pause() }
+                            let photos = Result { try photoSynchronization?.pause() }
+                            try main.get(); try chats.get(); try photos.get()
+                        }
+                        receipt = enabled ? "已开启库存文字、任务和笔记前台同步；聊天和图片分别另行开启，不代表本轮已完成。" : "已关闭普通资料、聊天和图片的后续同步，本机及云端资料保留；已发请求可能完成。"
+                    case .chatEnabled(let enabled):
+                        guard !enabled || synchronization?.enabled == true else { throw SyncFailure("请先确认开启普通资料同步，再单独开启聊天。") }
+                        try await syncStore(kind: .chat).setEnabled(enabled)
+                        receipt = enabled ? "已开启聊天文字同步，当前对话结束后前台尝试传输；不上传草稿、待确认操作、图片文件或健康查询结果，也不执行历史指令。" : "已关闭后续聊天同步；普通资料同步不受影响，本机和云端聊天保留，已发请求可能完成。"
+                    case .photosEnabled(let enabled):
+                        guard !enabled || synchronization?.enabled == true else { throw SyncFailure("请先开启普通资料同步，再单独开启图片。") }
+                        try await syncStore(kind: .itemPhoto).setEnabled(enabled)
+                        receipt = enabled ? "已开启Butler内已保存图片同步，当前对话结束后前台尝试；不扫描相册，不代表图片已全部收到。" : "已关闭后续图片同步，本机及云端已有图片保留，普通资料和聊天开关不变。"
+                    case .cleanup(let kind, let plan):
+                        if kind == .inventory {
+                            let chats = Result { try chatSynchronization?.pause() }, photos = Result { try photoSynchronization?.pause() }
+                            try chats.get(); try photos.get()
+                        }
+                        try await syncStore(kind: kind).clean(plan)
+                        receipt = "所选云端区清理已完成，本机资料保留且该区暂停；其他区未清理。重新连接和上传本机资料须再次单独确认。"
+                    case .reconnect(let kind, let account, let head):
+                        guard kind == .inventory || synchronization?.enabled == true else { throw SyncFailure("请先重新连接普通资料，再连接聊天或图片。") }
+                        if kind == .inventory {
+                            let chats = Result { try chatSynchronization?.pause() }, photos = Result { try photoSynchronization?.pause() }
+                            try chats.get(); try photos.get()
+                        }
+                        try await syncStore(kind: kind).reconnect(account: account, head: head)
+                        receipt = "已允许所选范围重新连接并上传当前本机资料，等待前台同步；不代表已完成传输。"
+                    case .resolve(let key, let heads, let selected):
+                        try syncStore(kind: key.kind).resolve(key: key, expectedHeads: heads, selected: selected, applyLocally: key.kind != .chat && !key.kind.isPhoto)
+                        receipt = key.kind == .chat || key.kind.isPhoto
+                            ? "已记录所选版本，当前对话结束后核对新变化再采用；有新分支仍需选择，不代表本机或另一设备已经更新。"
+                            : "已在本机采用所选版本，等待同步；原冲突版本保留，不代表另一设备已更新。"
+                    }
+                default: continue
+                }
+                results.append("✓ \(proposal.title)；\(receipt)")
+            } catch is CancellationError {
+                results.append("✗ \(proposal.title)：已停止执行；之前已完成的操作不会自动撤销。")
+            } catch {
+                results.append("✗ \(proposal.title)：\(error.localizedDescription)")
+            }
+            do { try progress?(results) }
+            catch {
+                results.append("✗ 执行进度无法保存，停止剩余操作；请核查之前的结果，不会自动重试。")
+                break
+            }
+        }
         return results
     }
 
@@ -466,6 +646,7 @@ final class ButlerTools {
         case .itemProfile(let lot, _), .undoInventory(let lot, _): relatedScopes.insert(.lot(lot.id))
         case .reminder(let value), .cancelReminder(let value), .taskPlan(let value, _): relatedScopes.insert(.task(value.id))
         case .taskAction(let id, _, _): relatedScopes.insert(.task(id))
+        case .taskDisplay(let change): relatedScopes.insert(.task(change.taskID))
         case .settings, .weatherLocation: relatedScopes.insert(.settings)
         default: break
         }

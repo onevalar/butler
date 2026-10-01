@@ -44,6 +44,9 @@ struct ButlerChatView: View {
     @State private var showingCamera = false
     @State private var showingLibrary = false
     @State private var showingFiles = false
+    @State private var inboxRefresh = UUID()
+    @State private var attachmentNotice: String?
+    @State private var hasImportedFiles = false
     @State private var pickedPhotos: [PhotosPickerItem] = []
     @State private var showingSettings = false
     @FocusState private var composing: Bool
@@ -85,6 +88,10 @@ struct ButlerChatView: View {
                         }
                         if let pending = chat.tools?.pending, !pending.isEmpty, !chat.working {
                             confirmCard(pending)
+                        }
+                        FolderAccessPrompt(chat: chat, hasOtherWork: hasOtherWork || loadingAttachments)
+                        if chat.scope == .general {
+                            ShareInboxView(chat: chat, hasOtherWork: hasOtherWork || loadingAttachments, refreshID: inboxRefresh)
                         }
                         Color.clear.frame(height: 1).padding(.bottom, 12).id("bottom")
                     }
@@ -182,7 +189,10 @@ struct ButlerChatView: View {
             }
             .fullScreenCover(isPresented: $showingCamera) {
                 PhotoCapture(onPhoto: { image in
-                    if let data = image.chatJPEG() { chat.photos.append(data) }
+                    do {
+                        guard !hasOtherWork, let data = image.chatJPEG() else { throw ShareInbox.Failure("暂时无法添加照片，请稍后重试。") }
+                        try chat.appendPhotos([data]); attachmentNotice = nil
+                    } catch { attachmentNotice = error.localizedDescription }
                     showingCamera = false
                 }, onCancel: { showingCamera = false })
                 .ignoresSafeArea()
@@ -235,26 +245,62 @@ struct ButlerChatView: View {
                 attachmentTask?.cancel()
                 loadingAttachments = true
                 attachmentTask = Task { @MainActor in
-                    for item in items {
-                        if let data = try? await item.loadTransferable(type: Data.self), let jpeg = UIImage(data: data)?.chatJPEG() {
-                            guard !Task.isCancelled, visible else { return }
-                            chat.photos.append(jpeg)
-                        }
+                    defer {
+                        if !Task.isCancelled { loadingAttachments = false; attachmentTask = nil }
                     }
-                    guard !Task.isCancelled else { return }
-                    loadingAttachments = false
-                    attachmentTask = nil
+                    do {
+                        guard chat.photos.count + items.count <= 4 else { throw ShareInbox.Failure("每条消息最多4张图片，请先移除部分附件。本次未添加。") }
+                        var additions: [Data] = [], total = 0
+                        for item in items {
+                            try Task.checkCancellation()
+                            guard let data = try await item.loadTransferable(type: Data.self) else { throw ShareInbox.Failure("照片暂时无法读取，本次选择未添加，请重试。") }
+                            total += data.count
+                            guard total <= ShareInbox.maxTotalBytes else { throw ShareInbox.Failure("本次图片合计超过40 MB，未添加。") }
+                            let jpeg = try await Task.detached(priority: .userInitiated) { try ShareContentReader.image(data) }.value
+                            additions.append(jpeg)
+                        }
+                        try Task.checkCancellation()
+                        guard visible, !hasOtherWork else { throw ShareInbox.Failure("对话正在处理其他内容，请稍后重试。") }
+                        try chat.appendPhotos(additions); attachmentNotice = nil
+                    } catch is CancellationError {
+                    } catch {
+                        if !Task.isCancelled { attachmentNotice = "本次照片未添加：\(error.localizedDescription)" }
+                    }
                 }
             }
-            .fileImporter(isPresented: $showingFiles, allowedContentTypes: [.image], allowsMultipleSelection: true) { result in
-                guard case .success(let urls) = result else { return }
-                for url in urls.prefix(4) {
-                    let scoped = url.startAccessingSecurityScopedResource()
-                    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                    if let data = try? Data(contentsOf: url), let jpeg = UIImage(data: data)?.chatJPEG() {
-                        chat.photos.append(jpeg)
-                    }
+            .fileImporter(isPresented: $showingFiles, allowedContentTypes: [.image, .pdf, .plainText], allowsMultipleSelection: true) { result in
+                switch result {
+                case .success(let urls): importFiles(urls)
+                case .failure(let error):
+                    if (error as NSError).code != NSUserCancelledError { attachmentNotice = "文件未添加：\(error.localizedDescription)" }
                 }
+            }
+        }
+    }
+
+    private func importFiles(_ urls: [URL]) {
+        guard !urls.isEmpty, !loadingAttachments else { return }
+        loadingAttachments = true; attachmentNotice = nil
+        attachmentTask = Task { @MainActor in
+            defer {
+                if !Task.isCancelled { loadingAttachments = false; attachmentTask = nil }
+            }
+            do {
+                let inbox = try ShareInbox.onDevice(), id = UUID()
+                let sources = urls.map { (url: $0, type: UTType(filenameExtension: $0.pathExtension)?.identifier ?? UTType.data.identifier) }
+                let copy = Task.detached(priority: .userInitiated) { try inbox.importFiles(sources, id: id) }
+                _ = try await withTaskCancellationHandler { try await copy.value } onCancel: { copy.cancel() }
+                try Task.checkCancellation()
+                guard visible else { return }
+                inboxRefresh = UUID()
+                hasImportedFiles = true
+                attachmentNotice = chat.scope == .general
+                    ? "原件已保存到本对话的“分享资料”。可查看原件，再点“加入草稿，继续聊”；尚未发送。"
+                    : "原件已保存到通用对话的“分享资料”，请在那里预览并加入草稿；当前草稿未改动。"
+            } catch is CancellationError {
+                // If publishing already finished, keep the inbox record for the next opening.
+            } catch {
+                if !Task.isCancelled { attachmentNotice = "本次文件未导入：\(error.localizedDescription)；来源文件未修改。" }
             }
         }
     }
@@ -376,11 +422,13 @@ struct ButlerChatView: View {
                 InventoryResultView(collection: collection, onOpen: onOpenLot,
                                     onRemove: { chat.removeFromCollection(collection.id, lot: $0) })
             }
-            if !turn.receipts.isEmpty {
+            if !turn.displayReceipts.isEmpty {
                 VStack(alignment: .leading, spacing: 3) {
-                    ForEach(Array(turn.receipts.enumerated()), id: \.offset) { _, line in
+                    ForEach(Array(turn.displayReceipts.enumerated()), id: \.offset) { index, line in
                         Text(line).font(.footnote)
                             .foregroundStyle(line.hasPrefix("✗") ? Color.red : .secondary)
+                            .textSelection(.enabled)
+                            .privacySensitive(index >= turn.receipts.count)
                     }
                 }
                 .padding(.leading, 6)
@@ -444,6 +492,14 @@ struct ButlerChatView: View {
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if let attachmentNotice {
+                Text(attachmentNotice).font(.footnote).foregroundStyle(.secondary)
+                    .textSelection(.enabled).padding(.horizontal, 8)
+                if hasImportedFiles, chat.scope != .general, let onGeneralChat {
+                    Button("前往通用对话查看资料", action: onGeneralChat)
+                        .frame(minHeight: 44)
+                }
+            }
             // The model's errors are already shown as the answer; only the microphone's own errors go here.
             if let error = dictation.error {
                 Text(error).font(.footnote).foregroundStyle(.red)
@@ -466,8 +522,8 @@ struct ButlerChatView: View {
                     }
                     .buttonStyle(.plain)
                     .glassEffect(.regular.interactive(), in: .circle)
-                    .disabled(voiceSession.phase != .idle || loadingAttachments)
-                    .accessibilityLabel("添加照片")
+                    .disabled(voiceSession.phase != .idle || loadingAttachments || chat.working || hasOtherWork)
+                    .accessibilityLabel("添加照片或文件")
 
                     inputField
                 }
@@ -523,7 +579,7 @@ struct ButlerChatView: View {
         case .preparing, .listening, .finishing: return nil
         case .idle: break
         }
-        if loadingAttachments { return "正在添加照片…" }
+        if loadingAttachments { return "正在读取附件…" }
         if chat.draft.count > 8_000 { return "内容超过 8,000 字，请分成几条发送。" }
         if composerPolicy.hasContent, !chat.connection.isLoggedIn, !chat.canSend { return "请先在管家设置里登录，草稿会保留。" }
         if composerPolicy.hasContent, chat.tools == nil { return "暂时无法读取本机资料，草稿已保留。" }

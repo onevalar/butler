@@ -59,6 +59,7 @@ struct ContentView: View {
     @AppStorage(AccentChoice.storageKey) private var accentChoice: AccentChoice = .glass
     @State private var chat: ButlerChat?
     @State private var sessions: ChatSessions?
+    @State private var announcedShares: Set<UUID> = []
     @State private var voiceScope: ChatScope?
     @State private var notificationError: String?
     /// Shared by home (to show reminders) and the chat (to set them).
@@ -216,11 +217,14 @@ struct ContentView: View {
             if sessions == nil {
                 let store = ChatSessions(container: modelContext.container, reminders: reminders)
                 sessions = store
+                SyncService.shared.attach(store)
                 chat = store.chat(for: .general)
                 briefService.attach(store.connection)
                 NotificationManager.shared.reminderStore = reminders
                 reminders.rescheduleAll()
             }
+            handleShortcutNavigation()
+            handleSharedContent()
             if UserDefaults.standard.double(forKey: "butlerSince") == 0 {
                 let since = min(Date.now, chat?.turns.first?.date ?? .now)
                 UserDefaults.standard.set(since.timeIntervalSince1970, forKey: "butlerSince")
@@ -255,7 +259,12 @@ struct ContentView: View {
         }
         .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { now in
             guard scenePhase == .active else { return }
+            SyncService.shared.foregroundTick()
+            TaskDisplayService.reconcile()
             let previousDay = Calendar.current.startOfDay(for: agendaNow)
+            if Int(now.timeIntervalSince1970 / 1800) != Int(agendaNow.timeIntervalSince1970 / 1800) {
+                WidgetSnapshotPublisher.shared.refresh(now: now)
+            }
             agendaNow = now
             if !Calendar.current.isDate(previousDay, inSameDayAs: now) {
                 if listDay == previousDay { listDay = Calendar.current.startOfDay(for: now) }
@@ -264,7 +273,12 @@ struct ContentView: View {
             }
         }
         .onChange(of: scenePhase) { _, phase in
+            if phase != .active { sessions?.allChats.forEach { $0.clearLocalHealthResults() } }
             guard phase == .active else { return }
+            SyncService.shared.foregroundTick()
+            TaskDisplayService.reconcile()
+            WidgetSnapshotPublisher.shared.refresh()
+            handleSharedContent()
             refreshID = UUID()
             let wasToday = Calendar.current.isDate(listDay, inSameDayAs: agendaNow)
             agendaNow = .now
@@ -287,10 +301,19 @@ struct ContentView: View {
             calendarFeed.enabled = UserDefaults.standard.bool(forKey: "showSystemCalendar")
             refreshID = UUID()
         }
+        .onChange(of: ShortcutNavigation.shared.request?.id, initial: true) { _, _ in handleShortcutNavigation() }
+        .onOpenURL { url in
+            do { try ShortcutNavigation.shared.openWidgetURL(url); handleShortcutNavigation() }
+            catch { notificationError = error.localizedDescription }
+        }
+        .onChange(of: sessions?.working) { _, _ in handleShortcutNavigation(); handleSharedContent() }
+        .onChange(of: onboardingDone) { _, _ in handleShortcutNavigation(); handleSharedContent() }
+        .onChange(of: showingChat) { _, showing in if !showing { handleSharedContent() } }
+        .onChange(of: capturing) { _, capturing in if !capturing { handleShortcutNavigation(); handleSharedContent() } }
         .onChange(of: NotificationManager.shared.reminderActionError, initial: true) { _, error in
             notificationError = error
         }
-        .alert("提醒操作未完成", isPresented: Binding(get: { notificationError != nil }, set: { if !$0 { notificationError = nil } })) {
+        .alert("操作未完成", isPresented: Binding(get: { notificationError != nil }, set: { if !$0 { notificationError = nil } })) {
             Button("知道了", role: .cancel) { notificationError = nil }
         } message: { Text(notificationError ?? "") }
         .onChange(of: NotificationManager.shared.pendingReminderID, initial: true) { _, id in
@@ -490,6 +513,50 @@ struct ContentView: View {
         guard let sessions else { return }
         chat = sessions.chat(for: scope)
         chatRequest = nil
+    }
+
+    private func handleSharedContent() {
+        guard let sessions, !sessions.working, onboardingDone, !showingChat, !capturing,
+              ShortcutNavigation.shared.request == nil else { return }
+        // A missing entitlement must not prevent normal app launch. The conversation shows errors.
+        guard let listing = try? ShareInbox.onDevice().list() else { return }
+        let general = sessions.chat(for: .general)
+        let pending = listing.records.filter { !general.receivedShareIDs.contains($0.id) && !announcedShares.contains($0.id) }
+        guard !pending.isEmpty else { return }
+        announcedShares.formUnion(pending.map(\.id))
+        selectChat(.general)
+        presentChat()
+    }
+
+    private func handleShortcutNavigation() {
+        guard let sessions, !sessions.working, onboardingDone, !capturing,
+              let request = ShortcutNavigation.shared.request else { return }
+        switch request.destination {
+        case .task(let id):
+            guard reminders.reminder(id: id) != nil else {
+                notificationError = "任务已不存在，请重新选择"
+                ShortcutNavigation.shared.consume(request.id)
+                return
+            }
+            path = [.task(id)]
+            selectChat(.task(id))
+        case .inventory(let text):
+            path = [.items]
+            selectChat(.inventory)
+            chat?.receiveItemShortcut(text)
+        case .lot(let id):
+            guard lots.contains(where: { $0.id == id }) else {
+                notificationError = "这件物品已不存在，请回到库存重新选择。小组件没有创建或修改任何记录。"
+                ShortcutNavigation.shared.consume(request.id)
+                return
+            }
+            path = [.lot(id)]
+            selectChat(.lot(id))
+        case .general:
+            selectChat(.general)
+        }
+        ShortcutNavigation.shared.consume(request.id)
+        presentChat()
     }
 
     private var showsOnboarding: Bool {

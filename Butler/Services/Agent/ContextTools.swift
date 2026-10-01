@@ -147,7 +147,8 @@ extension ButlerTools {
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
         var value = try JSONSerialization.jsonObject(with: encoder.encode(reminder)) as? [String: Any] ?? [:]
         value["rule_summary"] = ReminderSchedule.ruleSummary(reminder)
-        value["next_notifications"] = ReminderSchedule.preview(reminder, now: .now, limit: 6).map { ISO8601DateFormatter().string(from: $0) }
+        value["notification_policy"] = reminder.syncReceived == true ? "从其他设备同步，仅显示任务，本机不新增通知" : "由本机按规则尽力安排，实际送达依赖系统"
+        value["next_notifications"] = reminder.syncReceived == true ? [] : ReminderSchedule.preview(reminder, now: .now, limit: 6).map { ISO8601DateFormatter().string(from: $0) }
         return value
     }
 

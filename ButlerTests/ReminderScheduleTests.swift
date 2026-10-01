@@ -20,6 +20,66 @@ final class ReminderScheduleTests: XCTestCase {
         return ReminderStore(file: file, schedules: false)
     }
 
+    func testWidgetProjectionExcludesAutomaticDeadlineWithoutWritingOrCompletingTask() throws {
+        let file = URL.temporaryDirectory.appendingPathComponent("widget-task-\(UUID()).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let automatic = TimedReminder(text: "自动结束", fireDate: date(28), autoCompleteAt: date(28, hour: 12))
+        let later = TimedReminder(text: "晚些做", fireDate: date(28, hour: 22))
+        let original = try JSONEncoder().encode([automatic, later])
+        try original.write(to: file)
+        let store = ReminderStore(file: file, schedules: false)
+        XCTAssertEqual(Set(try store.todayTaskSnapshot(now: date(28, hour: 11), calendar: calendar).map(\.id)), [automatic.id, later.id])
+        XCTAssertEqual(try store.todayTaskSnapshot(now: date(28, hour: 12), calendar: calendar).map(\.id), [later.id])
+        XCTAssertEqual(store.reminder(id: automatic.id)?.status, .active)
+        XCTAssertEqual(try Data(contentsOf: file), original)
+        try Data("broken".utf8).write(to: file)
+        let broken = ReminderStore(file: file, schedules: false)
+        XCTAssertThrowsError(try broken.todayTaskSnapshot(now: date(28), calendar: calendar))
+    }
+
+    func testSystemCompletionChecksLatestRevisionAndDoesNotCompleteReopenedTask() throws {
+        let store = store()
+        var task = TimedReminder(text: "材料", fireDate: date(28))
+        try store.add(task)
+        task.text = "新的材料"
+        try store.update(task)
+        XCTAssertThrowsError(try store.complete(task.id, expectedRevision: 1))
+        XCTAssertEqual(store.reminder(id: task.id)?.status, .active)
+        try store.complete(task.id, expectedRevision: 2)
+        XCTAssertEqual(store.reminder(id: task.id)?.status, .completed)
+        XCTAssertThrowsError(try store.complete(task.id, expectedRevision: 2))
+        XCTAssertEqual(store.reminder(id: task.id)?.activity.filter { $0.kind == "completed" }.count, 1)
+        try store.reopen(task.id)
+        XCTAssertThrowsError(try store.complete(task.id, expectedRevision: 2))
+        XCTAssertEqual(store.reminder(id: task.id)?.status, .active)
+    }
+
+    func testSystemTodayIncludesLaterTodayAndOverdueButNotTomorrowPausedOrCompleted() throws {
+        let store = store()
+        let overdue = TimedReminder(text: "昨日未完成", fireDate: date(27))
+        let tonight = TimedReminder(text: "今晚", fireDate: date(28, hour: 22))
+        let tomorrow = TimedReminder(text: "明天", fireDate: date(29))
+        let paused = TimedReminder(text: "暂停", fireDate: date(28))
+        let completed = TimedReminder(text: "完成", fireDate: date(28))
+        let daily = TimedReminder(text: "每日", fireDate: date(20), repeats: .daily, timeZoneIdentifier: "Asia/Shanghai")
+        for task in [overdue, tonight, tomorrow, paused, completed, daily] { try store.add(task) }
+        try store.pause(paused.id); try store.complete(completed.id)
+        let result = try store.todayTasksForSystemEntry(now: date(28, hour: 10), calendar: calendar)
+        XCTAssertEqual(Set(result.map(\.id)), Set([overdue.id, tonight.id, daily.id]))
+        XCTAssertEqual(result.count, 3)
+    }
+
+    func testSystemQueryDoesNotHideCorruptStorageAsEmpty() throws {
+        let file = URL.temporaryDirectory.appendingPathComponent("bad-shortcut-\(UUID()).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        try Data("broken".utf8).write(to: file)
+        let store = ReminderStore(file: file, schedules: false)
+        XCTAssertThrowsError(try store.tasksForSystemEntry())
+        XCTAssertThrowsError(try store.todayTasksForSystemEntry())
+        XCTAssertThrowsError(try store.complete(UUID(), expectedRevision: 1))
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "broken")
+    }
+
     func testLegacyRecordsDecodeWithoutLosingIdentityOrRepeat() throws {
         let original = TimedReminder(text: "买菜", fireDate: date(28), repeats: .weekly)
         let encoded = try JSONEncoder().encode(original)

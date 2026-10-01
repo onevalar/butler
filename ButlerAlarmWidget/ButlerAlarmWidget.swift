@@ -4,7 +4,7 @@ import SwiftUI
 import WidgetKit
 
 /// Required by AlarmKit for countdown presentation. Management remains in the conversation.
-@main struct ButlerAlarmWidget: Widget {
+struct ButlerAlarmWidget: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: AlarmAttributes<ButlerAlarmMetadata>.self) { context in
             VStack(alignment: .leading, spacing: 8) {
@@ -44,6 +44,58 @@ import WidgetKit
                 .formatted(.time(pattern: .hourMinuteSecond)))
         default:
             Text("响铃中")
+        }
+    }
+}
+
+@main struct ButlerWidgetBundle: WidgetBundle {
+    var body: some Widget {
+        ButlerAlarmWidget()
+        ButlerTaskDisplayWidget()
+        ButlerWidget()
+    }
+}
+
+/// A display window, never evidence that its underlying task has completed.
+struct ButlerTaskDisplayWidget: Widget {
+    var body: some WidgetConfiguration {
+        ActivityConfiguration(for: TaskDisplayAttributes.self) { context in
+            VStack(alignment: .leading, spacing: 8) {
+                Text(context.state.ended ? "展示已关闭" : context.isStale ? "展示已到期" : "任务限时展示")
+                    .font(.headline)
+                remaining(context).font(.largeTitle.monospacedDigit())
+                Text("展示结束不代表任务完成 · 轻点返回对话")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            .padding()
+            .widgetURL(WidgetDestination.task(context.attributes.taskID).url)
+        } dynamicIsland: { context in
+            DynamicIsland {
+                DynamicIslandExpandedRegion(.leading) { Text("限时展示") }
+                DynamicIslandExpandedRegion(.bottom) {
+                    VStack {
+                        remaining(context).font(.title.monospacedDigit())
+                        Text("不代表任务完成").font(.caption)
+                    }
+                }
+            } compactLeading: {
+                Image(systemName: "hourglass")
+            } compactTrailing: {
+                remaining(context).monospacedDigit().frame(maxWidth: 64)
+            } minimal: {
+                Image(systemName: context.isStale || context.state.ended ? "hourglass.bottomhalf.filled" : "hourglass")
+            }
+            .widgetURL(WidgetDestination.task(context.attributes.taskID).url)
+        }
+    }
+
+    @ViewBuilder private func remaining(_ context: ActivityViewContext<TaskDisplayAttributes>) -> some View {
+        if context.state.ended {
+            Text("已关闭")
+        } else if context.isStale || context.state.deadline <= Date.now {
+            Text("已到期")
+        } else {
+            Text(timerInterval: min(Date.now, context.state.deadline)...context.state.deadline, countsDown: true)
         }
     }
 }

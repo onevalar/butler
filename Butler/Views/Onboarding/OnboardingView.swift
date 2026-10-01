@@ -111,7 +111,7 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 16) {
             StepIcon(systemImage: "calendar", color: .green)
             Text("首页显示日程？").font(.largeTitle.bold())
-            Text("打开后，你日历里的会议和安排会出现在首页的时间线上。小当家只读取、不修改，也不会发给模型。")
+            Text("打开后，日历里的会议和安排会出现在首页。此开关不会自动修改日历或发送给模型；对话使用日历需另行确认，每次修改也需确认。")
                 .font(.body).foregroundStyle(.secondary)
             Toggle("在首页显示系统日历", isOn: Binding(get: { calendarFeed.enabled && calendarFeed.canRead }, set: { on in
                 calendarFeed.enabled = on

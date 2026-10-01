@@ -108,6 +108,7 @@ final class InventoryRepository {
 
             if !appliedOperationIDs.isEmpty {
                 try modelContext.save()
+                WidgetSnapshotPublisher.shared.refresh()
             }
         } catch {
             modelContext.rollback()

@@ -90,6 +90,20 @@ struct ChatSessionFiles {
         try JSONEncoder().encode(turns).write(to: transcript, options: .atomic)
     }
 
+    /// Sync must not turn an unreadable scope into a remote deletion.
+    static func syncScopes(in root: URL) throws -> [ChatScope] {
+        let directory = root.appendingPathComponent("chat-sessions", isDirectory: true)
+        guard FileManager.default.fileExists(atPath: directory.path) else { return [.general] }
+        let folders = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+        return [.general] + (try folders.map { folder in
+            let scope = try JSONDecoder().decode(ChatScope.self, from: Data(contentsOf: folder.appendingPathComponent("scope.json")))
+            guard scope != .general, scope.key.utf8.count <= 200, folder.lastPathComponent == scope.key else {
+                throw SyncFailure("会话目录与内容不匹配，停止聊天同步。")
+            }
+            return scope
+        })
+    }
+
     static func savedScopes(in root: URL) -> [ChatScope] {
         let directory = root.appendingPathComponent("chat-sessions", isDirectory: true)
         let folders = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
@@ -105,4 +119,6 @@ struct ChatSessionFiles {
 struct ChatDraft: Codable, Equatable {
     var text = ""
     var photos: [Data] = []
+    /// Stored with the draft in one atomic write; survives sending and app relaunch.
+    var receivedShareIDs: [UUID]?
 }

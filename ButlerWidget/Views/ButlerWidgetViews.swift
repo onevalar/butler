@@ -1,108 +1,88 @@
-//
-//  ButlerWidgetViews.swift
-//  Butler
-//
-//  Created by 安宇佳 on 2026/1/6.
-//
-
 import SwiftUI
 import WidgetKit
 
-// MARK: - Small Widget
+struct ButlerWidgetEntryView: View {
+    let entry: ButlerWidgetEntry
+    @Environment(\.widgetFamily) private var family
 
-struct ButlerSmallWidget: View {
-    let items: [Item]
-    
-    var criticalCount: Int {
-        items.filter { $0.urgencyLevel == .critical || $0.urgencyLevel == .expired }.count
-    }
-    
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Image(systemName: "shield.fill")
-                    .foregroundStyle(.blue)
-                Spacer()
-                Text("\(items.count)")
-                    .font(.system(.title3, design: .rounded))
-                    .bold()
-            }
-            
-            Spacer()
-            
-            Text("预警状态")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            
-            if criticalCount > 0 {
-                Text("\(criticalCount) 件紧急")
-                    .font(.headline)
-                    .foregroundStyle(.red)
-            } else {
-                Text("暂无过期")
-                    .font(.headline)
-                    .foregroundStyle(.green)
-            }
-        }
-        .padding()
-    }
-}
-
-// MARK: - Medium Widget
-
-struct ButlerMediumWidget: View {
-    let items: [Item]
-    
-    var body: some View {
-        HStack(spacing: 0) {
-            // Left Side: Summary
-            VStack(alignment: .leading) {
-                Text("Butler")
-                    .font(.system(.headline, design: .rounded))
-                    .foregroundStyle(.blue)
-                
-                Spacer()
-                
-                Text("\(items.count)")
-                    .font(.system(size: 34, weight: .bold, design: .rounded))
-                Text("总库存")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding()
-            
-            Divider()
-                .padding(.vertical)
-            
-            // Right Side: List
-            VStack(alignment: .leading, spacing: 10) {
-                if items.isEmpty {
-                    Text("所有物品都很安全 ✨")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(items.prefix(3), id: \.id) { item in
-                        HStack {
-                            Circle()
-                                .fill(item.statusColor)
-                                .frame(width: 8, height: 8)
-                            
-                            Text(item.name)
-                                .font(.system(size: 14, weight: .medium))
-                                .lineLimit(1)
-                            
-                            Spacer()
-                            
-                            Text(item.expiryDescription)
-                                .font(.system(size: 12))
-                                .foregroundStyle(.secondary)
-                        }
+        switch family {
+        case .accessoryInline, .accessoryCircular, .accessoryRectangular:
+            lockScreen // Deliberately never passes rows or titles to the lock-screen view.
+        default:
+            if let snapshot = entry.current {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("小当家").font(.headline)
+                        Spacer()
+                        Text(snapshot.generatedAt, style: .time).font(.caption2).foregroundStyle(.secondary)
                     }
+                    if family == .systemMedium {
+                        HStack(alignment: .top, spacing: 12) {
+                            section("今日待办", count: snapshot.taskCount, rows: snapshot.tasks, tasks: true, limit: 2)
+                            Divider()
+                            section("临期关注", count: snapshot.itemCount, rows: snapshot.items, tasks: false, limit: 2)
+                        }
+                    } else {
+                        section("今日待办", count: snapshot.taskCount, rows: snapshot.tasks, tasks: true, limit: 1)
+                        section("临期关注", count: snapshot.itemCount, rows: snapshot.items, tasks: false, limit: 1)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .privacySensitive()
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("小当家", systemImage: "house")
+                    Text("打开 App 更新").font(.headline)
+                    Text("摘要尚未就绪或已过期").font(.caption).foregroundStyle(.secondary)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding()
+        }
+    }
+
+    private func section(_ title: String, count: Int, rows: [WidgetSnapshot.Row], tasks: Bool, limit: Int) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("\(title) · \(count)").font(.caption.weight(.semibold)).monospacedDigit()
+            if rows.isEmpty {
+                Text("暂无").font(.caption).foregroundStyle(.secondary)
+            } else {
+                ForEach(rows.prefix(limit)) { row in
+                    Link(destination: (tasks ? WidgetDestination.task(row.id) : .lot(row.id)).url) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(row.title).font(.subheadline).lineLimit(1)
+                            if family == .systemMedium {
+                                Text(row.detail).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .accessibilityLabel("\(row.title)，\(row.detail)，打开对话")
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder private var lockScreen: some View {
+        if let snapshot = entry.current {
+            switch family {
+            case .accessoryCircular:
+                VStack(spacing: 0) {
+                    Image(systemName: "checklist")
+                    Text("\(snapshot.taskCount)").font(.headline).monospacedDigit()
+                }
+                .accessibilityLabel("小当家今日待办\(snapshot.taskCount)项，打开对话")
+            case .accessoryInline:
+                Text("待办 \(snapshot.taskCount) · 临期 \(snapshot.itemCount)")
+            default:
+                VStack(alignment: .leading) {
+                    Text("小当家").font(.headline)
+                    Text("待办 \(snapshot.taskCount) · 临期 \(snapshot.itemCount)").monospacedDigit()
+                }
+            }
+        } else {
+            Label("打开更新", systemImage: "arrow.clockwise")
+                .accessibilityLabel("小当家摘要待更新，请打开 App")
         }
     }
 }

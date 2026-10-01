@@ -28,6 +28,9 @@ struct ButlerApp: App {
             SampleInventory.seed(into: modelContainer)
         }
         #endif
+        if !Self.isRunningTests { WidgetSnapshotPublisher.shared.configure(container: modelContainer) }
+        if !Self.isRunningTests { TaskDisplayService.reconcile() }
+        if !Self.isRunningTests { SyncService.shared.configure(container: modelContainer) }
     }
 
     /// Hosted unit tests use their own temporary stores and must never open user data.

@@ -17,7 +17,7 @@ final class LocalAgentTests: XCTestCase {
         return preview.after.id
     }
 
-    func testLocalSaveReopenAndAbsoluteRemainingLeaveOtherShopAlone() throws {
+    func testLocalSaveReopenAndAbsoluteRemainingLeaveOtherShopAlone() async throws {
         let url = try file()
         let store = try LocalMemoryStore(file: url)
         let hema = try seed(store, title: "盒马麻薯", quantity: 6)
@@ -36,7 +36,7 @@ final class LocalAgentTests: XCTestCase {
         XCTAssertEqual(try reopened.search("盒马").map(\.id), [hema])
     }
 
-    func testFreeTextNeedsNoCategoryAndInvalidCorrectionExpiresOldPreview() throws {
+    func testFreeTextNeedsNoCategoryAndInvalidCorrectionExpiresOldPreview() async throws {
         let store = try LocalMemoryStore(file: file())
         let note = try store.propose(id: nil, title: "衣服搭配", text: "蓝色衬衫配米色裤子", quantity: nil, source: "记住这个搭配")
         XCTAssertTrue(store.records.isEmpty)
@@ -50,7 +50,7 @@ final class LocalAgentTests: XCTestCase {
         XCTAssertEqual(try store.search("米色裤子").first?.text, "蓝色衬衫配米色裤子")
     }
 
-    func testWriteFailureDoesNotPublishAndCorruptFileIsNotOverwritten() throws {
+    func testWriteFailureDoesNotPublishAndCorruptFileIsNotOverwritten() async throws {
         let url = try file()
         let store = try LocalMemoryStore(file: url)
         let proposal = try store.propose(id: nil, title: "安排", text: "明天取衣服", quantity: nil, source: "测试")
@@ -126,6 +126,29 @@ final class LocalAgentTests: XCTestCase {
         XCTAssertTrue(store.records.isEmpty)
         guard case .receipt(_, let saved) = agent.messages.last else { return XCTFail("Missing cancellation receipt") }
         XCTAssertFalse(saved)
+    }
+
+    func testSyncArrivalInvalidatesOldPreviewAndBatchProposal() async throws {
+        let store = try LocalMemoryStore(file: file())
+        let id = try seed(store, title: "偏好", quantity: nil)
+        let pending = try store.propose(id: id, title: "偏好", text: "旧编辑", quantity: nil, source: "测试")
+        let incoming = LocalMemory(id: id, title: "偏好", text: "另一设备确认的更改", quantity: nil, revision: 11)
+        try store.receiveSyncedNote(incoming)
+        XCTAssertThrowsError(try store.confirm(pending.id))
+        XCTAssertThrowsError(try store.upsert(pending.after))
+        XCTAssertEqual(try store.recordsForSync(), [incoming])
+        try store.delete(id)
+        XCTAssertThrowsError(try store.upsert(pending.after))
+    }
+
+    func testSyncReadRejectsExternallyRemovedOrDamagedNotesInsteadOfPublishingDeletion() async throws {
+        let url = try file(), store = try LocalMemoryStore(file: url)
+        _ = try seed(store, title: "保留", quantity: nil)
+        try FileManager.default.removeItem(at: url)
+        XCTAssertThrowsError(try store.recordsForSync())
+        try Data("broken".utf8).write(to: url)
+        XCTAssertThrowsError(try store.recordsForSync())
+        XCTAssertEqual(store.records.count, 1)
     }
 
     func testModelFailureClearsPreviewAndIncompleteConversation() async throws {

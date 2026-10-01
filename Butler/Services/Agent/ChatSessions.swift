@@ -29,7 +29,9 @@ final class ChatSessions {
         self.jev = jev ?? JevClient(defaults: defaults)
         self.directory = directory
         self.defaults = defaults
-        self.notes = directory.flatMap { try? LocalMemoryStore(file: $0.appendingPathComponent("agent-test-memory.json")) }
+        self.notes = directory == BackupService.supportDirectory
+            ? try? LocalMemoryStore.openNotes()
+            : directory.flatMap { try? LocalMemoryStore(file: $0.appendingPathComponent("agent-test-memory.json")) }
     }
 
     nonisolated deinit {}
@@ -46,6 +48,12 @@ final class ChatSessions {
 
     var allChats: [ButlerChat] { Array(cache.values) }
     var working: Bool { cache.values.contains(where: \.working) }
+
+    func reloadSyncedHistory(_ scope: ChatScope) {
+        cache[scope]?.reloadSyncedHistory()
+    }
+
+    func reloadSyncedPhotos() { cache.values.forEach { $0.reloadSyncedPhotos() } }
 
     func reloadFromDisk() {
         cache.values.forEach { $0.reloadFromDisk() }

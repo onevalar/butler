@@ -110,7 +110,8 @@ final class PrefetchDataTests: XCTestCase {
     func testReadsOnlySelectedStoreAndKeepsCompleteNoteText() async throws {
         let (tools, _, judge) = try makeTools()
         let note = LocalMemory(id: UUID(), title: "早餐偏好", text: "早餐喜欢热牛奶，不喜欢甜食。", quantity: nil, revision: 2)
-        try tools.notes.upsert(note)
+        // Seed an existing revision; ordinary confirmed edits now reject stale versions.
+        try tools.notes.receiveSyncedNote(note)
         let results = try await tools.prefetch(inventory: false, notes: true)
         XCTAssertEqual(results.map(\.call.name), ["search_notes"])
         XCTAssertEqual(try json(results[0].call.arguments)["query"] as? String, "")

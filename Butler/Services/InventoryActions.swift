@@ -36,6 +36,7 @@ struct InventoryActions {
         product.revision += 1
         product.updatedAt = .now
         try context.save()
+        WidgetSnapshotPublisher.shared.refresh()
     }
 
     func close(_ lot: LotFacts, as state: InventoryLotState) throws {

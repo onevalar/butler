@@ -20,13 +20,14 @@ enum ButlerStore {
             forSecurityApplicationGroupIdentifier: "group.com.butler"
         ) {
             let databaseURL = sharedURL.appendingPathComponent("Butler.sqlite")
-            configuration = ModelConfiguration(schema: schema, url: databaseURL)
+            configuration = ModelConfiguration(schema: schema, url: databaseURL, cloudKitDatabase: .none)
         } else {
             // Preserve the legacy default-store location when App Groups are unavailable.
             configuration = ModelConfiguration(
                 schema: schema,
                 isStoredInMemoryOnly: false,
-                allowsSave: true
+                allowsSave: true,
+                cloudKitDatabase: .none
             )
         }
 
@@ -34,7 +35,7 @@ enum ButlerStore {
     }
 
     static func makePreviewContainer() throws -> ModelContainer {
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
         return try ModelContainer(for: schema, configurations: [configuration])
     }
 }

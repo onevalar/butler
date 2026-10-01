@@ -170,6 +170,7 @@ enum BackupService {
         for key in backup.files.keys where key.hasPrefix(chatFilePrefix) {
             guard validChatPath(String(key.dropFirst(chatFilePrefix.count))) else { throw BackupError.notABackup }
         }
+        if directory == supportDirectory { try SyncService.shared.prepareForRestore() }
         if let directory {
             let safety = try encode(makeBackup(container: container, directory: directory, defaults: defaults))
             let folder = directory.appendingPathComponent("backups", isDirectory: true)
@@ -264,6 +265,10 @@ enum BackupService {
         // A backup from before themes only knows the old 背景光 switch: off meant 素净.
         if backup.settings["appTheme"] == nil, let glow = backup.settings["ambientGlow"] {
             defaults.set(glow == "1" || glow == "true" ? AppTheme.mist.rawValue : AppTheme.plain.rawValue, forKey: AppTheme.storageKey)
+        }
+        if directory == supportDirectory {
+            try LocalMemoryStore.openNotes().reload()
+            ReminderStore.openOnDevice().reload()
         }
         NotificationCenter.default.post(name: .butlerBackupRestored, object: nil)
     }

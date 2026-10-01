@@ -2,18 +2,33 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CFBundleURLTypes</key>
+	<array><dict>
+		<key>CFBundleURLName</key><string>com.anvalar.Butler.widget</string>
+		<key>CFBundleURLSchemes</key><array><string>butler</string></array>
+	</dict></array>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSAlarmKitUsageDescription</key>
 	<string>按你在对话中确认的时间设置响铃闹钟或倒计时，即使静音或专注模式也能提醒你。</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
+	<key>NSHomeKitUsageDescription</key>
+	<string>经你在对话中许可后，按请求查询家庭、房间、设备及状态并提供给当前模型；控制设备或场景仍需逐次确认，高风险操作单独确认。</string>
+	<key>NSContactsUsageDescription</key>
+	<string>仅在你需要通讯录能力并确认后，查询获准联系人的姓名和单位，选择所需字段用于当前模型对话；创建或修改仍需确认。不使用通讯录不影响其他功能，不上传整本通讯录。</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>经你逐次确认后，在手机查看所选时间范围的活动、饮水或营养摘要，帮助你管理自己的健康；读取结果不发送给AI，也不保存到对话历史或备份。</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>经你确认类型、数值、单位和时间后，记录实际饮水或营养；只纠正或删除小当家自己写入的记录，不修改其他来源。</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
-	<string>在首页时间线上显示你日历里的日程，管家只读取、不修改。</string>
+	<string>在首页显示日程。另经你确认后，可在对话中查询相关日历内容并发送给当前模型；每次创建、修改或删除事件仍需确认。</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>按你的对话请求查询苹果提醒事项，并在你确认后添加、改期、完成或删除指定提醒。相关查询内容用于当前管家对话，不自动复制本地任务。</string>
 	<key>NSCameraUsageDescription</key>
 	<string>拍下买回来的东西、购物小票或包装上的日期，让管家帮你记下来。</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>获取你所在地区的天气，帮助小当家提供出门和穿搭建议。也可以手动选择城市。</string>
+	<string>按需获取天气或本次位置；经你确认后标记家等地点，并让系统在进入指定范围时发送提醒。地点提醒需精确位置，不记录行踪；也可手动输入地址查找路线。</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>用说话代替打字，和管家对话。</string>
 	<key>NSSpeechRecognitionUsageDescription</key>

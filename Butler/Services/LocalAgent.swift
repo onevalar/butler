@@ -31,6 +31,7 @@ final class LocalMemoryStore {
 
     private let file: URL
     private var snapshot: Snapshot
+    private static var deviceStore: LocalMemoryStore?
     private(set) var preview: LocalMemoryPreview?
     var records: [LocalMemory] { snapshot.records }
 
@@ -49,9 +50,12 @@ final class LocalMemoryStore {
     nonisolated deinit { }
 
     static func openOnDevice() throws -> LocalMemoryStore {
+        if let deviceStore { return deviceStore }
         let directory = try FileManager.default.url(for: .applicationSupportDirectory,
             in: .userDomainMask, appropriateFor: nil, create: true)
-        return try LocalMemoryStore(file: directory.appendingPathComponent("agent-test-memory.json"))
+        let store = try LocalMemoryStore(file: directory.appendingPathComponent("agent-test-memory.json"))
+        deviceStore = store
+        return store
     }
 
     func search(_ query: String) throws -> [LocalMemory] {
@@ -89,13 +93,31 @@ final class LocalMemoryStore {
     func upsert(_ memory: LocalMemory) throws {
         var next = snapshot
         if let index = next.records.firstIndex(where: { $0.id == memory.id }) {
+            guard memory.revision == next.records[index].revision + 1 else { throw LocalAgentError.expiredPreview }
             next.records[index] = memory
         } else {
+            guard memory.revision == 1 else { throw LocalAgentError.expiredPreview }
             next.records.append(memory)
         }
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try JSONEncoder().encode(next).write(to: file, options: .atomic)
         snapshot = next
+    }
+
+    /// Sync has its own compare-and-replace boundary and monotonic local revision.
+    func receiveSyncedNote(_ memory: LocalMemory) throws {
+        var next = snapshot
+        next.records.removeAll { $0.id == memory.id }; next.records.append(memory)
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder().encode(next).write(to: file, options: .atomic)
+        snapshot = next; preview = nil
+    }
+
+    func recordsForSync() throws -> [LocalMemory] {
+        let disk = FileManager.default.fileExists(atPath: file.path)
+            ? try JSONDecoder().decode(Snapshot.self, from: Data(contentsOf: file)).records : []
+        guard disk == records else { throw LocalAgentError.expiredPreview }
+        return records
     }
 
     /// Re-reads the file, e.g. after restoring a backup.
@@ -118,6 +140,7 @@ final class LocalMemoryStore {
     func confirm(_ id: UUID) throws {
         if snapshot.confirmed.contains(id) { return }
         guard let preview, preview.id == id else { throw LocalAgentError.expiredPreview }
+        guard snapshot.records.first(where: { $0.id == preview.after.id }) == preview.before else { throw LocalAgentError.expiredPreview }
         var next = snapshot
         if let index = next.records.firstIndex(where: { $0.id == preview.after.id }) {
             next.records[index] = preview.after

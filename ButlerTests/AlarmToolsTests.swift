@@ -43,11 +43,11 @@ import XCTest
         XCTAssertTrue(tools.confirmAll().isEmpty, "The synchronous path must not consume a system proposal")
         let persisted = try JSONEncoder().encode(tools.pending)
         tools.restorePending(try JSONDecoder().decode([PendingChange].self, from: persisted))
-        let receipts = await tools.confirmIncludingAlarms()
+        let receipts = await tools.confirmIncludingSystemChanges()
         XCTAssertEqual(receipts.count, 1)
         XCTAssertTrue(receipts[0].hasPrefix("✓"), receipts[0])
         XCTAssertTrue(tools.pending.isEmpty)
-        let replay = await tools.confirmIncludingAlarms()
+        let replay = await tools.confirmIncludingSystemChanges()
         XCTAssertTrue(replay.isEmpty)
         XCTAssertEqual(device.events.count, 1)
         XCTAssertEqual(tools.alarms.records.first?.rule, .timer(seconds: 173))
@@ -81,7 +81,7 @@ import XCTest
         device.authorization = "denied"
         _ = try await call(tools, "propose_alarm", timer())
         _ = try await call(tools, "propose_note", ["id": NSNull(), "title": "偏好", "text": "煮面不放辣椒"])
-        let receipts = await tools.confirmIncludingAlarms()
+        let receipts = await tools.confirmIncludingSystemChanges()
         XCTAssertEqual(receipts.filter { $0.hasPrefix("✓") }.count, 1)
         XCTAssertEqual(receipts.filter { $0.hasPrefix("✗") && $0.contains("权限") }.count, 1)
         XCTAssertEqual(tools.notes.records.count, 1)
@@ -97,9 +97,9 @@ import XCTest
         let firstID = try XCTUnwrap(tools.pending.first?.id)
         var permission: CheckedContinuation<Void, Never>?
         device.onAuthorize = { await withCheckedContinuation { permission = $0 } }
-        let first = Task { await tools.confirmIncludingAlarms(ids: [firstID]) }
+        let first = Task { await tools.confirmIncludingSystemChanges(ids: [firstID]) }
         while permission == nil { await Task.yield() }
-        let duplicate = await tools.confirmIncludingAlarms(ids: [firstID])
+        let duplicate = await tools.confirmIncludingSystemChanges(ids: [firstID])
         XCTAssertTrue(duplicate.isEmpty)
         XCTAssertEqual(tools.pending.count, 1)
         permission?.resume()
@@ -112,7 +112,7 @@ import XCTest
     func testRemainingTimeNeverUsesOriginalDurationAndStaleActionIsRejected() async throws {
         let (tools, device) = try makeTools()
         _ = try await call(tools, "propose_alarm", timer())
-        _ = await tools.confirmIncludingAlarms()
+        _ = await tools.confirmIncludingSystemChanges()
         let value = try XCTUnwrap(tools.alarms.records.first)
         let unknown = try await call(tools, "get_alarms", ["id": value.id.uuidString])
         let rows = try XCTUnwrap(unknown["alarms"] as? [[String: Any]])
@@ -123,7 +123,7 @@ import XCTest
         _ = try await call(tools, "propose_alarm_action", ["id": value.id.uuidString, "expected_revision": 1, "action": "pause"])
         try await tools.alarms.apply(.action(id: value.id, action: .cancel, expectedRevision: 1,
                                             expiresAt: .now.addingTimeInterval(300)), operationID: UUID())
-        let results = await tools.confirmIncludingAlarms()
+        let results = await tools.confirmIncludingSystemChanges()
         XCTAssertEqual(results.filter { $0.hasPrefix("✗") && $0.contains("变化") }.count, 1)
         XCTAssertFalse(device.events.contains { $0.hasPrefix("pause:") })
     }
