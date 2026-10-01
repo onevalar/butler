@@ -1,4 +1,6 @@
-import AVFoundation
+// Compatibility is limited to AVFAudio's synchronous conversion input callbacks;
+// relay/converter locks protect access and asynchronous callbacks transfer values only.
+@preconcurrency import AVFoundation
 import Observation
 import Speech
 
@@ -448,10 +450,11 @@ final class LiveDictation {
         legacyTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
             let piece = result?.bestTranscription.formattedString
             let isFinal = result?.isFinal ?? false
-            Task { @MainActor in
+            let didFail = error != nil && result == nil
+            Task { @MainActor [weak self] in
                 guard let self, self.sessionID == id else { return }
                 if let piece { self.heardLegacy(piece, final: isFinal) }
-                if error != nil, result == nil { self.failed(session: id) }
+                if didFail { self.failed(session: id) }
             }
         }
         try checkSession(id)
@@ -478,7 +481,7 @@ final class LiveDictation {
 
     private func makeMeter(session id: UUID) -> MicrophoneMeter {
         MicrophoneMeter { [weak self] level in
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 guard let self, self.sessionID == id, self.listening else { return }
                 self.audioLevel = level
             }
@@ -643,8 +646,10 @@ final class AudioRelay: @unchecked Sendable {
 
     nonisolated func push(_ buffer: AVAudioPCMBuffer) {
         lock.lock()
+        defer { lock.unlock() }
         if let consumer {
-            lock.unlock()
+            // Serialize live delivery with backlog replay and other pushes. Consumers
+            // synchronously convert/append; they must never re-enter this relay.
             consumer(buffer)
             return
         }
@@ -652,7 +657,6 @@ final class AudioRelay: @unchecked Sendable {
             backlog.append(copy)
             frames += Int(copy.frameLength)
         }
-        lock.unlock()
     }
 
     nonisolated func attach(_ consumer: @escaping (AVAudioPCMBuffer) -> Void) {

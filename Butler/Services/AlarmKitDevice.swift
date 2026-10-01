@@ -49,8 +49,8 @@ import SwiftUI
 
     func schedule(id: UUID, title: String, rule: ButlerAlarm.Rule) async throws {
         try rule.validate(now: .now)
-        let alert = AlarmPresentation.Alert(title: LocalizedStringResource(stringLiteral: title),
-            stopButton: AlarmButton(text: "停止响铃", textColor: .white, systemImageName: "stop.circle"))
+        // iOS 26.1+ supplies the stop control; our deployment target is iOS 26.2.
+        let alert = AlarmPresentation.Alert(title: LocalizedStringResource(stringLiteral: title))
         var presentation = AlarmPresentation(alert: alert)
         let schedule: Alarm.Schedule?
         let duration: Alarm.CountdownDuration?

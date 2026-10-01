@@ -89,6 +89,40 @@ final class RealtimeSpeechTests: XCTestCase {
         XCTAssertTrue(total.contains(where: { $0 != 0 }))
     }
 
+    func testConcurrentConversionsRemainValidPCM16() throws {
+        let format = try XCTUnwrap(AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48000, channels: 1, interleaved: false))
+        let converter = try RealtimePCMConverter(source: format)
+        let lock = NSLock()
+        // Each caller owns its input; only output collection is shared, under lock.
+        nonisolated(unsafe) var outputs: [Data] = []
+        nonisolated(unsafe) var failures = 0
+        DispatchQueue.concurrentPerform(iterations: 100) { _ in
+            do {
+                let inputFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48000, channels: 1, interleaved: false)!
+                let buffer = AVAudioPCMBuffer(pcmFormat: inputFormat, frameCapacity: 2400)!
+                buffer.frameLength = 2400
+                for frame in 0..<2400 { buffer.floatChannelData![0][frame] = 0.25 }
+                let data = try converter.convert(buffer)
+                lock.lock(); outputs.append(data); lock.unlock()
+            } catch {
+                lock.lock(); failures += 1; lock.unlock()
+            }
+        }
+        XCTAssertEqual(failures, 0)
+        XCTAssertEqual(outputs.count, 100)
+        let bytes = outputs.reduce(0) { $0 + $1.count }
+        XCTAssertGreaterThan(bytes, 239000)
+        XCTAssertLessThanOrEqual(bytes, 240000)
+        for data in outputs {
+            XCTAssertEqual(data.count % 2, 0)
+            // Skip converter priming. Decode wire bytes independently, little-endian.
+            for offset in stride(from: 128, to: data.count - 1, by: 2) {
+                let sample = Int16(bitPattern: UInt16(data[offset]) | UInt16(data[offset + 1]) << 8)
+                XCTAssertLessThanOrEqual(abs(Int(sample) - 8192), 2)
+            }
+        }
+    }
+
     private func configuration() throws -> CustomSpeechConfiguration {
         try .validated(baseURL: "https://api.inferera.com", model: "gpt-live-transcribe", apiKey: "fictional-key")
     }

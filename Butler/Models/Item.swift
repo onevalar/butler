@@ -108,7 +108,7 @@ enum ItemType: String, Codable, CaseIterable, Sendable {
 
 /// The core data model representing an inventory item in Butler
 @Model
-final class Item: @unchecked Sendable {
+final class Item {
     
     // MARK: - Core Properties
     

@@ -100,7 +100,7 @@ enum FontRegistry {
         case .semibold, .medium: candidates = ["NotoSerifSC-SemiBold", "NotoSerifSC-Bold"]
         default: candidates = ["NotoSerifSC-Regular"]
         }
-        return candidates.first(where: isAvailable)
+        return candidates.first { isAvailable($0) }
     }
 }
 

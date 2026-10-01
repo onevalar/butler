@@ -176,7 +176,8 @@ final class JevEvaluationTests: XCTestCase {
         let expected = try runner.export()
         var export: EvaluationExport? = try EvaluationExport(data: expected)
         let url = try XCTUnwrap(export?.url)
-        weak var retained = export
+        weak var retained: EvaluationExport?
+        retained = export
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
         let window = UIWindow(windowScene: scene)
         let appeared = expectation(description: "The native share sheet appeared")

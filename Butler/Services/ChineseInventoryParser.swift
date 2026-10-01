@@ -349,11 +349,11 @@ enum ChineseInventoryParser {
            let date = day(relativeDays[word] ?? 0) {
             details.package = HeardDate(date: date, raw: groups[0] ?? word, isGuess: false)
         } else if let groups = take(daysUntilExpiryPattern, from: &text),
-                  let count = groups[2].flatMap(chineseInteger), let date = day(count) {
+                  let count = groups[2].flatMap({ chineseInteger($0) }), let date = day(count) {
             details.package = HeardDate(date: date, raw: groups[0] ?? "", isGuess: false)
         } else if let groups = take(labeledDatePattern, from: &text) ?? take(monthDayExpiryPattern, from: &text),
-                  let month = groups[groups.count - 2].flatMap(chineseInteger),
-                  let dayOfMonth = groups[groups.count - 1].flatMap(chineseInteger),
+                  let month = groups[groups.count - 2].flatMap({ chineseInteger($0) }),
+                  let dayOfMonth = groups[groups.count - 1].flatMap({ chineseInteger($0) }),
                   let date = monthDay(month, dayOfMonth, reference: referenceDate, calendar: calendar) {
             details.package = HeardDate(date: date, raw: groups[0] ?? "", isGuess: false)
         }

@@ -61,9 +61,9 @@ enum InventoryGroups {
 
     /// The group a tile opens, rebuilt from current facts (it may have changed since the tile was drawn).
     static func group(_ key: InventoryGroup.Key, facts: [LotFacts]) -> InventoryGroup? {
-        let lots = facts.filter { contains(key, $0) }.sorted(by: urgencyOrder)
+        let lots = facts.filter { contains(key, $0) }.sorted { urgencyOrder($0, $1) }
         guard !lots.isEmpty else { return nil }
-        let needing = lots.filter(needsAttention)
+        let needing = lots.filter { needsAttention($0) }
         return InventoryGroup(key: key, title: title(key), symbol: symbol(key), lots: lots, urgent: needing.count,
                               pressing: needing.contains { $0.isRunningLow || ($0.daysLeft ?? 1) < 0 })
     }

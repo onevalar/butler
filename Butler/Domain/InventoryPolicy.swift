@@ -243,7 +243,7 @@ enum InventoryPolicy {
                 reason: operation.kind == .packageExpiry
                     ? .packageExpiryRequiresConfirmation
                     : .existingStateMutationRequiresConfirmation,
-                proposedValueIdentity: operation.date.map(dateIdentity) ?? "clear",
+                proposedValueIdentity: operation.date.map { dateIdentity($0) } ?? "clear",
                 expectedRevision: operation.expectedRevision
             ))
 

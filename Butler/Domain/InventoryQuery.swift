@@ -51,23 +51,23 @@ enum LocalInventoryQuery {
             let lots = facts.filter { lot in
                 guard !lot.quantityOnly, let days = lot.daysLeft, days <= 7 else { return false }
                 return !fridge || isFridge(lot.storageLocation)
-            }.sorted(by: InventoryGroups.urgencyOrder)
+            }.sorted { InventoryGroups.urgencyOrder($0, $1) }
             let title = fridge ? "冰箱里快到期的" : "快到期的"
             return Answer(text: lots.isEmpty ? "这周没有快到期的东西。" : "这些快到期了：", title: title, lots: lots)
         }
         guard !rest.isEmpty, rest.count <= 8 else { return nil }
         if let category = categoryWords.first(where: { $0.0 == rest })?.1 {
-            let lots = facts.filter { $0.category == category }.sorted(by: InventoryGroups.urgencyOrder)
+            let lots = facts.filter { $0.category == category }.sorted { InventoryGroups.urgencyOrder($0, $1) }
             return Answer(text: lots.isEmpty ? "家里还没记过\(category.title)。" : "家里有 \(lots.count) 样\(category.title)：",
                           title: category.title, lots: lots)
         }
         if rest == "冰箱" {
-            let lots = facts.filter { isFridge($0.storageLocation) }.sorted(by: InventoryGroups.urgencyOrder)
+            let lots = facts.filter { isFridge($0.storageLocation) }.sorted { InventoryGroups.urgencyOrder($0, $1) }
             return Answer(text: lots.isEmpty ? "冰箱里还没记东西。" : "冰箱里有 \(lots.count) 样：", title: "冰箱里", lots: lots)
         }
         let places = Set(facts.compactMap(\.storageLocation)).filter { !$0.isEmpty && ($0 == rest || ($0.count >= 2 && rest.contains($0)) || (rest.count >= 2 && $0.contains(rest))) }
         if !places.isEmpty {
-            let lots = facts.filter { $0.storageLocation.map(places.contains) == true }.sorted(by: InventoryGroups.urgencyOrder)
+            let lots = facts.filter { $0.storageLocation.map(places.contains) == true }.sorted { InventoryGroups.urgencyOrder($0, $1) }
             let name = places.count == 1 ? places.first! : rest
             return Answer(text: "\(name)里有 \(lots.count) 样：", title: "\(name)里", lots: lots)
         }
@@ -75,7 +75,7 @@ enum LocalInventoryQuery {
             lot.name.localizedCaseInsensitiveContains(rest)
                 || (lot.name.count >= 2 && rest.localizedCaseInsensitiveContains(lot.name))
                 || (lot.brand.map { !$0.isEmpty && rest.localizedCaseInsensitiveContains($0) } ?? false)
-        }.sorted(by: InventoryGroups.urgencyOrder)
+        }.sorted { InventoryGroups.urgencyOrder($0, $1) }
         // Nothing by that name: the model may know a stand-in, so let it answer.
         guard !named.isEmpty else { return nil }
         return Answer(text: "找到 \(named.count) 样：", title: rest, lots: named)

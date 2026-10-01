@@ -5,6 +5,22 @@ import XCTest
 
 @MainActor
 final class InventoryCorrectionTests: XCTestCase {
+    func testDecodedUndoKeepsRevisionSchemaAndOverflowGuards() {
+        let payload = Data(#"{"type":"closeLot","payload":{"lotID":"00000000-0000-0000-0000-000000000017","state":"depleted","expectedRevision":3,"quantityBeforeClosing":7,"evidence":[]}}"#.utf8)
+        let event = InventoryEvent(operationID: UUID(), subjectKind: .lot, subjectID: UUID(),
+                                   eventTypeRawValue: "closeLot", actor: .user, payloadJSON: payload)
+        XCTAssertEqual(event.undoQuantity(currentQuantity: 0, revision: 4), 7)
+        XCTAssertNil(event.undoQuantity(currentQuantity: 0, revision: 5))
+        XCTAssertNil(event.undoQuantity(currentQuantity: 0, revision: 0))
+        event.payloadSchemaVersion = 2
+        XCTAssertNil(event.undoQuantity(currentQuantity: 0, revision: 4))
+        event.payloadSchemaVersion = 1
+        event.payloadJSON = Data(#"{"type":"adjustQuantity","payload":{"lotID":"00000000-0000-0000-0000-000000000017","delta":-1,"expectedRevision":3,"evidence":[]}}"#.utf8)
+        XCTAssertEqual(event.undoQuantity(currentQuantity: 2, revision: 4), 3)
+        XCTAssertNil(event.undoQuantity(currentQuantity: Int.max, revision: 4))
+        XCTAssertNil(event.undoQuantity(currentQuantity: 2, revision: 5))
+    }
+
     func testUndoRequiresBoundConfirmationAndRejectsAnotherLotsEvent() throws {
         let container = try ButlerStore.makePreviewContainer()
         let context = ModelContext(container)

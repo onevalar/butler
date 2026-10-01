@@ -1,6 +1,8 @@
 import Foundation
 
-struct InventoryOperationPlan: Codable, Sendable {
+// Transport values contain no SwiftData objects or shared mutable state. Their
+// Codable witnesses must remain usable outside the app's default MainActor.
+nonisolated struct InventoryOperationPlan: Codable, Sendable {
     static let currentSchemaVersion = 1
 
     let schemaVersion: Int
@@ -10,12 +12,12 @@ struct InventoryOperationPlan: Codable, Sendable {
     let unresolvedFields: [UnresolvedInventoryField]
 }
 
-struct PlannedInventoryOperation: Codable, Sendable {
+nonisolated struct PlannedInventoryOperation: Codable, Sendable {
     let operationID: UUID
     let operation: InventoryOperation
 }
 
-struct UnresolvedInventoryField: Codable, Hashable, Sendable {
+nonisolated struct UnresolvedInventoryField: Codable, Hashable, Sendable {
     let operationID: UUID
     let entityID: UUID
     let fieldKey: InventoryFieldKey
@@ -23,14 +25,14 @@ struct UnresolvedInventoryField: Codable, Hashable, Sendable {
     let isRequired: Bool
 }
 
-struct ProposedFieldEvidence: Codable, Sendable {
+nonisolated struct ProposedFieldEvidence: Codable, Sendable {
     let fieldKey: InventoryFieldKey
     let source: EvidenceSourceKind
     let confidence: Double
     let rawText: String?
 }
 
-enum InventoryFieldKey: String, Codable, Hashable, Sendable {
+nonisolated enum InventoryFieldKey: String, Codable, Hashable, Sendable {
     case canonicalName
     case brand
     case category
@@ -46,7 +48,7 @@ enum InventoryFieldKey: String, Codable, Hashable, Sendable {
     case itemProfile
 }
 
-enum LotDateKind: String, Codable, Sendable {
+nonisolated enum LotDateKind: String, Codable, Sendable {
     case packageExpiry = "packageExpiryDate"
     case estimatedExpiry = "estimatedExpiryDate"
     case plannedUseBy = "plannedUseByDate"
@@ -60,7 +62,7 @@ enum LotDateKind: String, Codable, Sendable {
     }
 }
 
-struct CreateProductOperation: Codable, Sendable {
+nonisolated struct CreateProductOperation: Codable, Sendable {
     let productID: UUID
     let canonicalName: String
     let brand: String?
@@ -69,7 +71,7 @@ struct CreateProductOperation: Codable, Sendable {
     let evidence: [ProposedFieldEvidence]
 }
 
-struct AddLotOperation: Codable, Sendable {
+nonisolated struct AddLotOperation: Codable, Sendable {
     let lotID: UUID
     let productID: UUID
     let quantity: Int
@@ -82,21 +84,21 @@ struct AddLotOperation: Codable, Sendable {
     let evidence: [ProposedFieldEvidence]
 }
 
-struct SetItemProfileOperation: Codable, Sendable {
+nonisolated struct SetItemProfileOperation: Codable, Sendable {
     let lotID: UUID
     let profile: ItemProfile
     let expectedRevision: Int
     let evidence: [ProposedFieldEvidence]
 }
 
-struct AdjustQuantityOperation: Codable, Sendable {
+nonisolated struct AdjustQuantityOperation: Codable, Sendable {
     let lotID: UUID
     let delta: Int
     let expectedRevision: Int
     let evidence: [ProposedFieldEvidence]
 }
 
-struct SetLotDateOperation: Codable, Sendable {
+nonisolated struct SetLotDateOperation: Codable, Sendable {
     let lotID: UUID
     let kind: LotDateKind
     let date: Date?
@@ -104,14 +106,14 @@ struct SetLotDateOperation: Codable, Sendable {
     let evidence: [ProposedFieldEvidence]
 }
 
-struct MoveLotOperation: Codable, Sendable {
+nonisolated struct MoveLotOperation: Codable, Sendable {
     let lotID: UUID
     let storageLocation: String
     let expectedRevision: Int
     let evidence: [ProposedFieldEvidence]
 }
 
-struct CloseLotOperation: Codable, Sendable {
+nonisolated struct CloseLotOperation: Codable, Sendable {
     let lotID: UUID
     let state: InventoryLotState
     let expectedRevision: Int
@@ -120,14 +122,14 @@ struct CloseLotOperation: Codable, Sendable {
 }
 
 /// Undo only a recorded quantity/close operation, never an arbitrary state overwrite.
-struct UndoLotOperation: Codable, Sendable {
+nonisolated struct UndoLotOperation: Codable, Sendable {
     let lotID: UUID
     let originalOperationID: UUID
     let expectedRevision: Int
     let evidence: [ProposedFieldEvidence]
 }
 
-struct CreateTemplateOperation: Codable, Sendable {
+nonisolated struct CreateTemplateOperation: Codable, Sendable {
     let templateID: UUID
     let productID: UUID
     let usualQuantity: Int?
@@ -139,7 +141,7 @@ struct CreateTemplateOperation: Codable, Sendable {
     let evidence: [ProposedFieldEvidence]
 }
 
-struct UpdateTemplateOperation: Codable, Sendable {
+nonisolated struct UpdateTemplateOperation: Codable, Sendable {
     let templateID: UUID
     let productID: UUID
     let usualQuantity: Int?
@@ -153,7 +155,7 @@ struct UpdateTemplateOperation: Codable, Sendable {
 }
 
 /// A versioned, allowlisted command union. It intentionally exposes no arbitrary field mutation.
-enum InventoryOperation: Codable, Sendable {
+nonisolated enum InventoryOperation: Codable, Sendable {
     case createProduct(CreateProductOperation)
     case addLot(AddLotOperation)
     case adjustQuantity(AdjustQuantityOperation)
@@ -246,7 +248,7 @@ enum InventoryOperation: Codable, Sendable {
     }
 }
 
-enum InventoryOperationCoding {
+nonisolated enum InventoryOperationCoding {
     static func makeJSONEncoder() -> JSONEncoder {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601

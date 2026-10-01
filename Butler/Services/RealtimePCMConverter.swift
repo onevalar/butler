@@ -1,9 +1,13 @@
-import AVFoundation
+// AVAudioConverter's input block is consumed during convert(), not sent to an actor.
+// See BUILD_32_WARNING_FIX_PLAN.md for the framework contract and ownership audit.
+@preconcurrency import AVFoundation
 
 /// Owned by a single audio tap; converts native microphone samples into the gateway's
-/// PCM16 little-endian, 24 kHz, mono wire format. No AVAudioPCMBuffer crosses actor boundaries.
+/// PCM16 little-endian, 24 kHz, mono wire format. The lock serializes converter access
+/// even if callers overlap. No AVAudioPCMBuffer crosses actor boundaries.
 final class RealtimePCMConverter: @unchecked Sendable {
     nonisolated deinit {}
+    nonisolated private let lock = NSLock()
     nonisolated private let converter: AVAudioConverter
     nonisolated private let target: AVAudioFormat
     nonisolated init(source: AVAudioFormat) throws {
@@ -13,6 +17,8 @@ final class RealtimePCMConverter: @unchecked Sendable {
         self.converter = converter
     }
     nonisolated func convert(_ buffer: AVAudioPCMBuffer) throws -> Data {
+        lock.lock()
+        defer { lock.unlock() }
         let capacity = AVAudioFrameCount(ceil(Double(buffer.frameLength) * target.sampleRate / buffer.format.sampleRate)) + 32
         guard let output = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else { throw CocoaError(.coderInvalidValue) }
         var supplied = false

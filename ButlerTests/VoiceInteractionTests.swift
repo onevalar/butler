@@ -134,6 +134,32 @@ final class VoiceInteractionTests: XCTestCase {
         XCTAssertEqual(heard, 1)
     }
 
+    func testOverlappingPushesNeverRunTheConsumerConcurrently() {
+        let relay = AudioRelay()
+        let lock = NSLock()
+        // All probe state is protected by lock, including inside the consumer.
+        nonisolated(unsafe) var active = 0
+        nonisolated(unsafe) var maximum = 0
+        nonisolated(unsafe) var heard: [Float] = []
+        relay.attach { buffer in
+            lock.lock()
+            active += 1
+            maximum = max(maximum, active)
+            lock.unlock()
+            usleep(1_000) // Allow a competing push to enter if relay serialization is missing.
+            lock.lock()
+            heard.append(buffer.floatChannelData![0][0])
+            active -= 1
+            lock.unlock()
+        }
+        DispatchQueue.concurrentPerform(iterations: 100) { index in
+            relay.push(self.buffer(Float(index), frames: 64))
+        }
+        XCTAssertEqual(maximum, 1)
+        XCTAssertEqual(heard.count, 100)
+        XCTAssertEqual(Set(heard), Set((0..<100).map { Float($0) }))
+    }
+
     func testTheRelayKeepsUpWhilePushedFromAnotherThread() {
         let relay = AudioRelay()
         let lock = NSLock()
