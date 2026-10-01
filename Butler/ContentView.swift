@@ -108,6 +108,81 @@ struct ContentView: View {
         let agenda = yearAgenda(facts: facts)
         let candidates = briefCandidates(facts: facts, agenda: agenda)
         let briefKey = BriefCandidates.signature(candidates, now: agendaNow) + "|\(facts.count)|\(reminders.active.count)|\(calendarFeed.enabled)"
+        let surface = homeSurface(facts: facts, agenda: agenda, candidates: candidates, briefKey: briefKey)
+        .sheet(isPresented: $showingChat) {
+            if let chat {
+                ButlerChatView(chat: chat, request: $chatRequest, onQuickCapture: {
+                    showingChat = false
+                    Task { try? await Task.sleep(for: .milliseconds(450)); capturing = true }
+                }, onGeneralChat: { selectChat(.general) },
+                onSettingsChat: { selectChat(.settings) }, onOpenLot: { id in
+                    showingChat = false; path.append(.lot(id))
+                }, hasOtherWork: sessions?.working ?? false,
+                diaryTurns: sessions?.allTurns, onNeedsRoom: { chatDetent = .large }, onClose: { showingChat = false })
+                .id(chat.scope.key)
+                .environment(calendarFeed)
+                .presentationDetents([Self.spokenDetent, .large], selection: $chatDetent)
+                .presentationBackgroundInteraction(.enabled(upThrough: Self.spokenDetent))
+                .presentationDragIndicator(.visible)
+            }
+        }
+        .fullScreenCover(isPresented: Binding(get: { showsOnboarding }, set: { if !$0 { onboardingDone = true } })) {
+            if let chat {
+                OnboardingView(chat: chat, calendarFeed: calendarFeed) { onboardingDone = true }
+                    .interactiveDismissDisabled()
+            }
+        }
+        .task {
+            // Shared services, independently persisted conversations.
+            if sessions == nil {
+                let store = ChatSessions(container: modelContext.container, reminders: reminders)
+                sessions = store
+                SyncService.shared.attach(store)
+                chat = store.chat(for: .general)
+                briefService.attach(store.connection)
+                NotificationManager.shared.reminderStore = reminders
+                reminders.rescheduleAll()
+            }
+            handleShortcutNavigation()
+            handleSharedContent()
+            if UserDefaults.standard.double(forKey: "butlerSince") == 0 {
+                let since = min(Date.now, chat?.turns.first?.date ?? .now)
+                UserDefaults.standard.set(since.timeIntervalSince1970, forKey: "butlerSince")
+            }
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--seed-sample-reminders"), reminders.upcoming.isEmpty {
+                let calendar = Calendar.current
+                let later = calendar.date(byAdding: .hour, value: 2, to: .now) ?? .now
+                let evening = calendar.date(bySettingHour: 21, minute: 0, second: 0, of: .now) ?? .now
+                let friday = calendar.date(byAdding: .day, value: 3, to: calendar.date(bySettingHour: 15, minute: 30, second: 0, of: .now) ?? .now) ?? .now
+                try? reminders.add(TimedReminder(text: "热剩饭", fireDate: later))
+                try? reminders.add(TimedReminder(text: "吃药", fireDate: evening, repeats: .daily))
+                try? reminders.add(TimedReminder(text: "取快递", fireDate: friday))
+            }
+            #endif
+            calendarFeed.horizonDays = 370
+            await calendarFeed.refresh()
+            // Items with dates already exist but reminders were never allowed: ask once (the guide asks new users).
+            if !Self.isTesting, onboardingDone, facts.contains(where: { $0.governingDate != nil }) {
+                await NotificationManager.shared.requestAuthorizationIfUndecided()
+            }
+        }
+        .fullScreenCover(isPresented: $capturing) {
+            CaptureView()
+        }
+        .task(id: syncSignature) {
+            await NotificationManager.shared.resync(facts)
+            await SpotlightManager.shared.resync(facts)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .butlerNotificationAuthorizationChanged)) { _ in
+            refreshID = UUID()
+        }
+        appLifecycle(surface)
+    }
+
+
+    /// Separate the visual surface and lifecycle modifiers so Swift can type-check each view expression.
+    private func homeSurface(facts: [LotFacts], agenda: HomeAgenda, candidates: [BriefCandidate], briefKey: String) -> some View {
         NavigationStack(path: $path) {
             HomeView(
                 agenda: agenda,
@@ -189,74 +264,10 @@ struct ContentView: View {
         }
         .environment(orbDock)
         .environment(calendarFeed)
-        .sheet(isPresented: $showingChat) {
-            if let chat {
-                ButlerChatView(chat: chat, request: $chatRequest, onQuickCapture: {
-                    showingChat = false
-                    Task { try? await Task.sleep(for: .milliseconds(450)); capturing = true }
-                }, onGeneralChat: { selectChat(.general) },
-                onSettingsChat: { selectChat(.settings) }, onOpenLot: { id in
-                    showingChat = false; path.append(.lot(id))
-                }, hasOtherWork: sessions?.working ?? false,
-                diaryTurns: sessions?.allTurns, onNeedsRoom: { chatDetent = .large }, onClose: { showingChat = false })
-                .id(chat.scope.key)
-                .environment(calendarFeed)
-                .presentationDetents([Self.spokenDetent, .large], selection: $chatDetent)
-                .presentationBackgroundInteraction(.enabled(upThrough: Self.spokenDetent))
-                .presentationDragIndicator(.visible)
-            }
-        }
-        .fullScreenCover(isPresented: Binding(get: { showsOnboarding }, set: { if !$0 { onboardingDone = true } })) {
-            if let chat {
-                OnboardingView(chat: chat, calendarFeed: calendarFeed) { onboardingDone = true }
-                    .interactiveDismissDisabled()
-            }
-        }
-        .task {
-            // Shared services, independently persisted conversations.
-            if sessions == nil {
-                let store = ChatSessions(container: modelContext.container, reminders: reminders)
-                sessions = store
-                SyncService.shared.attach(store)
-                chat = store.chat(for: .general)
-                briefService.attach(store.connection)
-                NotificationManager.shared.reminderStore = reminders
-                reminders.rescheduleAll()
-            }
-            handleShortcutNavigation()
-            handleSharedContent()
-            if UserDefaults.standard.double(forKey: "butlerSince") == 0 {
-                let since = min(Date.now, chat?.turns.first?.date ?? .now)
-                UserDefaults.standard.set(since.timeIntervalSince1970, forKey: "butlerSince")
-            }
-            #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("--seed-sample-reminders"), reminders.upcoming.isEmpty {
-                let calendar = Calendar.current
-                let later = calendar.date(byAdding: .hour, value: 2, to: .now) ?? .now
-                let evening = calendar.date(bySettingHour: 21, minute: 0, second: 0, of: .now) ?? .now
-                let friday = calendar.date(byAdding: .day, value: 3, to: calendar.date(bySettingHour: 15, minute: 30, second: 0, of: .now) ?? .now) ?? .now
-                try? reminders.add(TimedReminder(text: "热剩饭", fireDate: later))
-                try? reminders.add(TimedReminder(text: "吃药", fireDate: evening, repeats: .daily))
-                try? reminders.add(TimedReminder(text: "取快递", fireDate: friday))
-            }
-            #endif
-            calendarFeed.horizonDays = 370
-            await calendarFeed.refresh()
-            // Items with dates already exist but reminders were never allowed: ask once (the guide asks new users).
-            if !Self.isTesting, onboardingDone, facts.contains(where: { $0.governingDate != nil }) {
-                await NotificationManager.shared.requestAuthorizationIfUndecided()
-            }
-        }
-        .fullScreenCover(isPresented: $capturing) {
-            CaptureView()
-        }
-        .task(id: syncSignature) {
-            await NotificationManager.shared.resync(facts)
-            await SpotlightManager.shared.resync(facts)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .butlerNotificationAuthorizationChanged)) { _ in
-            refreshID = UUID()
-        }
+    }
+
+    private func appLifecycle<Content: View>(_ content: Content) -> some View {
+        content
         .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { now in
             guard scenePhase == .active else { return }
             SyncService.shared.foregroundTick()

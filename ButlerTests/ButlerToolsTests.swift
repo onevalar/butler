@@ -6,7 +6,7 @@ import XCTest
 @MainActor
 final class ButlerToolsTests: XCTestCase {
     private func makeTools(jev: (any ConditionJudge)? = nil) throws -> (ButlerTools, ModelContainer) {
-        let configuration = ModelConfiguration(schema: ButlerStore.schema, isStoredInMemoryOnly: true)
+        let configuration = ModelConfiguration(schema: ButlerStore.schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
         let container = try ModelContainer(for: ButlerStore.schema, configurations: [configuration])
         let notesFile = FileManager.default.temporaryDirectory.appendingPathComponent("notes-\(UUID()).json")
         let remindersFile = FileManager.default.temporaryDirectory.appendingPathComponent("reminders-\(UUID()).json")

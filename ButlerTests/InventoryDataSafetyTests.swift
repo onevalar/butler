@@ -264,7 +264,7 @@ private struct RepositoryFixture {
 
 private enum TestContainers {
     static func inMemory() throws -> ModelContainer {
-        let configuration = ModelConfiguration(schema: ButlerStore.schema, isStoredInMemoryOnly: true)
+        let configuration = ModelConfiguration(schema: ButlerStore.schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
         return try ModelContainer(for: ButlerStore.schema, configurations: [configuration])
     }
 }
@@ -300,7 +300,7 @@ private struct TemporaryStore {
     }
 
     func makeContainer() throws -> ModelContainer {
-        let configuration = ModelConfiguration(schema: ButlerStore.schema, url: databaseURL)
+        let configuration = ModelConfiguration(schema: ButlerStore.schema, url: databaseURL, cloudKitDatabase: .none)
         return try ModelContainer(for: ButlerStore.schema, configurations: [configuration])
     }
 

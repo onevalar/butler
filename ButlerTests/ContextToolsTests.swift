@@ -6,7 +6,7 @@ import XCTest
 @MainActor
 final class ContextToolsTests: XCTestCase {
     private func makeTools(initialReminders: [TimedReminder] = []) throws -> ButlerTools {
-        let configuration = ModelConfiguration(schema: ButlerStore.schema, isStoredInMemoryOnly: true)
+        let configuration = ModelConfiguration(schema: ButlerStore.schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
         let container = try ModelContainer(for: ButlerStore.schema, configurations: [configuration])
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("ContextToolsTests-\(UUID())")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

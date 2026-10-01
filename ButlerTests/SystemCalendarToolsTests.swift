@@ -9,7 +9,7 @@ import XCTest
         let dir = URL.temporaryDirectory.appendingPathComponent("calendar-tools-\(UUID())")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
-        let config = ModelConfiguration(schema: ButlerStore.schema, isStoredInMemoryOnly: true)
+        let config = ModelConfiguration(schema: ButlerStore.schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
         let tools = ButlerTools(container: try ModelContainer(for: ButlerStore.schema, configurations: [config]),
             notes: try LocalMemoryStore(file: dir.appendingPathComponent("notes.json")),
             reminders: ReminderStore(file: dir.appendingPathComponent("reminders.json"), schedules: false), jev: CalendarNoJudge())

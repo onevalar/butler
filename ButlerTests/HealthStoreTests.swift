@@ -3,6 +3,7 @@ import XCTest
 @testable import Butler
 
 @MainActor final class FakeHealthDevice: HealthDevice {
+    nonisolated deinit {}
     var available = true
     var writable: Set<HealthMetric> = Set(HealthMetric.allCases.filter(\.writable))
     var grants: [(Set<HealthMetric>, Set<HealthMetric>)] = []

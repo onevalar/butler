@@ -6,7 +6,7 @@ import XCTest
 @MainActor
 final class CaptureCoordinatorTests: XCTestCase {
     func testExplicitSecondCandidateThenRenameDoesNotMutateCatalog() async throws {
-        let configuration = ModelConfiguration(schema: ButlerStore.schema, isStoredInMemoryOnly: true)
+        let configuration = ModelConfiguration(schema: ButlerStore.schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
         let container = try ModelContainer(for: ButlerStore.schema, configurations: [configuration])
         let context = ModelContext(container)
         let firstID = UUID(), secondID = UUID()

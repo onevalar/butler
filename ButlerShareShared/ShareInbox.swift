@@ -68,7 +68,9 @@ nonisolated struct ShareInbox {
 
     /// Must run inside NSItemProvider's file callback, before its temporary URL expires.
     func copyFile(_ source: URL, name: String, type: String, id: UUID, existing: [Attachment]) throws -> Attachment {
-        let values = try source.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
+        var currentSource = source
+        currentSource.removeAllCachedResourceValues()
+        let values = try currentSource.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
         guard values.isRegularFile == true, values.isSymbolicLink != true else {
             throw Failure("不支持文件夹或链接文件，请分享其中的文件。")
         }

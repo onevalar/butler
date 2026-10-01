@@ -2,6 +2,7 @@ import Foundation
 
 /// Evidence only: never stores executable payloads, schedules work or retries effects.
 @MainActor final class ConfirmationJournal {
+    nonisolated deinit {}
     struct Entry: Codable, Identifiable {
         let id: UUID
         let proposalIDs: [UUID]

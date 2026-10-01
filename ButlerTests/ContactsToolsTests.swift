@@ -9,7 +9,7 @@ import XCTest
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let suite = "contacts-tools-\(UUID())", defaults = UserDefaults(suiteName: suite)!
         addTeardownBlock { try? FileManager.default.removeItem(at: dir); UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
-        let config = ModelConfiguration(schema: ButlerStore.schema, isStoredInMemoryOnly: true)
+        let config = ModelConfiguration(schema: ButlerStore.schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
         let container = try ModelContainer(for: ButlerStore.schema, configurations: [config])
         let chat = ButlerChat(container: container,
             reminders: ReminderStore(file: dir.appendingPathComponent("reminders.json"), schedules: false),

@@ -6,7 +6,7 @@ import XCTest
 @MainActor
 final class ButlerPrefetchTests: XCTestCase {
     private func makeTools(judge: PrefetchJudge) throws -> (ButlerTools, ModelContainer) {
-        let configuration = ModelConfiguration(schema: ButlerStore.schema, isStoredInMemoryOnly: true)
+        let configuration = ModelConfiguration(schema: ButlerStore.schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
         let container = try ModelContainer(for: ButlerStore.schema, configurations: [configuration])
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("prefetch-tests-\(UUID())")
         addTeardownBlock { try? FileManager.default.removeItem(at: directory) }

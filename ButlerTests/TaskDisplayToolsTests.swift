@@ -26,7 +26,7 @@ import XCTest
         let dir = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
-        let config = ModelConfiguration(schema: ButlerStore.schema, isStoredInMemoryOnly: true)
+        let config = ModelConfiguration(schema: ButlerStore.schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
         let reminders = ReminderStore(file: dir.appendingPathComponent("tasks.json"), schedules: false)
         let tools = ButlerTools(container: try ModelContainer(for: ButlerStore.schema, configurations: [config]),
             notes: try LocalMemoryStore(file: dir.appendingPathComponent("notes.json")), reminders: reminders, jev: NoJudge())

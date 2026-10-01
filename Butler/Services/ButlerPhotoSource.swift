@@ -3,6 +3,7 @@ import SwiftData
 import ImageIO
 
 @MainActor final class ButlerPhotoSource: SyncPhotoSource {
+    nonisolated deinit {}
     private let container: ModelContainer
     private let root: URL
     private let working: () -> Bool

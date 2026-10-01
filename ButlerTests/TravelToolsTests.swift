@@ -11,7 +11,7 @@ import XCTest
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let suite = "travel-tools-\(UUID())", defaults = UserDefaults(suiteName: suite)!
         defer { try? FileManager.default.removeItem(at: dir); defaults.removePersistentDomain(forName: suite) }
-        let config = ModelConfiguration(schema: ButlerStore.schema, isStoredInMemoryOnly: true)
+        let config = ModelConfiguration(schema: ButlerStore.schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
         let container = try ModelContainer(for: ButlerStore.schema, configurations: [config])
         let chat = ButlerChat(container: container,
             reminders: ReminderStore(file: dir.appendingPathComponent("reminders.json"), schedules: false),

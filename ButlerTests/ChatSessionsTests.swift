@@ -10,14 +10,14 @@ final class ChatSessionsTests: XCTestCase {
         let chat = sessions.chat(for: .general), tools = try XCTUnwrap(chat.tools)
         chat.draft = "还没发出的新想法"; chat.photos = [Data([7, 4, 2])]
         tools.add(.note(.init(id: UUID(), title: "待确认", text: "还不能保存", quantity: nil, revision: 1)), title: "本机提案", detail: nil)
-        let pending = tools.pending.map(\.id), notes = tools.notes.records, tasks = reminders.taskSnapshot()
+        let pending = tools.pending.map(\.id), notes = tools.notes.records, tasks = try reminders.taskSnapshot()
         let remote = ChatTurn(question: "确认全部操作", answer: "历史内容", receipts: ["以前已设置闹钟"])
         let local = ChatSyncData(root: directory, isWorking: { sessions.working }, didImport: { sessions.reloadSyncedHistory($0) })
         try local.replace(.init(kind: .chat, id: remote.id), expected: nil,
             with: SyncRecord.encode(SyncedChatTurn(scope: .general, turn: remote)))
         XCTAssertEqual(chat.turns, [remote]); XCTAssertEqual(chat.draft, "还没发出的新想法")
         XCTAssertEqual(chat.photos, [Data([7, 4, 2])]); XCTAssertEqual(tools.pending.map(\.id), pending)
-        XCTAssertEqual(tools.notes.records, notes); XCTAssertEqual(reminders.taskSnapshot(), tasks)
+        XCTAssertEqual(tools.notes.records, notes); XCTAssertEqual(try reminders.taskSnapshot(), tasks)
     }
 
     func testWholeBriefConversationCarriesAllSubjectsAndNeverBecomesPrimaryLotChat() throws {

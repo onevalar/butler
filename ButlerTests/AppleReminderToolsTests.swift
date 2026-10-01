@@ -9,7 +9,7 @@ import XCTest
         let directory = URL.temporaryDirectory.appendingPathComponent("reminder-tools-\(UUID())")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
-        let configuration = ModelConfiguration(schema: ButlerStore.schema, isStoredInMemoryOnly: true)
+        let configuration = ModelConfiguration(schema: ButlerStore.schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
         let container = try ModelContainer(for: ButlerStore.schema, configurations: [configuration])
         let tools = ButlerTools(container: container,
             notes: try LocalMemoryStore(file: directory.appendingPathComponent("notes.json")),
