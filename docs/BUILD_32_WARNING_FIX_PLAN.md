@@ -1,6 +1,6 @@
 # Build 32 警告修复计划
 
-日期：2026-10-02。状态：待实施；本文不是修复完成声明。
+日期：2026-10-02。状态：W01–W08 代码已实施，W09 已审查并记录保留项；Xcode 26.3 编译、完整回归和真机验收仍待完成。本文不是全部警告清零或发布完成声明。
 
 ## 基线与范围
 
@@ -13,7 +13,7 @@
 
 ## 实施顺序与验收
 
-每项完成后更新状态、提交 SHA 和验证结果。优先级 P1 为并发与数据行为，P2 为接口及声明清理，P3 为构建提示。所有项目初始状态均为待实施。
+每项完成后更新状态、提交 SHA 和验证结果。优先级 P1 为并发与数据行为，P2 为接口及声明清理，P3 为构建提示。所有项目初始状态均为待实施；当前进度见下方实施记录。
 
 | 编号 / 优先级 | 范围 | 明确修复步骤 | 验收标准 |
 |---|---|---|---|
@@ -26,6 +26,53 @@
 | W07 / P2 | Services/AlarmKitDevice.swift:52 | 核对当前 SDK 的 Alert 新初始化接口；iOS 26.1+ 使用受支持接口，按部署版本为旧系统保留必要 availability 分支。保留停止、稍后提醒及倒计时行为。 | 无弃用警告；闹钟规则与工具测试通过；真机一次性/重复/倒计时闹钟能停止，已有按钮行为无回退。 |
 | W08 / P2 | Models/Item.swift:111，SwiftData 宏展开重复 Sendable；ButlerTests/JevEvaluationTests.swift:179 | 检查 SwiftData 已生成的 Sendable 与现有跨线程使用，去掉重复显式声明前确认模型只在正确 ModelContext/actor 使用；调整 retained 声明但保留弱引用释放断言的真实含义。不要编辑宏生成文件。 | 重复声明与变量警告消失；数据存储、导入导出、Jev 生命周期测试通过，弱引用测试仍能发现对象未释放。 |
 | W09 / P3 | AppIntents 元数据提示；重复模拟器目的地提示 | 从完整命令确认提示对应的具体 target；没有 AppIntent 的 target 保留并记录提示，不为了消警告引入空依赖或关闭真实元数据提取。模拟器本机验证用 UDID 明确目标；Xcode Cloud 默认 runtime 若产生重复提示，记录为环境提示，除非能在受支持配置内消除。 | 真正有 AppIntent 的主应用/小组件元数据仍生成，快捷指令和闹钟操作正常；测试运行在预期 iPhone 17 Pro runtime。允许有依据的环境提示保留，不能承诺所有黄色计数必定为零。 |
+
+## 实施记录（2026-10-02）
+
+W01–W08 的代码与测试统一提交为 [ca21c19](https://github.com/onevalar/butler/commit/ca21c19e58b84874f5fb3c35caabb70a6d045913)。保留 Swift 5 语言模式和工程默认 MainActor，没有全局关闭诊断，没有更改现有触觉、液态玻璃、短按/长按分流或发送流程。
+
+| 编号 | 已实施内容 | 已验证 / 尚待验收 |
+|---|---|---|
+| W01 | 两个音频文件局部使用兼容导入；实时 converter 加锁；AudioRelay 的实时投递与积压回放使用同一把锁，消费者不得重入 relay；识别及音量回调在 MainActor 任务捕获列表重新弱捕获 self，保留会话 ID 检查，只传文字、布尔值或音量。 | 源码及语法检查通过。新增 relay 并发投递、converter 并发 PCM16 回归测试；Apple SDK 不在 orb 中，这两项和既有取消/迟到回调测试未执行。原生/文件/实时收音、连续取消至少 3 次、后台清理与马达效果待真机验收。 |
+| W02 | 所列排序、筛选、日期 identity 和中文数字转换的方法引用改为当前隔离作用域内显式闭包调用；未把模型或查询整体移到后台。 | 源码及语法检查通过；ItemsPage、中文解析、日期确认的 Apple 应用测试待 Xcode 执行。 |
+| W03 | 操作计划、联合命令、关联传输值及编码工厂明确为 nonisolated；未改 JSON 字段、编码策略或 InventoryEvent 的 revision/溢出判断。 | 两项跨 actor 旧 payload / 日期 / 数量编码测试通过，完整并发检查下无警告。新增 schema、revision 和溢出撤销测试，SwiftData 持久化及该测试待 Xcode。 |
+| W04 | instructions/tools 提供闭包明确为 MainActor；固定默认文本为非隔离不可变常量；每次 POST 仍调用提供闭包，没有初始化缓存。 | 语法检查通过。现有网络替身测试增加同一 model 的第二次请求，断言改变后的上下文和工具定义；因 Keychain、Apple URLSession 流式接口不可用，该应用测试待 Xcode。 |
+| W05 | limit 为非隔离常量；专用异步串行队列负责完整文件追加/轮转，调用者不等待磁盘；轮转保留完整 UTF-8 行；错误日志去掉可能回显凭据的描述，简报日志只记字数/动作数，不记模型原文。 | 三项测试通过：400 次并发追加不丢不重、中文轮转及后续并发追加、写入失败可继续且错误描述不含敏感文字。完整并发检查下无警告。 |
+| W06 | 字体候选使用显式闭包调用 UIFont 查询；保持原主线程隔离和候选顺序。 | 语法检查通过；未改字体资源或视觉样式。字体注册、中文字重和缺字回退待 Apple 环境渲染验收，orb 无法截图验证。 |
+| W07 | 采用 iOS 26.1+ 系统停止按钮的 Alert 初始化接口；工程最低 iOS 26.2，无需旧系统分支。未改重复规则、倒计时、暂停/继续或 stop 调用。 | 便携核心回归含闹钟规则/存储并通过；AlarmKit SDK 编译及一次性/重复/倒计时系统按钮待 Xcode 和真机。当前实现原本未配置 secondaryButton，未新增或删掉稍后提醒功能。 |
+| W08 | 去掉 Item 重复显式 unchecked Sendable，保留 SwiftData 宏的声明；模型访问仍由已有 ModelContext / MainActor 路径负责。弱引用先声明再赋值，仍等待对象释放并检查临时文件删除，没有改成强引用。 | Swift 6.2 对弱引用写法的独立编译检查和修改文件语法检查通过；SwiftData 宏、迁移/导入导出和 Jev 原生分享释放测试待 Xcode。 |
+| W09 | 保留真实 AppIntents 提取，没有添加空依赖或关闭提取。主应用 ButlerAppIntents.swift 有实际意图；扩展源目录目前没有 AppIntent 声明。以下提供按 UDID 指定模拟器的命令。 | 源码审查完成；当前 orb 不含原始 ZIP 的构建命令/target 上下文，不能确认原元数据提示具体来自哪个 target。保留待归属核对，不宣称该提示一定无害。云端重复目的地提示保留待环境核对，不改后台工作流。 |
+
+### W01 / W07 的框架依据
+
+- Apple 的 [AVAudioConverter.convert 文档](https://developer.apple.com/documentation/avfaudio/avaudioconverter/convert%28to%3Aerror%3Awithinputfrom%3A%29)说明输入块为本次转换提供数据，方法返回时输出 buffer 长度就是已转换帧数。这是同步消费输入的转换接口，不是异步投递到 actor 的任务。兼容导入只在两个拥有此调用的文件中使用，不把 AVAudioPCMBuffer 声明为全局 Sendable；输入块只向本次转换供给一次缓冲区。
+- analyzer converter 被 AudioRelay 的投递/回放锁保护；实时 converter 在 convert 全程加锁，PCM Data 创建后才离开锁。没有新增 unchecked Sendable；既有包装的共享状态现在有明确的串行保护。原生识别仍通过框架 AnalyzerInput 交付缓冲区，不把缓冲区捕获进自建 MainActor 任务。
+- Apple 的 [新 Alert 初始化接口](https://developer.apple.com/documentation/alarmkit/alarmpresentation/alert-swift.struct/init(title:secondarybutton:secondarybuttonbehavior:))自 iOS 26.1 可用，明确由系统提供停止控件。全部相关 target 的部署下限为 26.2，所以直接使用该接口而不保留已弃用初始化。
+
+### 本次实际执行的验证
+
+- Linux orb 安装 Swift 6.2；无 Apple SDK / xcodebuild，也没有已连接的 Mac runner。
+- `bash scripts/test-warning-core.sh`：**5 项测试，0 失败、0 跳过**；生产目标保留默认 MainActor，源文件及测试使用完整并发检查并将警告视为错误。脚本直接编译操作 codec 和日志 writer；从 Apple 依赖文件抽取未改动的纯值声明，仅替代未调用的应用日志路径。不覆盖 SwiftData 宏、ItemProfile 行为或整个 iOS 应用。
+- `LC_ALL=C.UTF-8 TZ=America/Los_Angeles bash scripts/test-alarm-core.sh`：**157 项测试，0 失败、0 跳过**。这是 Linux 便携核心回归，不是原先 571 项英文美国区域的 iOS 全量回归，也不能与该基线直接相加。
+- 修改的 Swift 文件通过 `swiftc -frontend -parse`；`.agents/setup` 的 plist / 资源元数据检查、shell 语法检查及 `git diff --check` 通过。已审查新增日志内容和并发访问，没有提交真实凭据。
+- 新增 8 项回归测试，并扩展首次/后续动态上下文测试。其中上面 5 项已执行；音频并发 2 项、SwiftData 撤销保护 1 项及扩展后的订阅网络测试待 Apple 环境执行。
+
+### W09 与剩余 Xcode 验收命令
+
+在装有 Xcode 26.3 的 Mac 上先用 `xcrun simctl list devices available` 确认 iPhone 17 Pro 的 iOS 26.3 设备 UDID，将其填入 `UDID`；不要仅按设备名称匹配。结果路径须使用新的目录。
+
+```bash
+UDID='<已确认的 iPhone 17 Pro UDID>'
+xcodebuild -project Butler.xcodeproj -scheme Butler \
+  -destination "platform=iOS Simulator,id=$UDID" \
+  -testLanguage en -testRegion US test \
+  -resultBundlePath /tmp/Butler-warning-regression.xcresult
+xcodebuild -project Butler.xcodeproj -scheme Butler -configuration Release \
+  -destination 'generic/platform=iOS' -archivePath /tmp/Butler-warning-check.xcarchive \
+  CODE_SIGNING_ALLOWED=NO archive
+```
+
+第二条只验归档编译，不证明签名、Export 或 TestFlight 分发。须从两个完整日志按原始诊断逐项对照，并为保留元数据提示记录具体 target；有意图的 target 若跳过提取，必须继续修复而不能归为环境提示。没有在本次提交推送中启动 Xcode Cloud、修改工作流或发布 TestFlight。
 
 ## 验证与发布门槛
 
