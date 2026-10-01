@@ -105,3 +105,9 @@ GitHub 仓库授权已完成，以上工作流已在 App Store Connect 保存并
 | 闹钟/小组件扩展 | com.anvalar.Butler.AlarmWidget | group.com.anvalar.Butler.widgets |
 
 用户已明确授权补齐这些能力。主应用四项能力已保存；两个App Group和iCloud容器已注册，分享扩展App ID已注册。剩余扩展注册与容器关联因浏览器网站访问权限被拒绝暂未完成；不代表已可TestFlight安装。待权限恢复继续补齐，并以最终云端签名/分发结果验证。
+
+### Build 32 日志验证（2026-10-02）
+
+用户补齐并保存Apple Developer配置后，Build 32的Test Build、Test Execute、Archive及Export均成功。四份用户提供日志确认571项测试、1项跳过、0失败；此前主应用、分享扩展、小组件的签名阻塞已不再出现。本段更新前文“待补齐配置”的状态。
+
+本次附件没有TestFlight内部/外部Post-Actions最终结果，分发可用性仍须在后台核对。页面26/27条警告主要重复，完整清单与待实施修复计划见[Build 32警告修复计划](BUILD_32_WARNING_FIX_PLAN.md)。保存记录及计划不触发新构建。

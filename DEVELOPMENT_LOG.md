@@ -591,3 +591,8 @@ Detailed fixtures, expected outcomes, and release gates are normative in [`docs/
 - 新增iCloud entitlement使旧测试容器自动启用SwiftData CloudKit；测试容器明确cloudKitDatabase: .none，与生产数据库一致。记录同步仍使用现有自定义CloudKit传输。
 - 本机完整测试另暴露PhotoSource、ConfirmationJournal及健康测试替身的isolated deinit运行时崩溃；采用工程已有的nonisolated deinit做法。分享附件读取前清空URL缓存，避免来源文件变化后仍按旧大小校验，原有单文件/总量/数量边界测试保留。
 - 英文、美国区域全量571项测试，1项既有跳过，0失败（/private/tmp/butler-oct-release-confirmed-tests.log）。最终Release编译通过（/private/tmp/butler-oct-release-final-build.log），云端重试结果在本轮发布完成后补记。保持仅手动触发工作流。
+
+### 2026-10-02 Build 32 验证与警告计划
+- 用户提供四份云端日志；Test Build、Test Execute、Archive、Export 成功，571项测试、1项跳过、0失败。此前分享扩展的App Groups签名阻塞本次消失。日志不证明内外部测试分发的最终状态。
+- 已按文件位置整理全部警告及阶段重复项，保存明确优先级、修复方法、回归与真机验收标准：docs/BUILD_32_WARNING_FIX_PLAN.md。当前仅制定计划，尚未实施警告修复。
+- 核对工作区无未提交代码，既有代码已在main；本次补交计划和构建记录，不触发新构建。
