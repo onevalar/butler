@@ -98,8 +98,7 @@ final class SubscriptionModelTests: XCTestCase {
         var polls = 0
         var refreshed = false
         var probed = false
-        var instructionContext = "first context"
-        var toolContext = #"[{"type":"function","name":"first_tool"}]"#
+        let context = SubscriptionTestContext()
         var requests = 0
         SubscriptionStubProtocol.handler = { request in
             let path = request.url!.path
@@ -141,7 +140,7 @@ final class SubscriptionModelTests: XCTestCase {
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer \(newAccess)")
             XCTAssertEqual(request.value(forHTTPHeaderField: "ChatGPT-Account-ID"), "fixture-account")
             let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
-            XCTAssertEqual(json["instructions"] as? String, instructionContext)
+            XCTAssertEqual(json["instructions"] as? String, context.instructions)
             XCTAssertEqual((json["tools"] as? [[String: String]])?.first?["name"], requests == 0 ? "first_tool" : "second_tool")
             requests += 1
             return (200, Data("data: {\"type\":\"response.output_text.delta\",\"delta\":\"测试回复\"}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"r\"}}\n\n".utf8))
@@ -154,13 +153,13 @@ final class SubscriptionModelTests: XCTestCase {
         XCTAssertEqual(polls, 2)
         var streamed: [String] = []
         let model = SubscriptionModel(connection: connection, network: network,
-            instructions: { instructionContext }, tools: { toolContext }, onText: { streamed.append($0) })
+            instructions: { context.instructions }, tools: { context.tools }, onText: { streamed.append($0) })
         let reply = try await model.reply(to: [.user("虚构测试")])
         XCTAssertEqual(reply.text, "测试回复")
         XCTAssertEqual(streamed.first, "")
         XCTAssertTrue(streamed.contains("测试回复"))
-        instructionContext = "changed context"
-        toolContext = #"[{"type":"function","name":"second_tool"}]"#
+        context.instructions = "changed context"
+        context.tools = #"[{"type":"function","name":"second_tool"}]"#
         let next = try await model.reply(to: [.user("后续请求")])
         XCTAssertEqual(next.text, "测试回复")
         XCTAssertEqual(requests, 2, "the same model must read fresh context and tools for every request")
@@ -210,4 +209,10 @@ private final class SubscriptionStubProtocol: URLProtocol, @unchecked Sendable {
         let first = (withContext?["input"] as? [[String: Any]])?.first
         XCTAssertEqual(first?["role"] as? String, "developer")
     }
+}
+
+@MainActor
+private final class SubscriptionTestContext {
+    var instructions = "first context"
+    var tools = #"[{"type":"function","name":"first_tool"}]"#
 }

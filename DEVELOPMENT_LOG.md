@@ -596,3 +596,12 @@ Detailed fixtures, expected outcomes, and release gates are normative in [`docs/
 - 用户提供四份云端日志；Test Build、Test Execute、Archive、Export 成功，571项测试、1项跳过、0失败。此前分享扩展的App Groups签名阻塞本次消失。日志不证明内外部测试分发的最终状态。
 - 已按文件位置整理全部警告及阶段重复项，保存明确优先级、修复方法、回归与真机验收标准：docs/BUILD_32_WARNING_FIX_PLAN.md。当前仅制定计划，尚未实施警告修复。
 - 核对工作区无未提交代码，既有代码已在main；本次补交计划和构建记录，不触发新构建。
+
+### 2026-10-02 Build 33 测试失败修复
+
+- 用户提供 Build 33 build-for-testing / test-without-building 日志；测试编译与归档通过，测试执行579项、1项跳过、3条失败断言。三个失败均属于 ChatDiagnosticsTests.testConcurrentAppendsKeepEveryCompleteLineExactlyOnce，并非三个独立缺陷。
+- 原测试最多轮询约2秒就读取文件，云端当时仅完成370/401条。生产写入是utility串行异步队列，测试未与队列完成建立同步关系；不能把尚未写完直接解释成日志丢失，也不能靠无限增加固定延时验证完整性。
+- 新增异步ChatDiagnostics.flush：在同一串行队列排入continuation，等待此前已提交的写入/轮转结束，不阻塞调用actor、不改变生产追加行为；三个日志测试读取前等待该屏障，保留完整行、数量、唯一性、中文轮转及错误保护断言。屏障不保证调用后新提交的写入已完成。
+- SubscriptionModelTests的动态instructions/tools改由MainActor测试对象持有，稳定捕获引用，保留后续请求读取更新工具的断言；消除toolContext mutated after capture警告。
+- Build 33日志确认AppIntents metadata skipped来自ButlerShareExtension，该扩展没有AppIntent，保留提示；模拟器多目的地提示属于环境，本机使用UDID消除歧义。
+- 首次定向测试关闭签名，日志3项通过，但Keychain网络测试受签名环境阻塞。恢复正常签名后，本机Xcode26.3(17C519)、iOS26.2 iPhone17Pro模拟器、英文美国区域全量579项、1项既有跳过、0失败；动态上下文与全部日志测试通过，编译仅剩分享扩展元数据工具提示。结果/private/tmp/butler-build33-full.xcresult，日志/private/tmp/butler-build33-full.log。未执行真机交互验收，未启动云构建，本机结果不代替下次云端分发结果。

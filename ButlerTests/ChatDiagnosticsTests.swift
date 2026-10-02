@@ -10,7 +10,7 @@ final class ChatDiagnosticsTests: XCTestCase {
             ChatDiagnostics.log("entry-\(index)", to: url)
         }
         ChatDiagnostics.log("finished", to: url)
-        let text = try await contents(after: "finished", at: url)
+        let text = try await contents(at: url)
         let lines = text.split(separator: "\n").map { String($0.split(separator: " ").last!) }
         XCTAssertEqual(lines.count, 401)
         XCTAssertEqual(Set(lines), Set((0..<400).map { "entry-\($0)" } + ["finished"]))
@@ -26,7 +26,7 @@ final class ChatDiagnosticsTests: XCTestCase {
             ChatDiagnostics.log("new-\(index)", to: url)
         }
         ChatDiagnostics.log("finished", to: url)
-        let text = try await contents(after: "finished", at: url)
+        let text = try await contents(at: url)
         XCTAssertLessThan(text.utf8.count, 200_000)
         XCTAssertFalse(text.contains("旧记录-0-中文"))
         XCTAssertTrue(text.contains("旧记录-11999-中文"))
@@ -43,7 +43,7 @@ final class ChatDiagnosticsTests: XCTestCase {
         ChatDiagnostics.log("cannot write over a directory", to: directory)
         let url = directory.appendingPathComponent("log")
         ChatDiagnostics.log("finished", to: url)
-        let text = try await contents(after: "finished", at: url)
+        let text = try await contents(at: url)
         XCTAssertTrue(text.contains("finished"))
         let error = NSError(domain: "fixture", code: 42, userInfo: [
             NSLocalizedDescriptionKey: "Authorization: Bearer fictional-secret; full request text"
@@ -54,12 +54,8 @@ final class ChatDiagnosticsTests: XCTestCase {
         XCTAssertFalse(description.contains("request text"))
     }
 
-    private func contents(after marker: String, at url: URL) async throws -> String {
-        for _ in 0..<200 {
-            if let text = try? String(contentsOf: url, encoding: .utf8), text.hasSuffix("\(marker)\n") { return text }
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        XCTFail("The serial writer did not finish")
+    private func contents(at url: URL) async throws -> String {
+        await ChatDiagnostics.flush()
         return try String(contentsOf: url, encoding: .utf8)
     }
 }

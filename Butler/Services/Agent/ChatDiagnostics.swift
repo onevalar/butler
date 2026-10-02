@@ -39,6 +39,14 @@ enum ChatDiagnostics {
         }
     }
 
+    /// Wait for writes enqueued before this call without blocking the caller's actor.
+    /// This is a queue barrier, not a guarantee about writes submitted afterwards.
+    nonisolated static func flush() async {
+        await withCheckedContinuation { continuation in
+            writer.async { continuation.resume() }
+        }
+    }
+
     /// What kind of error this was, in a form worth logging.
     nonisolated static func describe(_ error: Error) -> String {
         if let url = error as? URLError { return "URLError \(url.code.rawValue) \(url.code)" }
