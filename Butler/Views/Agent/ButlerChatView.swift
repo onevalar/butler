@@ -32,7 +32,6 @@ struct ButlerChatView: View {
     @Environment(\.butlerAccent) private var accent
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
-    @State private var scrollPolicy = ChatScrollPolicy()
     @State private var startTask: Task<Void, Never>?
     @State private var dictation = LiveDictation()
     @State private var voiceSession = ChatDictationSession()
@@ -66,27 +65,10 @@ struct ButlerChatView: View {
                         }
                         if chat.turns.isEmpty { welcome }
                         ForEach(chat.turns) { turn in turnView(turn) }
-                        if chat.working {
-                            if !chat.liveReply.isEmpty {
-                                Text(chat.liveReply)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .textSelection(.enabled)
-                            }
-                            // Counts up after a few seconds, so a long wait never looks like nothing is happening.
-                            TimelineView(.periodic(from: .now, by: 1)) { context in
-                                let seconds = Int(context.date.timeIntervalSince(chat.workingSince ?? context.date))
-                                HStack(spacing: 8) {
-                                    ProgressView()
-                                    Text((chat.liveReply.isEmpty ? chat.workingStage : "正在回复…")
-                                         + (seconds < 6 ? "" : " \(seconds) 秒")
-                                         + (seconds < 25 ? "" : "，可以点停止"))
-                                        .monospacedDigit()
-                                }
-                            }
-                            .font(.subheadline).foregroundStyle(.secondary)
-                            .padding(.leading, 4)
+                        if chat.working, chat.replyProgress.turnID == nil {
+                            workingIndicator
                         }
-                        if let pending = chat.tools?.pending, !pending.isEmpty, !chat.working {
+                        if let pending = chat.tools?.pending, !pending.isEmpty {
                             confirmCard(pending)
                         }
                         FolderAccessPrompt(chat: chat, hasOtherWork: hasOtherWork || loadingAttachments)
@@ -95,43 +77,67 @@ struct ButlerChatView: View {
                         }
                         Color.clear.frame(height: 1).padding(.bottom, 12).id("bottom")
                     }
+                    .scrollTargetLayout()
                     .padding(.horizontal, 16).padding(.top, 12)
                 }
                 .scrollDismissesKeyboard(.interactively)
                 .scrollEdgeEffectHidden(for: .bottom)
-                .defaultScrollAnchor(.bottom, for: .initialOffset)
+                .defaultScrollAnchor(chat.scrollPolicy.followingBottom ? .bottom : .top, for: .initialOffset)
+                .scrollPosition(id: Binding(
+                    get: { chat.scrollPolicy.visibleTurnID },
+                    set: { chat.scrollPolicy.positionChanged(to: $0) }
+                ), anchor: .top)
                 .onScrollGeometryChange(for: ChatScrollPolicy.Geometry.self) { geometry in
                     Self.scrollGeometry(geometry)
                 } action: { _, geometry in
-                    scrollPolicy.geometryChanged(to: geometry)
+                    chat.scrollPolicy.geometryChanged(to: geometry)
                 }
                 .onScrollPhaseChange { _, phase, context in
                     // Sample the final drag/deceleration offset before switching to idle.
-                    scrollPolicy.geometryChanged(to: Self.scrollGeometry(context.geometry))
+                    chat.scrollPolicy.geometryChanged(to: Self.scrollGeometry(context.geometry))
                     switch phase {
-                    case .idle: scrollPolicy.phaseChanged(to: .idle)
-                    case .tracking: scrollPolicy.phaseChanged(to: .tracking)
-                    case .interacting: scrollPolicy.phaseChanged(to: .interacting)
-                    case .decelerating: scrollPolicy.phaseChanged(to: .decelerating)
-                    case .animating: scrollPolicy.phaseChanged(to: .animating)
+                    case .idle: chat.scrollPolicy.phaseChanged(to: .idle)
+                    case .tracking: chat.scrollPolicy.phaseChanged(to: .tracking)
+                    case .interacting: chat.scrollPolicy.phaseChanged(to: .interacting)
+                    case .decelerating: chat.scrollPolicy.phaseChanged(to: .decelerating)
+                    case .animating: chat.scrollPolicy.phaseChanged(to: .animating)
                     @unknown default: break
                     }
                 }
-                .onAppear { scrollPolicy.appear() }
-                .onDisappear { scrollPolicy.disappear() }
-                .task(id: scrollPolicy.revision) { @MainActor in
+                .onAppear { chat.scrollPolicy.appear(validTurnIDs: Set(chat.turns.map(\.id))) }
+                .onDisappear { chat.scrollPolicy.disappear() }
+                .task(id: chat.scrollPolicy.revision) { @MainActor in
                     // Coalesce layout notifications, not a guessed keyboard duration. A new
                     // request, user touch, or disappearance cancels this view-owned task.
                     await Task.yield()
-                    guard !Task.isCancelled, let scroll = scrollPolicy.takeScroll() else { return }
+                    guard !Task.isCancelled, let scroll = chat.scrollPolicy.takeScroll() else { return }
                     var transaction = Transaction(animation: scroll == .animated && !reduceMotion ? .default : nil)
                     transaction.disablesAnimations = reduceMotion || scroll == .immediate
                     withTransaction(transaction) { proxy.scrollTo("bottom", anchor: .bottom) }
                 }
             }
             .background { ButlerBackground() }
-            // Reserve room for the floating controls without a system bar backdrop or separator.
-            .safeAreaInset(edge: .bottom, spacing: 0) { composer }
+            // The latest button reserves its own space rather than covering a
+            // history paragraph or a confirmation button, including at large type.
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                VStack(spacing: 0) {
+                    if chat.scrollPolicy.showsReturnToLatest {
+                        HStack {
+                            Spacer(minLength: 0)
+                            Button { chat.scrollPolicy.sendToLatest() } label: {
+                                Label("回到最新", systemImage: "arrow.down")
+                                    .font(.subheadline.weight(.medium))
+                                    .padding(.horizontal, 14).frame(minHeight: 44)
+                                    .glassEffect(.regular.interactive(), in: .capsule)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityHint("跳到对话底部并继续跟随回复；不会发送消息或确认操作")
+                        }
+                        .padding(.horizontal, 16).padding(.vertical, 4)
+                    }
+                    composer
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     VStack(spacing: 1) {
@@ -386,6 +392,10 @@ struct ButlerChatView: View {
         .padding(.vertical, 16)
     }
 
+    private var workingIndicator: some View {
+        ChatWorkingIndicator(progress: chat.replyProgress, since: chat.workingSince, stage: chat.workingStage)
+    }
+
     private func turnView(_ turn: ChatTurn) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             if let names = turn.photos, !names.isEmpty, let directory = chat.photoDirectory {
@@ -408,32 +418,57 @@ struct ButlerChatView: View {
                     .background(accent.fill, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                     .textSelection(.enabled)
             }
-            if !turn.answer.isEmpty {
-                HStack {
-                    Text(turn.answer)
-                        .foregroundStyle(turn.failed ? Color.red : .primary)
-                        .padding(.horizontal, 14).padding(.vertical, 9)
-                        .glassCard(radius: 18)
-                        .textSelection(.enabled)
-                    Spacer(minLength: 40)
-                }
-            }
             if let collection = turn.collection, let onOpenLot {
                 InventoryResultView(collection: collection, onOpen: onOpenLot,
-                                    onRemove: { chat.removeFromCollection(collection.id, lot: $0) })
+                                    onRemove: { chat.removeFromCollection(collection.id, lot: $0) },
+                                    allowsRemoval: !chat.working && !hasOtherWork && !loadingAttachments,
+                                    notice: turn.collectionNotice)
             }
-            if !turn.displayReceipts.isEmpty {
-                VStack(alignment: .leading, spacing: 3) {
-                    ForEach(Array(turn.displayReceipts.enumerated()), id: \.offset) { index, line in
-                        Text(line).font(.footnote)
-                            .foregroundStyle(line.hasPrefix("✗") ? Color.red : .secondary)
-                            .textSelection(.enabled)
-                            .privacySensitive(index >= turn.receipts.count)
+            ChatReplyBubble(turn: turn, progress: chat.replyProgress,
+                            workingSince: chat.workingSince, workingStage: chat.workingStage)
+            if turn.replyState == .interrupted {
+                Text("上次回复中断，未自动重发。已保存的消息和操作回执仍保留，请核对后继续。")
+                    .font(.footnote).foregroundStyle(.secondary).textSelection(.enabled)
+            } else if turn.replyState == .stopped {
+                Text("已停止回复；已经完成的操作不会因此撤销。")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            if let results = turn.confirmationResults, !results.isEmpty {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(results.enumerated()), id: \.element.id) { index, result in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(result.title).font(.subheadline.weight(.semibold))
+                            Text(result.state.label).font(.caption.weight(.semibold))
+                                .foregroundStyle(result.state == .failed ? Color.red : .secondary)
+                            Text(result.message).font(.footnote).textSelection(.enabled)
+                            proposalSource(result.requestTurnID)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(14)
+                        if index < results.count - 1 { RowDivider(inset: 14) }
                     }
                 }
-                .padding(.leading, 6)
+                .glassCard(radius: 18)
+                .padding(.trailing, 40)
+            }
+            ForEach(Array(turn.additionalReceipts.enumerated()), id: \.offset) { _, line in
+                Text(line).font(.footnote)
+                    .foregroundStyle(line.hasPrefix("✗") ? Color.red : .secondary)
+                    .textSelection(.enabled).padding(.leading, 6)
+            }
+            ForEach(Array(turn.localHealthResults.enumerated()), id: \.offset) { _, line in
+                Text(line).font(.footnote)
+                    .foregroundStyle(line.hasPrefix("✗") ? Color.red : .secondary)
+                    .textSelection(.enabled).privacySensitive().padding(.leading, 6)
             }
         }
+    }
+
+    private func proposalSource(_ id: UUID?) -> some View {
+        let text: String
+        if let id, let source = chat.turns.first(where: { $0.id == id }) { text = "来源请求：" + source.question }
+        else { text = id == nil ? "旧提案：未记录来源请求" : "来源请求当前不可用" }
+        return Text(text).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
     }
 
     private func color(for change: PendingChange) -> Color {
@@ -446,7 +481,8 @@ struct ButlerChatView: View {
     }
 
     private func confirmCard(_ pending: [PendingChange]) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let blocked = chat.working || hasOtherWork || loadingAttachments
+        return VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(pending.enumerated()), id: \.element.id) { index, change in
                 HStack(alignment: .center, spacing: 12) {
                     VStack(alignment: .leading, spacing: 3) {
@@ -454,6 +490,8 @@ struct ButlerChatView: View {
                         if let detail = change.detail {
                             Text(detail).font(.subheadline).foregroundStyle(.secondary)
                         }
+                        Text("待你确认 · 尚未执行").font(.caption).foregroundStyle(.secondary)
+                        proposalSource(change.requestTurnID)
                         switch change.check {
                         case .passed:
                             Label("Jev 已核对", systemImage: "checkmark.seal").font(.caption).foregroundStyle(.blue)
@@ -464,28 +502,31 @@ struct ButlerChatView: View {
                         }
                     }
                     Spacer(minLength: 0)
-                    Button { chat.tools?.removePending(change.id) } label: {
+                    Button { chat.discard(ids: [change.id]) } label: {
                         Image(systemName: "minus.circle.fill").font(.title3).symbolRenderingMode(.hierarchical).foregroundStyle(.secondary)
+                            .frame(width: 44, height: 44).contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("去掉这一条")
+                    .disabled(blocked)
+                    .accessibilityLabel("去掉\(change.title)")
                 }
                 .padding(.horizontal, 18).padding(.vertical, 12)
                 if index < pending.count - 1 { RowDivider(inset: 18) }
             }
-            Text("可点确认，也可以说“确认”或“确认第2项”")
+            Text(blocked ? "正在处理，请稍后核对确认；卡片中的待确认项尚未执行。"
+                 : "可点确认，也可以说“确认”或“确认第2项”")
                 .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 18).padding(.top, 10)
             HStack(spacing: 10) {
-                Button("取消") { chat.discard() }
+                Button("取消") { chat.discard(ids: Set(pending.map(\.id))) }
                     .buttonStyle(QuietButtonStyle())
-                Button(pending.count == 1 ? "确认" : "确认 \(pending.count) 项") { chat.confirm() }
+                Button(pending.count == 1 ? "确认" : "确认 \(pending.count) 项") { chat.confirm(ids: Set(pending.map(\.id))) }
                     .buttonStyle(AccentButtonStyle())
             }
+            .disabled(blocked)
             .padding(12)
         }
         .glassCard()
         .padding(.trailing, 32)
-        .sensoryFeedback(.success, trigger: chat.turns.last?.receipts.count ?? 0)
     }
 
     // MARK: - Composer (floating Liquid Glass)
@@ -500,7 +541,11 @@ struct ButlerChatView: View {
                         .frame(minHeight: 44)
                 }
             }
-            // The model's errors are already shown as the answer; only the microphone's own errors go here.
+            // Storage/confirmation errors may not have an answer bubble at all.
+            if let error = chat.error, !(chat.turns.last?.failed == true && chat.turns.last?.answer == error) {
+                Text(error).font(.footnote).foregroundStyle(.red)
+                    .textSelection(.enabled).padding(.horizontal, 8)
+            }
             if let error = dictation.error {
                 Text(error).font(.footnote).foregroundStyle(.red)
                     .padding(.horizontal, 12).padding(.vertical, 6)
@@ -606,9 +651,9 @@ struct ButlerChatView: View {
         case .send:
             composerButton(label: "发送") {
                 guard chat.canSend, !loadingAttachments, voiceSession.phase == .idle else { return }
-                scrollPolicy.sendToLatest()
-                composing = false
+                let previous = chat.turns.last?.id
                 chat.send()
+                if chat.turns.last?.id != previous { composing = false }
             } content: {
                 Image(systemName: "arrow.up.circle.fill").font(.system(size: 28))
                     .foregroundStyle(accent.onFill, accent.fill)
@@ -701,5 +746,64 @@ struct ButlerChatView: View {
         voiceDeadlineTask?.cancel()
         voiceDeadlineTask = nil
         dictation.cancel()
+    }
+}
+
+/// Keep high-frequency text observation inside the bubble, not in the history,
+/// photo decoding, inventory cards, or composer builders above.
+private struct ChatReplyBubble: View {
+    let turn: ChatTurn
+    let progress: ChatReplyProgress
+    let workingSince: Date?
+    let workingStage: String
+
+    var body: some View {
+        let replying = turn.replyState == .answering && progress.turnID == turn.id
+        let reply = turn.displayedReply(using: progress)
+        if replying || !reply.isEmpty {
+            HStack {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(verbatim: replying && reply.isEmpty ? "正在准备回复…" : reply)
+                        .foregroundStyle(turn.failed && turn.partialReply == nil ? Color.red : .primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                    if replying || turn.partialReply != nil {
+                        Text(turn.partialReply != nil ? "未完成的过程文字 · 不代表执行结果"
+                             : progress.isPreviousPass ? "上一段过程文字 · 正在继续处理"
+                             : "正在生成 · 尚非最终答复")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    if replying { ChatWorkingIndicator(progress: progress, since: workingSince, stage: workingStage) }
+                    if turn.partialReply != nil, !turn.answer.isEmpty {
+                        Text(turn.answer).font(.footnote).foregroundStyle(.red).textSelection(.enabled)
+                    }
+                }
+                .padding(.horizontal, 14).padding(.vertical, 9)
+                .glassCard(radius: 18)
+                Spacer(minLength: 40)
+            }
+        }
+    }
+}
+
+private struct ChatWorkingIndicator: View {
+    let progress: ChatReplyProgress
+    let since: Date?
+    let stage: String
+
+    var body: some View {
+        // Only the status line ticks; the reply keeps the same text node and width.
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let seconds = max(0, Int(context.date.timeIntervalSince(since ?? context.date)))
+            let label = !progress.text.isEmpty && !progress.isPreviousPass ? "正在回复…" : stage
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                ProgressView().accessibilityHidden(true)
+                Text(label + (seconds < 6 ? "" : " \(seconds) 秒")
+                     + (seconds < 25 ? "" : "，可以点停止"))
+                    .monospacedDigit()
+            }
+            .accessibilityElement(children: .combine)
+        }
+        .font(.subheadline).foregroundStyle(.secondary)
     }
 }

@@ -64,6 +64,327 @@ final class ChatSessionsTests: XCTestCase {
         XCTAssertFalse(scope.key.contains(brief.text))
     }
 
+    func testUnsaveableTextConfirmationOrCancellationNeverConsumesPendingChanges() throws {
+        for text in ["确认", "取消"] {
+            let (_, directory, _, _, sessions) = try fixture()
+            let chat = sessions.chat(for: .general), tools = try XCTUnwrap(chat.tools)
+            tools.add(.note(.init(id: UUID(), title: "待核对", text: "不应写入", quantity: nil, revision: 1)), title: "记一条笔记", detail: nil)
+            let pending = tools.pending.map(\.id), notes = tools.notes.records
+            let files = ChatSessionFiles(scope: .general, root: directory)
+            let pendingBytes = try Data(contentsOf: files.pending)
+            try FileManager.default.createDirectory(at: files.transcript, withIntermediateDirectories: false)
+            chat.draft = text
+            XCTAssertTrue(chat.canSend)
+            chat.send()
+            XCTAssertEqual(chat.draft, text)
+            XCTAssertTrue(chat.turns.isEmpty)
+            XCTAssertFalse(chat.working)
+            XCTAssertNotNil(chat.error)
+            XCTAssertEqual(tools.pending.map(\.id), pending)
+            XCTAssertEqual(tools.notes.records, notes)
+            XCTAssertEqual(try Data(contentsOf: files.pending), pendingBytes)
+        }
+    }
+
+    func testPhotoStorageFailurePreservesInputWithoutStartingReply() throws {
+        let (_, directory, _, _, sessions) = try fixture()
+        let chat = sessions.chat(for: .general)
+        let files = ChatSessionFiles(scope: .general, root: directory)
+        try Data([44]).write(to: files.photos) // A file blocks creation of the photo directory.
+        chat.draft = "我有什么衣服"
+        chat.photos = [Data([1, 7]), Data([9, 2, 3])]
+        XCTAssertTrue(chat.canSend)
+        chat.send()
+        XCTAssertFalse(chat.working)
+        XCTAssertTrue(chat.turns.isEmpty)
+        XCTAssertEqual(chat.draft, "我有什么衣服")
+        XCTAssertEqual(chat.photos, [Data([1, 7]), Data([9, 2, 3])])
+        XCTAssertEqual(try files.loadDraft().photos, chat.photos)
+        XCTAssertEqual(try Data(contentsOf: files.photos), Data([44]))
+        XCTAssertNotNil(chat.error)
+    }
+
+    func testLocalQueryOnlyClearsDraftAfterSavingAndCanRetryStorageFailure() throws {
+        let (_, directory, _, _, sessions) = try fixture()
+        let chat = sessions.chat(for: .general)
+        let files = ChatSessionFiles(scope: .general, root: directory)
+        try FileManager.default.createDirectory(at: files.transcript, withIntermediateDirectories: false)
+        chat.draft = "我有什么衣服"
+        chat.send()
+        XCTAssertEqual(chat.draft, "我有什么衣服")
+        XCTAssertTrue(chat.turns.isEmpty)
+        XCTAssertFalse(chat.working)
+        XCTAssertNotNil(chat.error)
+        try FileManager.default.removeItem(at: files.transcript)
+        chat.send()
+        XCTAssertEqual(chat.turns.count, 1)
+        XCTAssertFalse(chat.turns[0].answer.isEmpty)
+        XCTAssertTrue(chat.draft.isEmpty)
+        XCTAssertNil(chat.error)
+        XCTAssertEqual(try JSONDecoder().decode([ChatTurn].self, from: Data(contentsOf: files.transcript)), chat.turns)
+        XCTAssertEqual(try files.loadDraft().text, "")
+    }
+
+    func testUnsaveableListEditKeepsOriginalListAndDraft() throws {
+        let (_, directory, _, _, sessions) = try fixture()
+        let files = ChatSessionFiles(scope: .general, root: directory)
+        let list = ItemCollection(title: "出门要带", items: [
+            .init(id: UUID(), name: "雨伞", reason: "下雨"),
+            .init(id: UUID(), name: "纸巾", reason: "备用")
+        ])
+        let original = ChatTurn(question: "带哪些东西", answer: "看这张清单", collection: list)
+        try files.saveTurns([original])
+        let chat = sessions.chat(for: .general)
+        try FileManager.default.removeItem(at: files.transcript)
+        try FileManager.default.createDirectory(at: files.transcript, withIntermediateDirectories: false)
+        chat.draft = "去掉雨伞"
+        XCTAssertTrue(chat.canSend)
+        chat.send()
+        XCTAssertEqual(chat.turns, [original])
+        XCTAssertEqual(chat.latestCollection, list)
+        XCTAssertEqual(chat.draft, "去掉雨伞")
+        XCTAssertNotNil(chat.error)
+        XCTAssertFalse(chat.working)
+    }
+
+    func testReplyFailureRestoresOnlyAnUntouchedWholeDraft() async throws {
+        // No credentials or network: attaching a photo bypasses the local answer,
+        // and the model transport fails at its credential check.
+        for scenario in 0..<4 {
+            let (_, directory, _, _, sessions) = try fixture()
+            let chat = sessions.chat(for: .general)
+            chat.jev.prefetchEnabled = false
+            XCTAssertFalse(chat.connection.isLoggedIn)
+            chat.draft = "  我有什么衣服\n"
+            chat.photos = [Data([2, 9])]
+            XCTAssertTrue(chat.canSend)
+            chat.send()
+            XCTAssertTrue(chat.working)
+            XCTAssertEqual(chat.replyProgress.turnID, chat.turns.first?.id)
+            XCTAssertEqual(chat.turns.first?.replyState, .answering)
+            switch scenario {
+            case 1: chat.draft = "新的问题"
+            case 2: chat.draft = "输入后又删掉"; chat.draft = ""
+            case 3: chat.photos = [Data([8, 6, 4])]
+            default: break
+            }
+            let deadline = ContinuousClock.now + .seconds(2)
+            while chat.working && ContinuousClock.now < deadline { await Task.yield() }
+            XCTAssertFalse(chat.working, "scenario \(scenario)")
+            XCTAssertNil(chat.replyProgress.turnID)
+            XCTAssertEqual(chat.replyProgress.text, "")
+            XCTAssertEqual(chat.turns.count, 1)
+            XCTAssertEqual(chat.turns.last?.failed, true)
+            XCTAssertEqual(chat.draft, scenario == 0 ? "  我有什么衣服\n" : scenario == 1 ? "新的问题" : "")
+            XCTAssertEqual(chat.photos, scenario == 0 ? [Data([2, 9])] : scenario == 3 ? [Data([8, 6, 4])] : [])
+            let saved = try ChatSessionFiles(scope: .general, root: directory).loadDraft()
+            XCTAssertEqual(saved.text, chat.draft)
+            XCTAssertEqual(saved.photos, chat.photos)
+        }
+    }
+
+    func testProposalOwnersSurviveLaterMessagesAndStaleConfirmationCannotConsumeNewProposal() throws {
+        let (_, directory, _, _, sessions) = try fixture()
+        let a = ChatTurn(question: "记住不放辣椒"), b = ChatTurn(question: "记住少放盐"), newer = ChatTurn(question: "今天什么天气")
+        let files = ChatSessionFiles(scope: .general, root: directory)
+        try files.saveTurns([a, b, newer])
+        let chat = sessions.chat(for: .general), tools = try XCTUnwrap(chat.tools)
+        tools.beginTurn(request: a.question, previous: nil, turnID: a.id)
+        tools.add(.note(.init(id: UUID(), title: "不辣", text: "不放辣椒", quantity: nil, revision: 1)), title: "第一项", detail: nil)
+        tools.beginTurn(request: b.question, previous: a.question, turnID: b.id)
+        tools.add(.note(.init(id: UUID(), title: "少盐", text: "少放盐", quantity: nil, revision: 1)), title: "第二项", detail: nil)
+        tools.endTurn()
+        let proposals = try JSONDecoder().decode([PendingChange].self, from: Data(contentsOf: files.pending))
+        XCTAssertEqual(proposals.map(\.requestTurnID), [a.id, b.id])
+        chat.confirm(ids: [proposals[0].id])
+        XCTAssertEqual(tools.notes.records.map(\.title), ["不辣"])
+        XCTAssertEqual(chat.turns[2], newer)
+        XCTAssertEqual(chat.turns.last?.confirmationResults?.first?.requestTurnID, a.id)
+        XCTAssertEqual(chat.turns.last?.confirmationResults?.first?.proposalID, proposals[0].id)
+        XCTAssertEqual(chat.turns.last?.confirmationResults?.first?.state, .succeeded)
+        let count = chat.turns.count
+        chat.confirm(ids: Set(proposals.map(\.id))) // A stale card included the already consumed first item.
+        XCTAssertEqual(chat.turns.count, count)
+        XCTAssertEqual(tools.pending.map(\.id), [proposals[1].id])
+        XCTAssertEqual(tools.notes.records.count, 1)
+        XCTAssertNotNil(chat.error)
+        chat.discard(ids: [proposals[1].id])
+        XCTAssertEqual(chat.turns.last?.confirmationResults?.first?.requestTurnID, b.id)
+        XCTAssertEqual(chat.turns.last?.confirmationResults?.first?.state, .notStarted)
+        XCTAssertEqual(tools.notes.records.count, 1)
+    }
+
+    func testRecoveryUpdatesExistingExecutionInPlaceWithoutDowngradingDurableFinalReceipt() throws {
+        for finalSaved in [false, true] {
+            let (_, directory, _, _, sessions) = try fixture()
+            let request = ChatTurn(question: "原请求"), newest = ChatTurn(question: "新问题", answer: "不要覆盖")
+            let initial = ConfirmationResult(proposalID: UUID(), requestTurnID: request.id, title: "操作", state: .notStarted, message: "未开始")
+            let filename = ChatScope.general.key.utf8.map { String(format: "%02x", $0) }.joined() + ".json"
+            let journal = ConfirmationJournal(file: directory.appendingPathComponent("device-operation-history").appendingPathComponent(filename))
+            let id = try journal.begin(ids: [initial.id], titles: [initial.title], results: [initial])
+            var running = initial; running.state = .running
+            try journal.progress(id, receipts: [running.message], results: [running])
+            var result = initial
+            if finalSaved { result.state = .succeeded; result.message = "最终回执已保存" }
+            let execution = ChatTurn(id: id, question: "确认操作", receipts: [result.message], confirmationIDs: [id],
+                confirmationResults: [result], confirmationFinished: finalSaved)
+            try ChatSessionFiles(scope: .general, root: directory).saveTurns([request, execution, newest])
+            let chat = sessions.chat(for: .general)
+            XCTAssertEqual(chat.turns.count, 3)
+            XCTAssertEqual(chat.turns[1].id, id)
+            XCTAssertEqual(chat.turns[1].confirmationResults?.first?.state, finalSaved ? .succeeded : .needsVerification)
+            XCTAssertEqual(chat.turns[2], newest)
+            let once = chat.turns
+            chat.reloadFromDisk()
+            XCTAssertEqual(chat.turns, once)
+            XCTAssertTrue(chat.tools?.pending.isEmpty == true)
+            XCTAssertTrue(chat.tools?.notes.records.isEmpty == true)
+        }
+    }
+
+    func testInterruptedReplyAndRestoredRunningEvidenceNeverRestartWork() throws {
+        let (_, directory, _, _, sessions) = try fixture()
+        let request = ChatTurn(question: "上次没答完", replyState: .answering)
+        let running = ConfirmationResult(proposalID: UUID(), requestTurnID: request.id, title: "系统操作", state: .running, message: "正在执行")
+        let execution = ChatTurn(question: "确认操作", receipts: [running.message], confirmationResults: [running])
+        try ChatSessionFiles(scope: .general, root: directory).saveTurns([request, execution])
+        let chat = sessions.chat(for: .general)
+        XCTAssertEqual(chat.turns[0].replyState, .interrupted)
+        XCTAssertEqual(chat.turns[1].confirmationResults?.first?.state, .needsVerification)
+        XCTAssertFalse(chat.working)
+        XCTAssertTrue(chat.tools?.pending.isEmpty == true)
+    }
+
+    func testEarlySavedCardSurvivesRestartWithoutRestartingReplyOrChangingOtherScope() throws {
+        let (_, directory, _, _, sessions) = try fixture()
+        let files = ChatSessionFiles(scope: .inventory, root: directory)
+        let request = ChatTurn(question: "修车有什么可用", replyState: .answering)
+        let card = ItemCollection(title: "修车清单", items: [.init(id: UUID(), name: "扳手", reason: "拆卸")])
+        _ = try files.saveReadOnlyCollections(for: request.id, displayed: card, edited: nil, history: [request])
+        let chat = sessions.chat(for: .inventory)
+        XCTAssertEqual(chat.turns.first?.id, request.id)
+        XCTAssertEqual(chat.turns.first?.replyState, .interrupted)
+        XCTAssertEqual(chat.latestCollection, card)
+        XCTAssertTrue(chat.turns.first?.collectionNotice.contains("回复未完成") == true)
+        XCTAssertFalse(chat.working)
+        XCTAssertTrue(chat.tools?.pending.isEmpty == true)
+        XCTAssertTrue(sessions.chat(for: .general).turns.isEmpty)
+        let restored = chat.turns
+        chat.reloadFromDisk()
+        XCTAssertEqual(chat.turns, restored)
+    }
+
+    func testUnchangedSyncKeepsLocalEvidenceButChangedReceiptDoesNotInheritSuccess() throws {
+        let (_, directory, _, _, sessions) = try fixture()
+        let result = ConfirmationResult(proposalID: UUID(), requestTurnID: UUID(), title: "操作", state: .succeeded, message: "完成")
+        let original = ChatTurn(question: "确认操作", receipts: [result.message], confirmationIDs: [UUID()],
+            confirmationResults: [result], confirmationFinished: true)
+        let files = ChatSessionFiles(scope: .general, root: directory)
+        try files.saveTurns([original])
+        let chat = sessions.chat(for: .general)
+        let sync = ChatSyncData(root: directory, isWorking: { false }, didImport: { sessions.reloadSyncedHistory($0) })
+        let key = SyncRecord.Key(kind: .chat, id: original.id)
+        let payload = try SyncRecord.encode(SyncedChatTurn(scope: .general, turn: original))
+        try sync.replace(key, expected: payload, with: payload)
+        XCTAssertEqual(chat.turns[0].confirmationResults, [result])
+        var changed = original; changed.receipts = ["另一设备的不同回执"]
+        try sync.replace(key, expected: payload, with: SyncRecord.encode(SyncedChatTurn(scope: .general, turn: changed)))
+        XCTAssertNil(chat.turns[0].confirmationResults)
+        XCTAssertNil(chat.turns[0].confirmationFinished)
+        XCTAssertTrue(chat.tools?.pending.isEmpty == true)
+    }
+
+    func testStoppedPartialReplySurvivesReloadAndUnchangedSyncButNeverEntersModelHistory() throws {
+        let (_, directory, _, _, sessions) = try fixture()
+        let original = ChatTurn(question: "核对库存", answer: "已停止", failed: true,
+            replyState: .stopped, partialReply: "尚未核实的片段")
+        let files = ChatSessionFiles(scope: .general, root: directory)
+        try files.saveTurns([original])
+        let chat = sessions.chat(for: .general)
+        XCTAssertEqual(chat.turns, [original])
+        XCTAssertFalse(chat.working)
+        let context = ButlerChat.context(from: chat.turns, summary: ConversationSummary())
+        XCTAssertEqual(context.count, 1)
+        guard case .user(let question) = context.first else { return XCTFail("Only the original question belongs in model context") }
+        XCTAssertEqual(question, "核对库存")
+        let archive = ConversationArchive(turns: chat.turns, recentStart: 0, summaryThrough: nil)
+        let page = archive.read(fromTurn: nil, toTurn: nil, from: nil, to: nil, cursor: nil)
+        let bytes = try JSONSerialization.data(withJSONObject: page)
+        XCTAssertFalse(String(decoding: bytes, as: UTF8.self).contains("尚未核实的片段"))
+
+        let sync = ChatSyncData(root: directory, isWorking: { false }, didImport: { sessions.reloadSyncedHistory($0) })
+        let key = SyncRecord.Key(kind: .chat, id: original.id)
+        let payload = try SyncRecord.encode(SyncedChatTurn(scope: .general, turn: original))
+        try sync.replace(key, expected: payload, with: payload)
+        XCTAssertEqual(chat.turns[0].partialReply, "尚未核实的片段")
+        var changed = original
+        changed.answer = "来自另一设备的新内容"
+        try sync.replace(key, expected: payload, with: SyncRecord.encode(SyncedChatTurn(scope: .general, turn: changed)))
+        XCTAssertNil(chat.turns[0].partialReply)
+        XCTAssertEqual(chat.turns[0].answer, "来自另一设备的新内容")
+        XCTAssertFalse(chat.working)
+        XCTAssertTrue(chat.tools?.pending.isEmpty == true)
+    }
+
+    func testReadingPositionIsPerSessionAndOnlySuccessfulSendRequestsLatest() throws {
+        let (_, directory, _, _, sessions) = try fixture()
+        let generalTurn = ChatTurn(question: "通用历史"), itemTurn = ChatTurn(question: "物品历史")
+        let generalFiles = ChatSessionFiles(scope: .general, root: directory)
+        let itemFiles = ChatSessionFiles(scope: .inventory, root: directory)
+        try generalFiles.prepare(); try generalFiles.saveTurns([generalTurn])
+        try itemFiles.prepare(); try itemFiles.saveTurns([itemTurn])
+        let general = sessions.chat(for: .general), inventory = sessions.chat(for: .inventory)
+        for (chat, turn) in [(general, generalTurn), (inventory, itemTurn)] {
+            chat.scrollPolicy.appear(validTurnIDs: [turn.id])
+            chat.scrollPolicy.positionChanged(to: turn.id)
+            chat.scrollPolicy.phaseChanged(to: .interacting)
+            chat.scrollPolicy.phaseChanged(to: .idle)
+        }
+        inventory.scrollPolicy.disappear()
+        XCTAssertEqual(sessions.chat(for: .inventory).scrollPolicy.visibleTurnID, itemTurn.id)
+
+        try FileManager.default.removeItem(at: generalFiles.transcript)
+        try FileManager.default.createDirectory(at: generalFiles.transcript, withIntermediateDirectories: false)
+        general.draft = "我有什么衣服"
+        general.send()
+        XCTAssertEqual(general.turns, [generalTurn])
+        XCTAssertEqual(general.draft, "我有什么衣服")
+        XCTAssertEqual(general.scrollPolicy.visibleTurnID, generalTurn.id)
+        XCTAssertFalse(general.scrollPolicy.followingBottom)
+        XCTAssertNil(general.scrollPolicy.takeScroll())
+
+        try FileManager.default.removeItem(at: generalFiles.transcript)
+        general.send()
+        XCTAssertEqual(general.turns.count, 2)
+        XCTAssertTrue(general.draft.isEmpty)
+        XCTAssertNil(general.scrollPolicy.visibleTurnID)
+        XCTAssertTrue(general.scrollPolicy.followingBottom)
+        XCTAssertEqual(general.scrollPolicy.takeScroll(), .animated)
+        XCTAssertEqual(inventory.scrollPolicy.visibleTurnID, itemTurn.id)
+        XCTAssertFalse(inventory.scrollPolicy.followingBottom)
+    }
+
+    func testHistoryReloadKeepsExistingReadingAnchorAndClearingDropsIt() throws {
+        let (_, directory, _, _, sessions) = try fixture()
+        let turn = ChatTurn(question: "正在阅读的历史")
+        let files = ChatSessionFiles(scope: .general, root: directory)
+        try files.prepare(); try files.saveTurns([turn])
+        let chat = sessions.chat(for: .general)
+        chat.scrollPolicy.appear(validTurnIDs: [turn.id])
+        chat.scrollPolicy.positionChanged(to: turn.id)
+        chat.scrollPolicy.phaseChanged(to: .interacting)
+        chat.scrollPolicy.phaseChanged(to: .idle)
+        try files.saveTurns([turn, ChatTurn(question: "同步收到的新消息")])
+        chat.reloadSyncedHistory()
+        XCTAssertEqual(chat.scrollPolicy.visibleTurnID, turn.id)
+        XCTAssertFalse(chat.scrollPolicy.followingBottom)
+        XCTAssertNil(chat.scrollPolicy.takeScroll())
+        chat.clearHistory()
+        XCTAssertNil(chat.scrollPolicy.visibleTurnID)
+        XCTAssertTrue(chat.scrollPolicy.followingBottom)
+        XCTAssertEqual(chat.scrollPolicy.takeScroll(), .immediate)
+    }
+
     private func fixture() throws -> (ModelContainer, URL, UserDefaults, ReminderStore, ChatSessions) {
         let container = try ButlerStore.makePreviewContainer()
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("chat-sessions-\(UUID())", isDirectory: true)
@@ -191,7 +512,7 @@ final class ChatSessionsTests: XCTestCase {
         try ChatSessionFiles(scope: .general, root: directory).saveTurns([turn])
         let chat = sessions.chat(for: .general)
         let tools = try XCTUnwrap(chat.tools)
-        tools.beginTurn(request: turn.question, previous: nil)
+        tools.beginTurn(request: turn.question, previous: nil, turnID: turn.id)
         _ = await tools.execute(LocalToolCall(id: "new-purchase", name: "propose_add_items", arguments: #"{"items":[{"name":"纸巾","quantity":1,"unit":"袋","storage":null,"package_expiry":null,"planned_use_by":null,"track":"quantity"}]}"#))
         XCTAssertEqual(tools.pending.count, 1)
         XCTAssertTrue(try ModelContext(container).fetch(FetchDescriptor<InventoryLot>()).isEmpty)
@@ -200,9 +521,11 @@ final class ChatSessionsTests: XCTestCase {
         let scope = ChatScope.lot(lot.id)
         XCTAssertTrue(chat.turns[0].relatedScopeKeys?.contains(scope.key) == true)
         let references = sessions.relatedTurns(for: scope)
-        XCTAssertEqual(references.map(\.turn.id), [turn.id])
+        XCTAssertEqual(Set(references.map(\.turn.id)), [turn.id, chat.turns[1].id])
         XCTAssertEqual(references.first?.scope, .general)
-        XCTAssertTrue(references.first?.turn.receipts.first?.hasPrefix("✓") == true)
+        XCTAssertTrue(chat.turns[0].receipts.isEmpty)
+        XCTAssertEqual(chat.turns[1].confirmationResults?.first?.requestTurnID, turn.id)
+        XCTAssertEqual(chat.turns[1].confirmationResults?.first?.state, .succeeded)
         let saved = try JSONDecoder().decode([ChatTurn].self,
             from: Data(contentsOf: ChatSessionFiles(scope: .general, root: directory).transcript))
         XCTAssertEqual(saved[0].relatedScopeKeys, [scope.key])

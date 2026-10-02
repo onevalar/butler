@@ -81,6 +81,14 @@ struct SyncedChatTurn: Codable {
             var turn = incoming.turn
             // A local-only display card does not disappear when unchanged text is received.
             if previous?.question == turn.question, previous?.answer == turn.answer { turn.collection = previous?.collection }
+            if previous?.question == turn.question, previous?.answer == turn.answer,
+               previous?.receipts == turn.receipts, previous?.failed == turn.failed {
+                turn.confirmationResults = previous?.confirmationResults
+                turn.confirmationFinished = previous?.confirmationFinished
+                turn.confirmationIDs = previous?.confirmationIDs
+                turn.replyState = previous?.replyState
+                turn.partialReply = previous?.partialReply
+            }
             turns.append(turn)
         }
         turns.sort { $0.date == $1.date ? $0.id.uuidString < $1.id.uuidString : $0.date < $1.date }

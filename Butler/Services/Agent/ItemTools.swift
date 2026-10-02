@@ -112,15 +112,15 @@ extension ButlerTools {
             let entries = try args.items.map { item -> ItemCollection.Entry in
                 guard item.reason.count <= 600 else { throw ToolError("说明过长") }
                 let lot = try activeLot(item.lot_id.uuidString)
-                relatedScopes.insert(.lot(lot.id))
                 return .init(id: lot.id, name: lot.name, reason: item.reason)
             }
-            displayedCollection = ItemCollection(title: args.title, items: entries)
+            displayedCollection = ItemCollection(id: displayedCollection?.id ?? UUID(), title: args.title, items: entries)
+            relatedScopes.formUnion(entries.map { .lot($0.id) })
             return try encode(["displayed": true, "count": entries.count] as [String: Any])
         case "update_shown_list":
             struct Args: Decodable { struct Entry: Decodable { let lot_id: UUID; let reason: String }; let remove: [UUID]; let add: [Entry] }
             let args = try JSONDecoder().decode(Args.self, from: data)
-            guard var list = shownListEdit ?? shownList?() else { throw ToolError("对话里还没有显示过清单，请用 show_inventory") }
+            guard var list = displayedCollection ?? shownListEdit ?? shownList?() else { throw ToolError("对话里还没有显示过清单，请用 show_inventory") }
             let known = Set(list.items.map(\.id))
             guard Set(args.remove).isSubset(of: known) else { throw ToolError("要去掉的物品不在这张清单里，请按 shown_list 的 lot_id") }
             list.items.removeAll { args.remove.contains($0.id) }
@@ -130,7 +130,9 @@ extension ButlerTools {
                 list.items.append(.init(id: lot.id, name: lot.name, reason: item.reason))
             }
             guard list.items.count <= 30 else { throw ToolError("清单最多30件") }
-            shownListEdit = list
+            if displayedCollection?.id == list.id { displayedCollection = list }
+            else { shownListEdit = list }
+            relatedScopes.formUnion(list.items.map { .lot($0.id) })
             return try encode(["updated": true, "count": list.items.count, "items": list.items.map(\.name)] as [String: Any])
         case "propose_regroup":
             struct Args: Decodable { let lot_ids: [String]; let location: String?; let category: ItemCategory? }

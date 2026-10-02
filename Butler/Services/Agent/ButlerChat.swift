@@ -5,6 +5,7 @@ import UIKit
 import UserNotifications
 
 struct ChatTurn: Identifiable, Codable, Equatable {
+    enum ReplyState: String, Codable { case answering, completed, failed, stopped, interrupted }
     var id = UUID()
     var question: String
     var answer: String = ""
@@ -19,11 +20,58 @@ struct ChatTurn: Identifiable, Codable, Equatable {
     var collection: ItemCollection?
     /// Receipt identities, never executable authorizations. Also prevents duplicate recovery text.
     var confirmationIDs: [UUID]?
+    /// Device-local associations and evidence; omitted by the chat sync allow-list.
+    var confirmationResults: [ConfirmationResult]?
+    var confirmationFinished: Bool?
+    var replyState: ReplyState?
+    /// Incomplete model text retained after a handled stop/error, never fed back
+    /// as an answer or exported through the chat sync allow-list.
+    var partialReply: String?
     /// Native health results exist only in the visible in-memory turn, never in its serialization.
     var localHealthResults: [String] = []
     var displayReceipts: [String] { receipts + localHealthResults }
     enum CodingKeys: String, CodingKey {
         case id, question, answer, failed, receipts, date, photos, relatedScopeKeys, collection, confirmationIDs
+        case confirmationResults, confirmationFinished, replyState, partialReply
+    }
+
+    func displayedReply(using progress: ChatReplyProgress) -> String {
+        if replyState == .answering, progress.turnID == id { return progress.text }
+        return partialReply ?? answer
+    }
+
+    var collectionNotice: String {
+        switch replyState {
+        case .answering: "说明仍在整理，清单可能继续调整；未修改库存。"
+        case .failed, .stopped, .interrupted: "本轮回复未完成，已保留查到的清单；未修改库存。"
+        default: "只读清单 · 数量和状态以当前记录为准。"
+        }
+    }
+
+    /// Remove only matching structured messages, never "the first N lines": a
+    /// late warning can precede a result, and local health is a separate surface.
+    var additionalReceipts: [String] {
+        var remaining = receipts
+        for result in confirmationResults ?? [] {
+            if let index = remaining.firstIndex(of: result.message) { remaining.remove(at: index) }
+        }
+        return remaining
+    }
+
+    /// Update only the identified execution record and explicitly linked requests.
+    /// Missing/legacy owners are not replaced with the newest turn.
+    static func updateConfirmation(_ id: UUID, results: [ConfirmationResult], in turns: inout [ChatTurn]) {
+        guard let index = turns.firstIndex(where: { $0.id == id }) else { return }
+        let additional = turns[index].additionalReceipts
+        turns[index].confirmationResults = results
+        turns[index].receipts = results.map(\.message) + additional
+        let keys = Set(results.flatMap { $0.relatedScopeKeys ?? [] })
+        turns[index].relatedScopeKeys = keys.isEmpty ? nil : keys.sorted()
+        for result in results {
+            guard let owner = result.requestTurnID, let source = turns.firstIndex(where: { $0.id == owner }) else { continue }
+            let related = Set(turns[source].relatedScopeKeys ?? []).union(result.relatedScopeKeys ?? [])
+            turns[source].relatedScopeKeys = related.isEmpty ? nil : related.sorted()
+        }
     }
 }
 
@@ -46,7 +94,9 @@ final class ButlerChat {
     /// When the current answer was asked for, to show how long it has been.
     private(set) var workingSince: Date?
     private(set) var workingStage = ""
-    private(set) var liveReply = ""
+    let replyProgress = ChatReplyProgress()
+    /// Kept with this cached conversation, never serialized or synchronized.
+    var scrollPolicy = ChatScrollPolicy()
     var draft = "" {
         didSet { saveDraft() }
     }
@@ -71,12 +121,14 @@ final class ButlerChat {
     private var historyGeneration = UUID()
     private var model: SubscriptionModel?
     private var task: Task<Void, Never>?
+    @ObservationIgnored private var replyStarted: ContinuousClock.Instant?
     private let files: ChatSessionFiles?
     private let confirmationJournal: ConfirmationJournal?
     private var confirmationID: UUID?
     private let defaults: UserDefaults
     private let container: ModelContainer
     private var loadingDraft = false
+    private var draftRevision = 0
     private var loadingProfile = false
     private var pendingReadable = true
     private var historyReadable = true
@@ -124,7 +176,8 @@ final class ButlerChat {
         recoverConfirmations()
         tools?.pendingDidChange = { [weak self] _ in self?.savePending() }
         tools?.onLocalHealthResult = { [weak self] text in
-            guard let self, UIApplication.shared.applicationState == .active, let index = turns.indices.last else { return }
+            guard let self, UIApplication.shared.applicationState == .active, let id = confirmationID,
+                  let index = turns.firstIndex(where: { $0.id == id }) else { return }
             turns[index].localHealthResults.append(text)
         }
         if let url = summaryURL, let data = try? Data(contentsOf: url),
@@ -156,6 +209,7 @@ final class ButlerChat {
         loadingDraft = true
         photos = saved.photos
         loadingDraft = false
+        draftRevision &+= 1
     }
 
     /// Commit content and receipt together before updating memory. No send or tool execution here.
@@ -176,6 +230,7 @@ final class ButlerChat {
         photos = saved.photos
         receivedShareIDs = saved.receivedShareIDs ?? []
         loadingDraft = false
+        draftRevision &+= 1
     }
 
     /// An external capture is a new request, never confirmation of pending inventory changes.
@@ -192,79 +247,115 @@ final class ButlerChat {
 
     func send() {
         guard canSend, let tools else { return }
+        let submittedAt = ContinuousClock.now
         let typed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         let attached = photos
+        let submitted = ChatDraft(text: draft, photos: attached, receivedShareIDs: receivedShareIDs)
         let text = typed.isEmpty ? Self.photoPrompt : typed
         if attached.isEmpty, let decision = localDecision {
-            turns.append(ChatTurn(question: text))
-            draft = ""
+            guard commitInput(ChatTurn(question: text)) else { return }
             if decision.confirm { confirm(ids: decision.ids) } else { discard(ids: decision.ids) }
             return
         }
         if attached.isEmpty, answerOnPhone(text, tools: tools) { return }
-        working = true
-        workingSince = .now
-        workingStage = "正在准备相关资料…"
-        liveReply = ""
-        error = nil
         let previousTurn = turns.last
-        tools.inputPhotos = attached
-        tools.beginTurn(request: text, previous: turns.last?.question, hasPhotos: !attached.isEmpty)
-        // Every message starts from a fresh, bounded context: earlier turns as plain text only.
+        // Build context before appending this request, so it isn't included twice.
         rebuildContext()
         var turn = ChatTurn(question: text)
         turn.relatedScopeKeys = scope == .general ? nil : [scope.key]
-        if !attached.isEmpty { turn.photos = savePhotos(attached, for: turn.id) }
-        turns.append(turn)
-        save()
+        turn.replyState = .answering
+        guard commitInput(turn) else { return }
+        let submittedRevision = draftRevision
+        replyStarted = submittedAt
+        working = true
+        workingSince = .now
+        workingStage = "正在准备相关资料…"
+        replyProgress.begin(turn.id)
+        tools.inputPhotos = attached
+        tools.beginTurn(request: text, previous: previousTurn?.question, hasPhotos: !attached.isEmpty, turnID: turn.id)
         let index = turns.count - 1
-        draft = ""
-        photos = []
         // Keep going for a while if the owner switches away while the butler is answering.
         let background = UIApplication.shared.beginBackgroundTask(withName: "butler-answer")
-        let started = Date.now
-        ChatDiagnostics.log("turn start chars=\(text.count) photos=\(attached.count)")
+        recordReplyTiming("input_saved chars=\(text.count) photos=\(attached.count)")
         task = Task {
             defer {
-                turns[index].collection = tools.displayedCollection
-                if let edited = tools.shownListEdit, let owner = turns.lastIndex(where: { $0.collection?.id == edited.id }) {
-                    turns[owner].collection = edited
-                }
                 tools.inputPhotos = []
+                tools.endTurn()
                 let keys = Set(turns[index].relatedScopeKeys ?? []).union(tools.relatedScopes.map(\.key))
                 turns[index].relatedScopeKeys = keys.isEmpty ? nil : keys.sorted()
                 working = false
                 workingSince = nil
                 workingStage = ""
-                liveReply = ""
+                replyProgress.finish()
+                replyStarted = nil
                 task = nil
                 save()
                 if background != .invalid { UIApplication.shared.endBackgroundTask(background) }
             }
             do {
                 turns[index].answer = try await run(attached.isEmpty ? .user(text) : .userPhotos(text, attached),
-                                                   tools: tools, previous: previousTurn)
-                ChatDiagnostics.log("turn done \(Int(Date.now.timeIntervalSince(started)))s")
+                                                   tools: tools, previous: previousTurn, turnID: turn.id)
+                turns[index].replyState = .completed
+                recordReplyTiming("done")
                 compactIfNeeded()
             } catch {
-                ChatDiagnostics.log("turn failed \(Int(Date.now.timeIntervalSince(started)))s \(ChatDiagnostics.describe(error))")
+                recordReplyTiming("failed \(ChatDiagnostics.describe(error))")
                 // No connection: a reminder can still be understood and set on the phone.
                 if Self.isConnectivity(error), attached.isEmpty, Self.allowsLocalReminderCreation(in: scope),
                    let local = LocalReminderParser.parse(text) {
                     let reminder = TimedReminder(text: local.text, fireDate: local.fireDate, repeats: local.repeats)
                     tools.proposeReminder(reminder)
                     turns[index].answer = "暂时连不上模型服务，我先在手机上按我的理解设好：\(reminder.whenLabel)提醒你「\(reminder.text)」。请在下面确认；时间不对直接告诉我。"
+                    turns[index].replyState = .completed
                     ChatDiagnostics.log("local reminder \(reminder.whenLabel)")
                     return
                 }
                 let message = SubscriptionConnection.message(error)
                 turns[index].failed = true
+                turns[index].replyState = error is CancellationError || Task.isCancelled ? .stopped : .failed
+                turns[index].partialReply = replyProgress.text.isEmpty ? nil : replyProgress.text
                 turns[index].answer = message
                 self.error = message
-                if draft.isEmpty { draft = typed } // nothing was lost
-                if photos.isEmpty { photos = attached }
+                // Restore one complete input, never mix old photos with a newer draft.
+                // Even typing then erasing counts as a newer edit.
+                if draftRevision == submittedRevision {
+                    loadingDraft = true
+                    draft = submitted.text
+                    photos = submitted.photos
+                    loadingDraft = false
+                    saveDraft()
+                }
             }
         }
+    }
+
+    /// No tool execution, model request, or in-memory consumption before durable storage.
+    @discardableResult
+    private func commitInput(_ turn: ChatTurn, history: [ChatTurn]? = nil) -> Bool {
+        guard historyReadable, draftReadable, let files else {
+            error = "对话存储暂时不可用，输入已保留，本次没有发送。"
+            return false
+        }
+        let previous = history ?? turns
+        do {
+            let saved = try files.saveSendingTurn(turn, history: previous,
+                draft: ChatDraft(text: draft, photos: photos, receivedShareIDs: receivedShareIDs))
+            turns = previous + [saved]
+        } catch {
+            self.error = "消息没能完整保存到手机，文字和照片已保留，本次没有发送：\(error.localizedDescription)"
+            return false
+        }
+        error = nil
+        loadingDraft = true
+        draft = ""
+        photos = []
+        loadingDraft = false
+        // If cleanup fails, the persisted marker reconciles against the committed turn on relaunch.
+        saveDraft()
+        // Every successful input path (including the orb and shortcuts) has the
+        // same navigation intent. Failed storage must not move a reading user.
+        scrollPolicy.sendToLatest()
+        return true
     }
 
     func stop() { task?.cancel() }
@@ -278,9 +369,17 @@ final class ButlerChat {
 
     /// Takes one line off a shown list. The thing itself stays at home.
     func removeFromCollection(_ collectionID: UUID, lot: UUID) {
-        guard let index = turns.lastIndex(where: { $0.collection?.id == collectionID }) else { return }
-        turns[index].collection?.items.removeAll { $0.id == lot }
-        save()
+        guard !working, historyReadable, let files,
+              let index = turns.lastIndex(where: { $0.collection?.id == collectionID }),
+              turns[index].collection?.items.contains(where: { $0.id == lot }) == true else { return }
+        var next = turns
+        next[index].collection?.items.removeAll { $0.id == lot }
+        do {
+            try files.saveTurns(next)
+            turns = next
+        } catch {
+            self.error = "清单修改没能保存，仍保留原清单；库存没有变化：\(error.localizedDescription)"
+        }
     }
 
     /// Plain questions ("我有什么衣服", "冷藏里有什么") and "去掉…" on the list that's showing are handled on
@@ -289,11 +388,11 @@ final class ButlerChat {
         if tools.pending.isEmpty, let list = latestCollection, let owner = turns.lastIndex(where: { $0.collection?.id == list.id }),
            let removed = ShownListEdit.removals(text, from: list) {
             let ids = Set(removed.map(\.id))
-            turns[owner].collection?.items.removeAll { ids.contains($0.id) }
-            turns.append(ChatTurn(question: text, answer: "好，已从清单去掉「\(removed.map(\.name).joined(separator: "、"))」，东西还在家里。"))
-            draft = ""
-            save()
-            ChatDiagnostics.log("local list edit removed=\(removed.count)")
+            var history = turns
+            history[owner].collection?.items.removeAll { ids.contains($0.id) }
+            if commitInput(ChatTurn(question: text, answer: "好，已从清单去掉「\(removed.map(\.name).joined(separator: "、"))」，东西还在家里。"), history: history) {
+                ChatDiagnostics.log("local list edit removed=\(removed.count)")
+            }
             return true
         }
         guard LocalInventoryQuery.isCandidate(text), let facts = try? tools.activeFacts(),
@@ -301,10 +400,7 @@ final class ButlerChat {
         var turn = ChatTurn(question: text, answer: answer.text)
         turn.collection = LocalInventoryQuery.collection(answer)
         turn.relatedScopeKeys = scope == .general ? nil : [scope.key]
-        turns.append(turn)
-        draft = ""
-        save()
-        ChatDiagnostics.log("local inventory answer count=\(answer.lots.count)")
+        if commitInput(turn) { ChatDiagnostics.log("local inventory answer count=\(answer.lots.count)") }
         return true
     }
 
@@ -320,7 +416,7 @@ final class ButlerChat {
         return true
     }
 
-    private func run(_ message: LocalAgentMessage, tools: ButlerTools, previous: ChatTurn?) async throws -> String {
+    private func run(_ message: LocalAgentMessage, tools: ButlerTools, previous: ChatTurn?, turnID: UUID) async throws -> String {
         guard let model else { throw SubscriptionError.signInRequired }
         let start = messages.count
         let pendingBefore = tools.pending
@@ -336,10 +432,28 @@ final class ButlerChat {
             let prefetched = try await ButlerPrefetch.prepare(request: request,
                 previousQuestion: previous?.question, previousAnswer: previous?.failed == false ? previous?.answer : nil,
                 hasPhotos: hasPhotos, enabled: jev.prefetchEnabled, tools: tools)
+            recordReplyTiming("context_ready")
+            var savedFirstResult = false
             var conversation = messages
             let answer = try await ToolConversationLoop.run(model: model, messages: &conversation, prefetched: prefetched,
-                execute: { await tools.execute($0) },
-                progress: { [weak self] stage in self?.workingStage = stage; self?.liveReply = "" })
+                execute: { call in
+                    let output = await tools.execute(call)
+                    try Task.checkCancellation()
+                    if call.name == "show_inventory" || call.name == "update_shown_list" {
+                        guard let files = self.files else { throw ButlerTools.ToolError("清单存储暂时不可用") }
+                        self.turns = try files.saveReadOnlyCollections(for: turnID, displayed: tools.displayedCollection,
+                            edited: tools.shownListEdit, history: self.turns)
+                        if !savedFirstResult, tools.displayedCollection != nil || tools.shownListEdit != nil {
+                            savedFirstResult = true
+                            self.recordReplyTiming("first_result_saved")
+                        }
+                    }
+                    return output
+                },
+                progress: { [weak self] stage in
+                    self?.workingStage = stage
+                    self?.replyProgress.prepareNextPass()
+                })
             messages = conversation
             return answer ?? "这件事步骤有点多，我先停在这里。你可以换个说法再试一次。"
         } catch {
@@ -369,12 +483,23 @@ final class ButlerChat {
         do {
             let records = try journal.records().filter { !$0.reported }
             guard !records.isEmpty else { return }
-            for entry in records where !turns.contains(where: { $0.id == entry.id || $0.confirmationIDs?.contains(entry.id) == true }) {
+            for entry in records {
+                if turns.contains(where: { $0.id == entry.id && $0.confirmationFinished == true }) { continue }
                 let explanation = entry.finished
                     ? "恢复上次执行回执；未重复执行。"
                     : "上次执行中断。下列回执是已保存的进度；没有回执的操作可能未开始，也可能已完成但未留下结果，请先核查，不能当作失败重试。没有自动续跑或撤销。"
-                turns.append(ChatTurn(id: entry.id, question: "执行记录恢复", answer: explanation,
-                    receipts: ["原确认项目：" + entry.titles.joined(separator: "；")] + entry.receipts, date: entry.date))
+                if let results = entry.results {
+                    let recovered = results.map(\.recovered)
+                    let value = ChatTurn(id: entry.id, question: "执行记录恢复", answer: explanation,
+                        receipts: recovered.map(\.message), date: entry.date, confirmationIDs: [entry.id],
+                        confirmationResults: recovered, confirmationFinished: true)
+                    if let index = turns.firstIndex(where: { $0.id == entry.id }) { turns[index] = value }
+                    else { turns.append(value) }
+                    ChatTurn.updateConfirmation(entry.id, results: recovered, in: &turns)
+                } else if !turns.contains(where: { $0.id == entry.id || $0.confirmationIDs?.contains(entry.id) == true }) {
+                    turns.append(ChatTurn(id: entry.id, question: "执行记录恢复", answer: explanation,
+                        receipts: ["原确认项目：" + entry.titles.joined(separator: "；")] + entry.receipts, date: entry.date))
+                }
             }
             try files?.saveTurns(turns)
             try journal.acknowledge(Set(records.map(\.id)))
@@ -386,10 +511,31 @@ final class ButlerChat {
             throw FolderFailure("本次文件夹选择已失效，请重新发起。")
         }
         tools.folderSelectionRequest = nil
-        let grant = try tools.folders.authorize(url)
+        let grant: FolderGrant
+        do { grant = try tools.folders.authorize(url) }
+        catch {
+            updateFolderSelection(request, state: .needsVerification, message: "文件夹授权未能核实：\(error.localizedDescription)")
+            throw error
+        }
         let receipt = "已授权文件夹：\(grant.name)（ID：\(grant.id)）。未扫描或写入文件；可在对话中要求查找文件名、新增文件或撤销授权。"
-        turns.append(ChatTurn(question: "选择文件夹", answer: receipt))
+        updateFolderSelection(request, state: .succeeded, message: receipt)
         messages.append(.receipt(summary: receipt))
+    }
+
+    func cancelFolderSelection(_ request: UUID) {
+        guard tools?.folderSelectionRequest == request else { return }
+        tools?.folderSelectionRequest = nil
+        updateFolderSelection(request, state: .notStarted, message: "已取消选择，没有增加文件夹授权。")
+    }
+
+    private func updateFolderSelection(_ request: UUID, state: ConfirmationResult.State, message: String) {
+        guard let owner = turns.firstIndex(where: { $0.confirmationResults?.contains(where: { $0.proposalID == request }) == true }),
+              var results = turns[owner].confirmationResults,
+              let index = results.firstIndex(where: { $0.proposalID == request }) else { return }
+        results[index].state = state
+        results[index].message = message
+        let id = turns[owner].id
+        ChatTurn.updateConfirmation(id, results: results, in: &turns)
         save()
     }
 
@@ -402,7 +548,12 @@ final class ButlerChat {
     // MARK: - Confirmation
 
     func confirm(ids: Set<UUID>? = nil) {
-        guard !working, pendingReadable, let tools, !tools.pending.isEmpty else { return }
+        guard !working, historyReadable, pendingReadable, let files, let journal = confirmationJournal,
+              let tools, !tools.pending.isEmpty else { return }
+        if let ids, !ids.isSubset(of: Set(tools.pending.map(\.id))) {
+            error = "待确认项已改变，请核对当前卡片后再确认。本次没有执行。"
+            return
+        }
         let selected = tools.pending.filter { ids == nil || ids!.contains($0.id) }
         guard !selected.isEmpty else { return }
         guard selected.count <= 1 || !selected.contains(where: \.requiresSoleConfirmation) else {
@@ -431,51 +582,71 @@ final class ButlerChat {
         }
         // Consume the persisted authorization queue before writes. An interrupted commit must
         // never reappear as a fresh Add proposal after relaunch.
-        do { confirmationID = try confirmationJournal?.begin(ids: selected.map(\.id), titles: selected.map(\.title)) }
+        let initial = selected.map { $0.result(.notStarted, "\($0.title)：未开始执行。") }
+        let id: UUID
+        do { id = try journal.begin(ids: selected.map(\.id), titles: selected.map(\.title), results: initial) }
         catch { self.error = error.localizedDescription; return }
-        if let file = files?.pending {
-            do {
-                let selectedIDs = Set(selected.map(\.id))
-                try JSONEncoder().encode(tools.pending.filter { $0.persists && !selectedIDs.contains($0.id) }).write(to: file, options: .atomic)
-            } catch {
-                selected.forEach { tools.removePending($0.id) }
-                if let id = confirmationID { try? confirmationJournal?.progress(id, receipts: ["确认状态未能保存，本批没有开始修改。"], finished: true) }
-                confirmationID = nil
-                self.error = "无法保存确认状态，本次没有执行修改；请核查后重新提议。"
-                return
-            }
+        do {
+            let selectedIDs = Set(selected.map(\.id))
+            try JSONEncoder().encode(tools.pending.filter { $0.persists && !selectedIDs.contains($0.id) }).write(to: files.pending, options: .atomic)
+            let turn = ChatTurn(id: id, question: "确认操作", receipts: initial.map(\.message), confirmationIDs: [id], confirmationResults: initial)
+            try files.saveTurns(turns + [turn])
+            turns.append(turn)
+            confirmationID = id
+            error = nil
+        } catch {
+            selected.forEach { tools.removePending($0.id) }
+            try? journal.progress(id, receipts: initial.map(\.message), finished: true, results: initial)
+            self.error = "无法保存确认状态，本次没有执行修改；请核查后重新提议。"
+            return
+        }
+        if let previous = tools.folderSelectionRequest,
+           selected.contains(where: { if case .folder(.authorize) = $0.kind { return true }; return false }) {
+            cancelFolderSelection(previous)
         }
         if selected.contains(where: \.requiresAsyncConfirmation) {
             working = true
             workingSince = .now
             workingStage = "正在核对系统操作…"
             task = Task {
-                defer { working = false; workingSince = nil; workingStage = ""; task = nil }
-                let results = await tools.confirmIncludingSystemChanges(ids: Set(selected.map(\.id))) { [self] receipts in
-                    if let id = confirmationID { try confirmationJournal?.progress(id, receipts: receipts) }
+                defer { working = false; workingSince = nil; workingStage = ""; task = nil; confirmationID = nil }
+                let results = await tools.confirmResults(ids: Set(selected.map(\.id))) { [self] results in
+                    try recordConfirmationProgress(id, results: results)
                 }
-                finishConfirmation(results, tools: tools, hasDates: hasDates,
+                finishConfirmation(id, results: results, tools: tools, hasDates: hasDates,
                                    hasReminders: hasReminders, startsNotifications: startsNotifications)
             }
             return
         }
-        let results = tools.confirmAll(ids: ids)
-        finishConfirmation(results, tools: tools, hasDates: hasDates,
+        defer { confirmationID = nil }
+        do { try recordConfirmationProgress(id, results: selected.map { $0.result(.running, "\($0.title)：正在执行。") }) }
+        catch {
+            selected.forEach { tools.removePending($0.id) }
+            finishConfirmation(id, results: initial, tools: tools, hasDates: false, hasReminders: false, startsNotifications: false)
+            self.error = "执行进度无法保存，本批没有开始修改。"
+            return
+        }
+        let values = tools.confirmLocalResults(ids: Set(selected.map(\.id)))
+        let results = selected.compactMap { proposal in values.first { $0.proposalID == proposal.id } }
+        finishConfirmation(id, results: results, tools: tools, hasDates: hasDates,
                            hasReminders: hasReminders, startsNotifications: startsNotifications)
     }
 
-    private func finishConfirmation(_ results: [String], tools: ButlerTools, hasDates: Bool,
+    private func recordConfirmationProgress(_ id: UUID, results: [ConfirmationResult]) throws {
+        try confirmationJournal?.progress(id, receipts: results.map(\.message), results: results)
+        ChatTurn.updateConfirmation(id, results: results, in: &turns)
+    }
+
+    private func finishConfirmation(_ id: UUID, results: [ConfirmationResult], tools: ButlerTools, hasDates: Bool,
                                     hasReminders: Bool, startsNotifications: Bool) {
-        let completedID = confirmationID
-        confirmationID = nil
         var journalSaved = false
         do {
-            if let id = completedID { try confirmationJournal?.progress(id, receipts: results, finished: true) }
+            try confirmationJournal?.progress(id, receipts: results.map(\.message), finished: true, results: results)
             journalSaved = true
         } catch { self.error = "执行结果未能写入恢复记录，请核查回执，不要重复操作。" }
-        if hasDates || hasReminders {
+        if (hasDates || hasReminders), results.contains(where: { $0.state == .succeeded }) {
             let reminders = tools.reminders
-            let turnID = turns.last?.id
+            let turnID = id
             let generation = historyGeneration
             Task {
                 if hasDates || startsNotifications {
@@ -484,7 +655,7 @@ final class ButlerChat {
                 }
                 await reminders.waitForScheduling()
                 let status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
-                guard generation == historyGeneration, hasReminders, let turnID,
+                guard generation == historyGeneration, hasReminders,
                       let turn = turns.firstIndex(where: { $0.id == turnID }) else { return }
                 var warnings: [String] = []
                 if startsNotifications, status == .denied {
@@ -498,26 +669,32 @@ final class ButlerChat {
                 }
             }
         }
-        if let last = turns.indices.last {
-            turns[last].receipts.append(contentsOf: results)
-            if let completedID { turns[last].confirmationIDs = (turns[last].confirmationIDs ?? []) + [completedID] }
-            let keys = Set(turns[last].relatedScopeKeys ?? []).union(tools.relatedScopes.map(\.key))
-            turns[last].relatedScopeKeys = keys.isEmpty ? nil : keys.sorted()
-        } else {
-            turns.append(ChatTurn(question: "确认操作", receipts: results, confirmationIDs: completedID.map { [$0] }))
+        if let index = turns.firstIndex(where: { $0.id == id }) {
+            turns[index].confirmationFinished = true
         }
-        messages.append(.receipt(summary: results.joined(separator: "\n")))
+        ChatTurn.updateConfirmation(id, results: results, in: &turns)
+        messages.append(.receipt(summary: results.map { "[\($0.state.label)] \($0.message)" }.joined(separator: "\n")))
         do {
             try files?.saveTurns(turns)
-            if journalSaved, let id = completedID { try confirmationJournal?.acknowledge([id]) }
+            if journalSaved { try confirmationJournal?.acknowledge([id]) }
         } catch { self.error = "执行回执未能完整保存，下次打开会尝试恢复记录，不会重做操作。" }
     }
 
     func discard(ids: Set<UUID>? = nil) {
-        guard !working, pendingReadable, let tools, !tools.pending.isEmpty else { return }
+        guard !working, historyReadable, pendingReadable, let files, let tools, !tools.pending.isEmpty else { return }
+        if let ids, !ids.isSubset(of: Set(tools.pending.map(\.id))) {
+            error = "待确认项已改变，请核对当前卡片后再取消。"
+            return
+        }
         let selected = tools.pending.filter { ids == nil || ids!.contains($0.id) }
-        selected.forEach { tools.removePending($0.id) }
-        if let last = turns.indices.last { turns[last].receipts.append("已取消 \(selected.count) 项待确认修改，没有保存") }
+        guard !selected.isEmpty else { return }
+        let selectedIDs = Set(selected.map(\.id))
+        let remaining = tools.pending.filter { !selectedIDs.contains($0.id) }
+        do { try JSONEncoder().encode(remaining.filter(\.persists)).write(to: files.pending, options: .atomic) }
+        catch { self.error = "取消状态未能保存，待确认项已保留。"; return }
+        tools.restorePending(remaining)
+        let results = selected.map { $0.result(.notStarted, "\($0.title)：已取消，没有执行。") }
+        turns.append(ChatTurn(question: "取消待确认修改", receipts: results.map(\.message), confirmationResults: results, confirmationFinished: true))
         messages.append(.receipt(summary: "用户取消了选中的待确认修改，没有保存；其余内容以get_pending_changes为准。"))
         save()
     }
@@ -581,6 +758,7 @@ final class ButlerChat {
         historyGeneration = UUID()
         historyReadable = true
         turns = []
+        scrollPolicy.reconcileHistory([])
         messages = []
         summary = ConversationSummary()
         if let summaryURL { try? FileManager.default.removeItem(at: summaryURL) }
@@ -588,6 +766,13 @@ final class ButlerChat {
         tools?.folderSelectionRequest = nil
         if let directory = photoDirectory { try? FileManager.default.removeItem(at: directory) }
         save()
+    }
+
+    /// Milestones, not per-token logs. Measures delivery to app state, not screen paint.
+    /// Monotonic elapsed time survives wall-clock adjustments; no message content is logged.
+    private func recordReplyTiming(_ milestone: String) {
+        guard let started = replyStarted, let id = replyProgress.turnID else { return }
+        ChatDiagnostics.log("turn \(milestone) id=\(id.uuidString) elapsed=\(started.duration(to: .now))")
     }
 
     private func makeModel() {
@@ -599,7 +784,13 @@ final class ButlerChat {
                                           profile: self?.defaults.string(forKey: "butlerProfile") ?? "")
                                   },
                                   tools: { tools?.toolJSON ?? "[]" },
-                                  onText: { [weak self] text in self?.liveReply = text })
+                                  onText: { [weak self] text in
+                                      guard let self else { return }
+                                      if !text.isEmpty, self.replyProgress.text.isEmpty {
+                                          self.recordReplyTiming("first_preview_received")
+                                      }
+                                      self.replyProgress.receive(text)
+                                  })
     }
 
     // MARK: - Memory of the conversation
@@ -801,15 +992,6 @@ final class ButlerChat {
         return files?.photos
     }
 
-    private func savePhotos(_ photos: [Data], for id: UUID) -> [String] {
-        guard let directory = photoDirectory else { return [] }
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        return photos.enumerated().compactMap { index, data in
-            let name = "\(id.uuidString)-\(index).jpg"
-            return (try? data.write(to: directory.appendingPathComponent(name), options: .atomic)) != nil ? name : nil
-        }
-    }
-
     private func save() {
         guard historyReadable else { return }
         do {
@@ -821,7 +1003,21 @@ final class ButlerChat {
         do {
             if let url = transcriptURL, FileManager.default.fileExists(atPath: url.path) {
                 turns = try JSONDecoder().decode([ChatTurn].self, from: Data(contentsOf: url))
+                for index in turns.indices where turns[index].replyState == .answering {
+                    turns[index].replyState = .interrupted
+                    turns[index].failed = true
+                }
+                for index in turns.indices {
+                    guard let results = turns[index].confirmationResults,
+                          results.contains(where: { $0.state == .running || ($0.state == .awaitingUser && tools?.folderSelectionRequest != $0.proposalID) }) else { continue }
+                    let recovered = results.map { value in
+                        value.state == .running || (value.state == .awaitingUser && tools?.folderSelectionRequest != value.proposalID) ? value.recovered : value
+                    }
+                    let id = turns[index].id
+                    ChatTurn.updateConfirmation(id, results: recovered, in: &turns)
+                }
             } else { turns = [] }
+            scrollPolicy.reconcileHistory(Set(turns.map(\.id)))
             historyReadable = true
         } catch {
             historyReadable = false
@@ -833,8 +1029,8 @@ final class ButlerChat {
         loadingDraft = true
         defer { loadingDraft = false }
         do {
-            if let file = files?.draft, FileManager.default.fileExists(atPath: file.path) {
-                let saved = try JSONDecoder().decode(ChatDraft.self, from: Data(contentsOf: file))
+            if let files, FileManager.default.fileExists(atPath: files.draft.path) {
+                let saved = try files.loadDraft()
                 draft = saved.text
                 photos = saved.photos
                 receivedShareIDs = saved.receivedShareIDs ?? []
@@ -858,7 +1054,9 @@ final class ButlerChat {
     }
 
     private func saveDraft() {
-        guard !loadingDraft, draftReadable, let file = files?.draft else { return }
+        guard !loadingDraft else { return }
+        draftRevision &+= 1
+        guard draftReadable, let file = files?.draft else { return }
         do {
             try files?.prepare()
             try JSONEncoder().encode(ChatDraft(text: draft, photos: photos, receivedShareIDs: receivedShareIDs)).write(to: file, options: .atomic)

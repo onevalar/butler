@@ -46,6 +46,8 @@ ln -s "$root/ButlerTests/PublicWebPageTests.swift" "$scratch/Tests/ButlerTests/P
 ln -s "$root/Butler/Services/AuthorizedFolderStore.swift" "$scratch/Sources/Butler/AuthorizedFolderStore.swift"
 ln -s "$root/Butler/Services/FolderFileIO.swift" "$scratch/Sources/Butler/FolderFileIO.swift"
 ln -s "$root/Butler/Services/ConfirmationJournal.swift" "$scratch/Sources/Butler/ConfirmationJournal.swift"
+ln -s "$root/Butler/Domain/ConfirmationResult.swift" "$scratch/Sources/Butler/ConfirmationResult.swift"
+ln -s "$root/ButlerTests/ConfirmationJournalTests.swift" "$scratch/Tests/ButlerTests/ConfirmationJournalTests.swift"
 ln -s "$root/ButlerTests/FolderAndRecoveryTests.swift" "$scratch/Tests/ButlerTests/FolderAndRecoveryTests.swift"
 cat > "$scratch/Package.swift" <<'SWIFT'
 // swift-tools-version: 6.2

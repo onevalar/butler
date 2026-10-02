@@ -103,9 +103,9 @@ final class ItemsPageTests: XCTestCase {
 
     // MARK: The conversation
 
-    private func chat() throws -> (ButlerChat, ModelContainer) {
+    private func chat(directory: URL? = nil) throws -> (ButlerChat, ModelContainer) {
         let container = try ButlerStore.makePreviewContainer()
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("items-\(UUID())")
+        let directory = directory ?? FileManager.default.temporaryDirectory.appendingPathComponent("items-\(UUID())")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let suite = "items-\(UUID())"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -159,6 +159,30 @@ final class ItemsPageTests: XCTestCase {
         XCTAssertEqual(chat.turns[0].collection?.items.count, 0)
     }
 
+    func testManualRemovalWaitsForSaveAndNeverChangesStock() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("items-\(UUID())")
+        let (chat, container) = try chat(directory: directory)
+        let ids = try stock(container, [("外套", .clothing, "衣柜"), ("衬衫", .clothing, "衣柜")])
+        chat.draft = "有什么衣服"
+        chat.send()
+        let before = chat.turns
+        let card = try XCTUnwrap(chat.latestCollection)
+        let files = ChatSessionFiles(scope: .inventory, root: directory)
+        let backup = files.directory.appendingPathComponent("original.json")
+        try FileManager.default.moveItem(at: files.transcript, to: backup)
+        try FileManager.default.createDirectory(at: files.transcript, withIntermediateDirectories: false)
+        chat.removeFromCollection(card.id, lot: ids[0])
+        XCTAssertEqual(chat.turns, before)
+        XCTAssertTrue(chat.error?.contains("仍保留原清单") == true)
+        try FileManager.default.removeItem(at: files.transcript)
+        try FileManager.default.moveItem(at: backup, to: files.transcript)
+        chat.removeFromCollection(card.id, lot: ids[0])
+        XCTAssertEqual(chat.latestCollection?.items.map(\.id), [ids[1]])
+        XCTAssertEqual(try JSONDecoder().decode([ChatTurn].self, from: Data(contentsOf: files.transcript)), chat.turns)
+        XCTAssertEqual(try ModelContext(container).fetch(FetchDescriptor<InventoryLot>()).map(\.quantity), [1, 1])
+        XCTAssertTrue(chat.tools?.pending.isEmpty == true)
+    }
+
     // MARK: Tools
 
     private func call(_ tools: ButlerTools, _ name: String, _ fields: [String: Any]) async throws -> [String: Any] {
@@ -180,6 +204,56 @@ final class ItemsPageTests: XCTestCase {
         XCTAssertEqual(tools.shownListEdit?.id, chat.latestCollection?.id, "edits the card that is showing, not a new one")
         let stranger = try await call(tools, "update_shown_list", ["remove": [UUID().uuidString], "add": [] as [Any]])
         XCTAssertNotNil(stranger["error"])
+    }
+
+    func testInvalidSelectionAndInvalidEditNeverExposePartialCardsOrReferences() async throws {
+        let (chat, container) = try chat()
+        let ids = try stock(container, [("扳手", .tools, "柜子"), ("润滑油", .household, "阳台")])
+        let tools = try XCTUnwrap(chat.tools)
+        tools.beginTurn(request: "修车要带什么", previous: nil)
+        let invalid = try await call(tools, "show_inventory", ["title": "工具", "items": [
+            ["lot_id": ids[0].uuidString, "reason": "拆卸"], ["lot_id": UUID().uuidString, "reason": "不存在"]]])
+        XCTAssertNotNil(invalid["error"])
+        XCTAssertNil(tools.displayedCollection)
+        XCTAssertTrue(tools.relatedScopes.isEmpty)
+        _ = try await call(tools, "show_inventory", ["title": "工具", "items": [["lot_id": ids[0].uuidString, "reason": "拆卸"]]])
+        let before = tools.displayedCollection
+        let references = tools.relatedScopes
+        let rejected = try await call(tools, "update_shown_list", ["remove": [ids[0].uuidString], "add": [
+            ["lot_id": ids[1].uuidString, "reason": "润滑"], ["lot_id": UUID().uuidString, "reason": "不存在"]]])
+        XCTAssertNotNil(rejected["error"])
+        XCTAssertEqual(tools.displayedCollection, before)
+        XCTAssertNil(tools.shownListEdit)
+        XCTAssertEqual(tools.relatedScopes, references)
+        XCTAssertTrue(tools.pending.isEmpty)
+    }
+
+    func testRepeatedShowAndEditAlwaysTargetCurrentCardAndKeepItsIdentity() async throws {
+        let (chat, container) = try chat()
+        let ids = try stock(container, [("扳手", .tools, "柜子"), ("螺丝刀", .tools, "柜子"), ("润滑油", .household, "阳台")])
+        chat.draft = "有什么工具"
+        chat.send()
+        let old = try XCTUnwrap(chat.latestCollection)
+        let tools = try XCTUnwrap(chat.tools)
+        tools.beginTurn(request: "先改旧清单再重新整理", previous: nil)
+        _ = try await call(tools, "update_shown_list", ["remove": [ids[0].uuidString], "add": [] as [Any]])
+        let oldEdit = try XCTUnwrap(tools.shownListEdit)
+        XCTAssertEqual(oldEdit.id, old.id)
+        XCTAssertEqual(oldEdit.items.map(\.id), [ids[1]])
+        _ = try await call(tools, "show_inventory", ["title": "出门带这些", "items": [
+            ["lot_id": ids[0].uuidString, "reason": "拆卸"], ["lot_id": ids[2].uuidString, "reason": "润滑"]]])
+        let current = try XCTUnwrap(tools.displayedCollection)
+        XCTAssertNotEqual(current.id, old.id)
+        let result = try await call(tools, "update_shown_list", ["remove": [ids[0].uuidString], "add": [] as [Any]])
+        XCTAssertNil(result["error"], "must edit the new card, not the old edit missing this item")
+        XCTAssertEqual(tools.displayedCollection?.items.map(\.id), [ids[2]])
+        XCTAssertEqual(tools.displayedCollection?.id, current.id)
+        _ = try await call(tools, "show_inventory", ["title": "重新整理", "items": [["lot_id": ids[1].uuidString, "reason": "备用"]]])
+        XCTAssertEqual(tools.displayedCollection?.id, current.id)
+        XCTAssertEqual(tools.displayedCollection?.items.map(\.id), [ids[1]])
+        XCTAssertEqual(tools.shownListEdit, oldEdit)
+        XCTAssertTrue(tools.pending.isEmpty)
+        XCTAssertEqual(try ModelContext(container).fetch(FetchDescriptor<InventoryLot>()).map(\.quantity), [1, 1, 1])
     }
 
     func testRegroupProposesOneConfirmableChangePerThing() async throws {

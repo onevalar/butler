@@ -52,6 +52,8 @@ struct ContentView: View {
     /// Opens the conversation ready to type (tap on the orb) or with something already said.
     @State private var chatRequest: ChatRequest?
     @State private var showingChat = Self.launchesChat
+    private enum ChatDestination { case capture, lot(UUID) }
+    @State private var afterChatDismissal: ChatDestination?
     /// One conversation panel everywhere: three-quarter height after speaking (the top of the page stays in view), full height to type.
     @State private var chatDetent: PresentationDetent = .large
     @State private var orbDock = OrbDock()
@@ -109,14 +111,15 @@ struct ContentView: View {
         let candidates = briefCandidates(facts: facts, agenda: agenda)
         let briefKey = BriefCandidates.signature(candidates, now: agendaNow) + "|\(facts.count)|\(reminders.active.count)|\(calendarFeed.enabled)"
         let surface = homeSurface(facts: facts, agenda: agenda, candidates: candidates, briefKey: briefKey)
-        .sheet(isPresented: $showingChat) {
+        .sheet(isPresented: $showingChat, onDismiss: finishChatDismissal) {
             if let chat {
                 ButlerChatView(chat: chat, request: $chatRequest, onQuickCapture: {
+                    afterChatDismissal = .capture
                     showingChat = false
-                    Task { try? await Task.sleep(for: .milliseconds(450)); capturing = true }
                 }, onGeneralChat: { selectChat(.general) },
                 onSettingsChat: { selectChat(.settings) }, onOpenLot: { id in
-                    showingChat = false; path.append(.lot(id))
+                    afterChatDismissal = .lot(id)
+                    showingChat = false
                 }, hasOtherWork: sessions?.working ?? false,
                 diaryTurns: sessions?.allTurns, onNeedsRoom: { chatDetent = .large }, onClose: { showingChat = false })
                 .id(chat.scope.key)
@@ -429,8 +432,18 @@ struct ContentView: View {
 
     /// Typing, a photo or reading back: the panel opens full height (the keyboard needs the room).
     private func presentChat(_ detent: PresentationDetent = .large) {
+        afterChatDismissal = nil // Reopening overrides an older deferred destination.
         chatDetent = detent
         showingChat = true
+    }
+
+    private func finishChatDismissal() {
+        guard let destination = afterChatDismissal else { return }
+        afterChatDismissal = nil
+        switch destination {
+        case .capture: capturing = true
+        case .lot(let id): path.append(.lot(id))
+        }
     }
 
     private func taskAction(_ id: UUID, _ action: TaskQuickAction) {

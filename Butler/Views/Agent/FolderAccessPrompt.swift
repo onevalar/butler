@@ -21,7 +21,7 @@ struct FolderAccessPrompt: View {
                     }
                     .frame(minHeight: 44)
                     Button("取消选择") {
-                        chat.tools?.folderSelectionRequest = nil
+                        if let id = chat.tools?.folderSelectionRequest { chat.cancelFolderSelection(id) }
                         request = nil
                         notice = "已取消，未增加文件夹授权。"
                     }
@@ -40,12 +40,12 @@ struct FolderAccessPrompt: View {
                 try chat.acceptFolderSelection(url, request: request)
                 notice = "已保存文件夹授权，尚未查找或写入文件。"
             } catch {
-                if chat.tools?.folderSelectionRequest == request { chat.tools?.folderSelectionRequest = nil }
+                chat.cancelFolderSelection(request)
                 notice = "本次未增加授权：\(error.localizedDescription)"
             }
         }
         .onDisappear {
-            if let request, chat.tools?.folderSelectionRequest == request { chat.tools?.folderSelectionRequest = nil }
+            if let request { chat.cancelFolderSelection(request) }
             request = nil
         }
     }

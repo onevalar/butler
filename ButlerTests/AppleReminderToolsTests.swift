@@ -39,9 +39,9 @@ import XCTest
         _ = try await call(tools, "propose_apple_reminder_access")
         XCTAssertEqual(device.authorizationCalls, 0)
         XCTAssertTrue(tools.confirmAll().isEmpty)
-        let receipts = await tools.confirmIncludingSystemChanges()
+        let receipts = await tools.confirmResults()
         XCTAssertEqual(receipts.count, 1)
-        XCTAssertTrue(receipts[0].hasPrefix("✗"))
+        XCTAssertEqual(receipts[0].state, .needsVerification)
         XCTAssertEqual(device.authorizationCalls, 1)
         XCTAssertTrue(device.writes.isEmpty)
     }
@@ -56,8 +56,8 @@ import XCTest
         let data = try JSONEncoder().encode(tools.pending)
         tools.restorePending(try JSONDecoder().decode([PendingChange].self, from: data))
         XCTAssertTrue(tools.confirmAll().isEmpty)
-        let receipts = await tools.confirmIncludingSystemChanges()
-        XCTAssertTrue(receipts.first?.hasPrefix("✓") == true, "\(receipts)")
+        let receipts = await tools.confirmResults()
+        XCTAssertEqual(receipts.first?.state, .reported)
         let replay = await tools.confirmIncludingSystemChanges()
         XCTAssertTrue(replay.isEmpty)
         XCTAssertEqual(device.writes.count, 1)
@@ -103,8 +103,8 @@ import XCTest
         _ = try await call(tools, "propose_apple_reminder_edit", ["id": saved.id, "expected_revision": saved.revision,
             "field": "title", "text": "旧提案", "number": NSNull(), "flag": NSNull()])
         try device.edit(before: saved, patch: .title("手机里改的标题"))
-        let receipts = await tools.confirmIncludingSystemChanges()
-        XCTAssertTrue(receipts.first?.hasPrefix("✗") == true)
+        let receipts = await tools.confirmResults()
+        XCTAssertEqual(receipts.first?.state, .needsVerification)
         XCTAssertEqual(device.live[saved.id]?.fields.title, "手机里改的标题")
         XCTAssertEqual(device.writes.count, 4)
     }

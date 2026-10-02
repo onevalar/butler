@@ -22,13 +22,42 @@ import XCTest
         _ = await tools.execute(.init(id: "choose", name: "propose_folder_access", arguments: "{}"))
         XCTAssertNil(tools.folderSelectionRequest); XCTAssertTrue(try tools.folders.grants().isEmpty)
         XCTAssertThrowsError(try chat.acceptFolderSelection(root, request: UUID()))
-        _ = await tools.confirmIncludingSystemChanges()
+        chat.confirm()
+        let deadline = ContinuousClock.now + .seconds(2)
+        while chat.working && ContinuousClock.now < deadline { await Task.yield() }
+        XCTAssertFalse(chat.working)
+        XCTAssertEqual(chat.turns.last?.confirmationResults?.first?.state, .awaitingUser)
+        let owner = try XCTUnwrap(chat.turns.last?.id)
         let request = try XCTUnwrap(tools.folderSelectionRequest)
         try chat.acceptFolderSelection(root, request: request)
+        XCTAssertEqual(chat.turns.last?.id, owner)
+        XCTAssertEqual(chat.turns.last?.confirmationResults?.first?.proposalID, request)
+        XCTAssertEqual(chat.turns.last?.confirmationResults?.first?.state, .succeeded)
         XCTAssertEqual(try tools.folders.grants().count, 1)
         XCTAssertThrowsError(try chat.acceptFolderSelection(root, request: request))
         let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(tools.toolJSON.utf8)) as? [[String: Any]])
         XCTAssertEqual(json.filter { ($0["name"] as? String) == "propose_export_text_file" }.count, 1)
+    }
+
+    func testNewPickerInvalidatesOnlyPreviousSelectionAndStaleCancellationCannotCancelNewOne() async throws {
+        let (chat, _, _, _, _) = try fixture(), tools = try XCTUnwrap(chat.tools)
+        var requests: [UUID] = []
+        for _ in 0..<2 {
+            tools.add(.folder(.authorize), title: "选择文件夹", detail: nil)
+            chat.confirm()
+            let deadline = ContinuousClock.now + .seconds(2)
+            while chat.working && ContinuousClock.now < deadline { await Task.yield() }
+            XCTAssertFalse(chat.working)
+            requests.append(try XCTUnwrap(tools.folderSelectionRequest))
+        }
+        XCTAssertNotEqual(requests[0], requests[1])
+        XCTAssertEqual(chat.turns[0].confirmationResults?.first?.state, .notStarted)
+        XCTAssertEqual(chat.turns[1].confirmationResults?.first?.state, .awaitingUser)
+        chat.cancelFolderSelection(requests[0])
+        XCTAssertEqual(tools.folderSelectionRequest, requests[1])
+        chat.cancelFolderSelection(requests[1])
+        XCTAssertNil(tools.folderSelectionRequest)
+        XCTAssertEqual(chat.turns[1].confirmationResults?.first?.state, .notStarted)
     }
 
     func testExportPreviewDedupSoleConfirmationAndRevocation() async throws {

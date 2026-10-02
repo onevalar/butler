@@ -90,6 +90,74 @@ struct ChatSessionFiles {
         try JSONEncoder().encode(turns).write(to: transcript, options: .atomic)
     }
 
+    /// Complete, validated read results may outlive the model's final prose.
+    /// Publish only after saving, and never attach to whichever turn is newest.
+    func saveReadOnlyCollections(for requestID: UUID, displayed: ItemCollection?, edited: ItemCollection?,
+                                 history: [ChatTurn]) throws -> [ChatTurn] {
+        guard displayed != nil || edited != nil else { return history }
+        guard let request = history.firstIndex(where: { $0.id == requestID }),
+              history[request].replyState == .answering else { throw CancellationError() }
+        var next = history
+        if let displayed { next[request].collection = displayed }
+        if let edited {
+            guard let owner = next.firstIndex(where: { $0.collection?.id == edited.id }) else { throw CancellationError() }
+            next[owner].collection = edited
+        }
+        let keys = [displayed, edited].compactMap { $0 }.flatMap { $0.items.map { ChatScope.lot($0.id).key } }
+        let related = Set(next[request].relatedScopeKeys ?? []).union(keys)
+        next[request].relatedScopeKeys = related.isEmpty ? nil : related.sorted()
+        guard next != history else { return history }
+        try saveTurns(next)
+        return next
+    }
+
+    /// The transcript is the commit point. Until then the entire input remains
+    /// recoverable in the draft; a marked draft never authorizes a resend.
+    func saveSendingTurn(_ turn: ChatTurn, history: [ChatTurn], draft input: ChatDraft) throws -> ChatTurn {
+        try prepare()
+        var marked = input
+        marked.sendingTurnID = turn.id
+        try JSONEncoder().encode(marked).write(to: draft, options: .atomic)
+        var saved = turn
+        var created: [URL] = []
+        do {
+            if !input.photos.isEmpty {
+                try FileManager.default.createDirectory(at: photos, withIntermediateDirectories: true)
+                var names: [String] = []
+                for (index, data) in input.photos.enumerated() {
+                    let name = "\(turn.id.uuidString)-\(index).jpg"
+                    let file = photos.appendingPathComponent(name)
+                    // Never replace an existing attachment. These files are not referenced
+                    // by history until every write has succeeded.
+                    try data.write(to: file, options: .withoutOverwriting)
+                    created.append(file)
+                    names.append(name)
+                }
+                saved.photos = names
+            }
+            try saveTurns(history + [saved])
+            return saved
+        } catch {
+            // Only our completed writes, never a pre-existing attachment.
+            for file in created { try? FileManager.default.removeItem(at: file) }
+            throw error
+        }
+    }
+
+    func loadDraft() throws -> ChatDraft {
+        var saved = try JSONDecoder().decode(ChatDraft.self, from: Data(contentsOf: draft))
+        if let id = saved.sendingTurnID {
+            // A corrupt/unreadable transcript is not evidence that a send failed.
+            let turns = FileManager.default.fileExists(atPath: transcript.path)
+                ? try JSONDecoder().decode([ChatTurn].self, from: Data(contentsOf: transcript)) : []
+            if turns.contains(where: { $0.id == id }) {
+                return ChatDraft(receivedShareIDs: saved.receivedShareIDs)
+            }
+            saved.sendingTurnID = nil
+        }
+        return saved
+    }
+
     /// Sync must not turn an unreadable scope into a remote deletion.
     static func syncScopes(in root: URL) throws -> [ChatScope] {
         let directory = root.appendingPathComponent("chat-sessions", isDirectory: true)
@@ -121,4 +189,6 @@ struct ChatDraft: Codable, Equatable {
     var photos: [Data] = []
     /// Stored with the draft in one atomic write; survives sending and app relaunch.
     var receivedShareIDs: [UUID]?
+    /// Local recovery marker only; absent in legacy drafts and never synced.
+    var sendingTurnID: UUID?
 }

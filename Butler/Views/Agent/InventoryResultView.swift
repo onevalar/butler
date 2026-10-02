@@ -7,6 +7,9 @@ struct InventoryResultView: View {
     let collection: ItemCollection
     let onOpen: (UUID) -> Void
     var onRemove: ((UUID) -> Void)? = nil
+    var allowsRemoval = true
+    var notice = "只读清单 · 数量和状态以当前记录为准。"
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Query private var lots: [InventoryLot]
     @Query private var products: [CatalogProduct]
 
@@ -15,6 +18,10 @@ struct InventoryResultView: View {
             Text("\(collection.title) · \(collection.items.count) 样")
                 .font(.subheadline.weight(.semibold))
                 .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 4)
+            Text(notice)
+                .font(.footnote).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 16).padding(.bottom, 6)
             if collection.items.isEmpty {
                 Text("清单里已经没有东西了").font(.subheadline).foregroundStyle(.secondary)
                     .padding(.horizontal, 16).padding(.vertical, 10)
@@ -27,7 +34,7 @@ struct InventoryResultView: View {
         .padding(.bottom, 4)
         .glassCard(radius: 22)
         .padding(.trailing, 8)
-        .animation(.snappy, value: collection.items.map(\.id))
+        .animation(reduceMotion || !allowsRemoval ? nil : .snappy, value: collection.items.map(\.id))
     }
 
     private func row(_ entry: ItemCollection.Entry) -> some View {
@@ -38,7 +45,7 @@ struct InventoryResultView: View {
                 HStack(spacing: 12) {
                     ItemPhoto(profile: facts.map { $0.profile ?? ItemProfile(category: $0.category) }, size: 40)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(entry.name).font(.body.weight(.medium)).foregroundStyle(.primary)
+                        Text(facts?.name ?? entry.name).font(.body.weight(.medium)).foregroundStyle(.primary)
                         Text(subtitle(facts)).font(.subheadline).foregroundStyle(color(facts))
                             .lineLimit(1)
                         if !entry.reason.isEmpty {
@@ -62,7 +69,9 @@ struct InventoryResultView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("从清单去掉\(entry.name)")
+                .disabled(!allowsRemoval)
+                .accessibilityLabel("从清单去掉\(facts?.name ?? entry.name)")
+                .accessibilityHint(allowsRemoval ? "只从清单移除，不改变库存" : "请等回复结束后再调整清单")
             }
         }
         .padding(.leading, 14).padding(.trailing, onRemove == nil ? 14 : 4).padding(.vertical, 6)

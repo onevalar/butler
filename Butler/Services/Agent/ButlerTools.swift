@@ -49,6 +49,25 @@ struct PendingChange: Identifiable, Codable {
     let detail: String?
     /// What the judgment layer said. nil = not checked (no Jev key, or Jev unavailable).
     var check: JevCheck? = nil
+    /// The request that proposed this exact version; nil means an unlinked legacy proposal.
+    var requestTurnID: UUID?
+
+    var relatedScope: ChatScope? {
+        switch kind {
+        case .setQuantity(let lot, _), .close(let lot, _), .setDate(let lot, _, _), .move(let lot, _), .tracking(let lot, _),
+             .itemProfile(let lot, _), .undoInventory(let lot, _): .lot(lot.id)
+        case .reminder(let value), .cancelReminder(let value), .taskPlan(let value, _): .task(value.id)
+        case .taskAction(let id, _, _): .task(id)
+        case .taskDisplay(let change): .task(change.taskID)
+        case .settings, .weatherLocation: .settings
+        default: nil
+        }
+    }
+
+    func result(_ state: ConfirmationResult.State, _ message: String) -> ConfirmationResult {
+        ConfirmationResult(proposalID: id, requestTurnID: requestTurnID, title: title, state: state, message: message,
+                           relatedScopeKeys: relatedScope.map { [$0.key] })
+    }
 }
 
 enum JevCheck: Equatable, Codable {
@@ -120,7 +139,10 @@ final class ButlerTools {
         add(.reminder(reminder), title: "提醒：\(reminder.text)", detail: reminder.whenLabel)
     }
 
-    func beginTurn(request: String, previous: String?, hasPhotos: Bool = false) {
+    private(set) var requestTurnID: UUID?
+
+    func beginTurn(request: String, previous: String?, hasPhotos: Bool = false, turnID: UUID? = nil) {
+        requestTurnID = turnID
         self.hasPhotos = hasPhotos
         self.request = hasPhotos ? request + "（用户附了照片）" : request
         self.previous = previous
@@ -131,6 +153,8 @@ final class ButlerTools {
     }
 
     func removePending(_ id: UUID) { pending.removeAll { $0.id == id } }
+
+    func endTurn() { requestTurnID = nil }
 
     // MARK: - Tool definitions
 
@@ -427,9 +451,13 @@ final class ButlerTools {
 
     /// Applies every pending change in order. Returns one line per change for the chat and the model.
     func confirmAll(ids: Set<UUID>? = nil) -> [String] {
+        confirmLocalResults(ids: ids).map(\.message)
+    }
+
+    func confirmLocalResults(ids: Set<UUID>? = nil) -> [ConfirmationResult] {
         let batch = pending.filter { ids == nil || ids!.contains($0.id) }
         guard batch.count <= 1 || !batch.contains(where: \.requiresSoleConfirmation) else {
-            return ["✗ 高风险家庭操作须单独确认；本批没有执行，提案均已保留。"]
+            return batch.map { $0.result(.notStarted, "✗ 高风险家庭操作须单独确认；本批没有执行，提案均已保留。") }
         }
         let selected = pending.filter {
             if $0.requiresAsyncConfirmation { return false }
@@ -444,7 +472,7 @@ final class ButlerTools {
             }
         }
         let actions = InventoryActions(modelContainer: container)
-        var results: [String] = []
+        var results: [ConfirmationResult] = []
         let adds = selected.compactMap { change -> (PendingChange, InventoryActions.NewItem)? in
             if case .add(let item) = change.kind { return (change, item) }
             return nil
@@ -453,9 +481,13 @@ final class ButlerTools {
             do {
                 let addedIDs = try actions.add(adds.map(\.1), sourceText: "对话中确认")
                 relatedScopes.formUnion(addedIDs.map { .lot($0) })
-                results += adds.map { "✓ \($0.0.title)" }
+                results += zip(adds, addedIDs).map { entry, id in
+                    var result = entry.0.result(.succeeded, "✓ \(entry.0.title)")
+                    result.relatedScopeKeys = [ChatScope.lot(id).key]
+                    return result
+                }
             } catch {
-                results += adds.map { "✗ \($0.0.title)：\(error.localizedDescription)" }
+                results += adds.map { $0.0.result(.failed, "✗ \($0.0.title)：\(error.localizedDescription)") }
             }
         }
         for change in selected {
@@ -503,9 +535,9 @@ final class ButlerTools {
                     try ButlerSettingsService.apply(changes, defaults: settingsDefaults, jev: jev as? JevClient)
                 case .alarm, .appleReminder, .calendar, .taskDisplay, .health, .home, .contacts, .travel, .sync, .webPage, .folder: continue
                 }
-                results.append("✓ \(change.title)")
+                results.append(change.result(.succeeded, "✓ \(change.title)"))
             } catch {
-                results.append("✗ \(change.title)：\(error.localizedDescription)")
+                results.append(change.result(.failed, "✗ \(change.title)：\(error.localizedDescription)"))
             }
         }
         pending.removeAll { selectedIDs.contains($0.id) }
@@ -514,25 +546,63 @@ final class ButlerTools {
 
     /// Shared confirmation boundary for asynchronous system permissions and writes.
     func confirmIncludingSystemChanges(ids: Set<UUID>? = nil, progress: (([String]) throws -> Void)? = nil) async -> [String] {
+        await confirmResults(ids: ids, progress: { values in
+            try progress?(values.filter { $0.state != .notStarted && $0.state != .running }.map(\.message))
+        }).map(\.message)
+    }
+
+    /// Each snapshot includes all selected identities in their original order.
+    /// Persist running BEFORE calling a system: interrupted writes are then unknown, not failed.
+    func confirmResults(ids: Set<UUID>? = nil, progress: (([ConfirmationResult]) throws -> Void)? = nil) async -> [ConfirmationResult] {
         let selected = pending.filter { ids == nil || ids!.contains($0.id) }
         guard selected.count <= 1 || !selected.contains(where: \.requiresSoleConfirmation) else {
-            return ["✗ 此操作须单独确认；本批没有执行，提案均已保留。"]
+            return selected.map { $0.result(.notStarted, "✗ 此操作须单独确认；本批没有执行，提案均已保留。") }
         }
         guard !Task.isCancelled else {
             selected.forEach { removePending($0.id) }
-            return ["✗ 已停止执行，没有开始本批修改；原确认已消费，重新执行须重新提议。"]
+            return selected.map { $0.result(.notStarted, "✗ 已停止执行，没有开始本批修改；原确认已消费，重新执行须重新提议。") }
         }
         let systemChanges = selected.filter(\.requiresAsyncConfirmation)
         let localIDs = Set(selected.map(\.id)).subtracting(systemChanges.map(\.id))
-        var results = confirmAll(ids: localIDs)
+        var results = selected.map { $0.result(.notStarted, "\($0.title)：未开始执行。") }
+        for index in selected.indices where localIDs.contains(selected[index].id) {
+            results[index] = selected[index].result(.running, "\(selected[index].title)：正在执行。")
+        }
+        do { try progress?(results) }
+        catch {
+            selected.forEach { removePending($0.id) }
+            return selected.map { $0.result(.notStarted, "✗ 执行进度无法保存，未开始本批修改；请核查记录后重新提议。") }
+        }
+        for result in confirmLocalResults(ids: localIDs) {
+            if let index = results.firstIndex(where: { $0.id == result.id }) { results[index] = result }
+        }
         // Consume before any await so another confirmation cannot start the same proposal.
         systemChanges.forEach { removePending($0.id) }
         do { try progress?(results) }
-        catch { return results + ["✗ 执行进度无法保存，未开始剩余系统操作；请核查之前的结果，不会自动重试。"] }
+        catch {
+            for index in results.indices where results[index].state == .notStarted {
+                results[index].message = "✗ 执行进度无法保存，未开始剩余系统操作；请核查之前的结果，不会自动重试。"
+            }
+            return results
+        }
         for proposal in systemChanges {
+            guard let index = results.firstIndex(where: { $0.id == proposal.id }) else { continue }
+            if Task.isCancelled {
+                results[index] = proposal.result(.notStarted, "\(proposal.title)：已停止，尚未开始此项。")
+                continue
+            }
+            results[index] = proposal.result(.running, "\(proposal.title)：正在执行。")
+            do { try progress?(results) }
+            catch {
+                results[index] = proposal.result(.notStarted, "✗ 执行进度无法保存，未开始此项或后续系统操作。")
+                break
+            }
             do {
                 try Task.checkCancellation()
                 let receipt: String
+                // Older device adapters return prose, sometimes explicitly unverified.
+                // A normal return alone is not a universal proof of external completion.
+                var state: ConfirmationResult.State = .reported
                 switch proposal.kind {
                 case .alarm(let change):
                     try await alarms.apply(change, operationID: proposal.id)
@@ -558,7 +628,8 @@ final class ButlerTools {
                 case .folder(let change):
                     switch change {
                     case .authorize:
-                        folderSelectionRequest = UUID()
+                        folderSelectionRequest = proposal.id
+                        state = .awaitingUser
                         receipt = "请点“选择文件夹”完成系统授权；当前尚未获得目录访问权。"
                     case .revoke(let id):
                         try folders.revoke(id)
@@ -613,15 +684,18 @@ final class ButlerTools {
                     }
                 default: continue
                 }
-                results.append("✓ \(proposal.title)；\(receipt)")
+                results[index] = proposal.result(state, "\(proposal.title)；\(receipt)")
             } catch is CancellationError {
-                results.append("✗ \(proposal.title)：已停止执行；之前已完成的操作不会自动撤销。")
+                results[index] = proposal.result(.needsVerification, "\(proposal.title)：执行中停止，可能已生效。请先核查；没有自动重试或撤销。")
             } catch {
-                results.append("✗ \(proposal.title)：\(error.localizedDescription)")
+                let state: ConfirmationResult.State
+                if case .webPage = proposal.kind { state = .failed } else { state = .needsVerification }
+                results[index] = proposal.result(state, "\(proposal.title)：\(error.localizedDescription)"
+                    + (state == .needsVerification ? "\n结果待核实，不自动重试。" : ""))
             }
             do { try progress?(results) }
             catch {
-                results.append("✗ 执行进度无法保存，停止剩余操作；请核查之前的结果，不会自动重试。")
+                results[index].message += "\n执行进度无法保存，停止剩余操作；请核查之前的结果，不会自动重试。"
                 break
             }
         }
@@ -640,18 +714,10 @@ final class ButlerTools {
     private var insistedConcern: String?
 
     func add(_ kind: PendingChange.Kind, title: String, detail: String?, check: JevCheck? = nil) {
-        switch kind {
-        case .setQuantity(let lot, _), .close(let lot, _), .setDate(let lot, _, _), .move(let lot, _), .tracking(let lot, _):
-            relatedScopes.insert(.lot(lot.id))
-        case .itemProfile(let lot, _), .undoInventory(let lot, _): relatedScopes.insert(.lot(lot.id))
-        case .reminder(let value), .cancelReminder(let value), .taskPlan(let value, _): relatedScopes.insert(.task(value.id))
-        case .taskAction(let id, _, _): relatedScopes.insert(.task(id))
-        case .taskDisplay(let change): relatedScopes.insert(.task(change.taskID))
-        case .settings, .weatherLocation: relatedScopes.insert(.settings)
-        default: break
-        }
-        pending.append(PendingChange(kind: kind, title: title, detail: detail,
-                                     check: insistedConcern.map { .concern($0) } ?? check))
+        let change = PendingChange(kind: kind, title: title, detail: detail,
+            check: insistedConcern.map { .concern($0) } ?? check, requestTurnID: requestTurnID)
+        if let scope = change.relatedScope { relatedScopes.insert(scope) }
+        pending.append(change)
     }
 
     private func newItem(name: String, quantity: Int, unit: String, storage: String?,
