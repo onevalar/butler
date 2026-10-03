@@ -12,8 +12,10 @@ final class ChatMarkdownRenderingTests: XCTestCase {
         XCTAssertEqual(bold.pngData(), try render("__牛奶🥛__").pngData())
         XCTAssertNotEqual(bold.pngData(), try render("牛奶🥛").pngData())
         XCTAssertNotEqual(bold.pngData(), try render(#"\*\*牛奶🥛\*\*"#).pngData())
-        XCTAssertEqual(try render("*明天检查*").pngData(), try render("_明天检查_").pngData())
-        XCTAssertNotEqual(try render("*明天检查*").pngData(), try render("明天检查").pngData())
+        // System CJK fallback glyphs need not have an italic face. Include Latin
+        // glyphs to verify emphasis visually while retaining Chinese in the fixture.
+        XCTAssertEqual(try render("*明天检查 tomorrow*").pngData(), try render("_明天检查 tomorrow_").pngData())
+        XCTAssertNotEqual(try render("*明天检查 tomorrow*").pngData(), try render("明天检查 tomorrow").pngData())
     }
 
     func testBlockHeadingsAndListsRenderInsteadOfRawMarkers() throws {

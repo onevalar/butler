@@ -76,8 +76,8 @@ private final class ProgressOwner {
 }
 
 private final class ChangeCounter: @unchecked Sendable {
-    private let lock = NSLock()
-    private var count = 0
-    var value: Int { lock.withLock { count } }
-    func increment() { lock.withLock { count += 1 } }
+    nonisolated private let lock = NSLock()
+    nonisolated(unsafe) private var count = 0
+    nonisolated var value: Int { lock.withLock { count } }
+    nonisolated func increment() { lock.withLock { count += 1 } }
 }

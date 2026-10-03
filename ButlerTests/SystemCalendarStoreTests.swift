@@ -3,6 +3,8 @@ import XCTest
 @testable import Butler
 
 @MainActor final class FakeCalendarDevice: SystemCalendarDevice {
+    nonisolated deinit {}
+
     var authorized = true
     var authorizationCalls = 0
     var reads = 0

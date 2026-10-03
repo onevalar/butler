@@ -160,3 +160,15 @@ xcodebuild -project Butler.xcodeproj -scheme Butler -configuration Release \
 - SubscriptionModelTests的动态instructions/tools改由MainActor测试对象持有，稳定捕获引用，保留后续请求读取更新工具的断言；消除toolContext mutated after capture警告。
 - Build 33日志确认AppIntents metadata skipped来自ButlerShareExtension，该扩展没有AppIntent，保留提示；模拟器多目的地提示属于环境，本机使用UDID消除歧义。
 - 首次定向测试关闭签名，日志3项通过，但Keychain网络测试受签名环境阻塞。恢复正常签名后，本机Xcode26.3(17C519)、iOS26.2 iPhone17Pro模拟器、英文美国区域全量579项、1项既有跳过、0失败；动态上下文与全部日志测试通过，编译仅剩分享扩展元数据工具提示。结果/private/tmp/butler-build33-full.xcresult，日志/private/tmp/butler-build33-full.log。未执行真机交互验收，未启动云构建，本机结果不代替下次云端分发结果。
+
+### 2026-10-04 Build 35 发布阻塞修复
+
+- 用户提供 build-for-testing 与 archive 日志，两阶段均被 ChatMarkdownText.swift:24 的同一编译错误阻塞：Theme.basic 被解析为 Butler 自有 Theme。显式使用 MarkdownUI.Theme.basic，保留 MarkdownUI 2.4.1 锁定版本及现有排版。
+- 图片 provider 的非隔离方法不直接构建 MainActor Link；返回只携带URL的视图值，由 body 创建链接，消除 swift concurrency 警告。图片不自动加载、外链scheme限制保持。
+- 首次本机完整编译额外暴露观察通知测试计数器的8处线程隔离诊断：仅将已受NSLock保护的测试计数器明确为非隔离，所有可变读写仍经过同一锁。
+- 首次全量回归捕获 ChatSyncData 和 FakeCalendarDevice 的释放崩溃，崩溃栈均经 swift_task_deinitOnExecutorImpl / TaskLocal::StopLookupScope；沿用工程已有 nonisolated deinit 处理，不删同步功能或跳过测试。保留同步导入、回执与部分回复测试。
+- 中文系统字体不一定有斜体字形，原斜体图片差异断言在Apple环境失败；改为包含中文与Latin的混合样本，继续校验等价Markdown语法与普通文本的实际图像差异。没有关闭断言。
+- 通讯录拒绝授权测试仍按旧“✗”字符判断，新回执使用结构化状态；改为检查 needsVerification 的保守非成功状态、明确权限拒绝原因及授权尝试一次，原笔记继续可写和联系人读写次数断言保留。未修改生产系统错误状态或自动重试行为。
+- 最终本机 Xcode26.3(17C519)、iOS26.2 iPhone17Pro模拟器、英文美国区域全量661项、1项既有跳过、0失败。测试日志 /private/tmp/butler-build35-verified.log，结果 /private/tmp/butler-build35-verified.xcresult。
+- 云端Xcode26.3(17C529)仍须在新提交构建验证。原分享扩展无AppIntents的元数据工具提示保留；不改变工作流、测试门槛或签名能力，不因每次提交自动构建。
+- 最终 generic/platform=iOS 的 Release 编译通过（CODE_SIGNING_ALLOWED=NO）；日志 /private/tmp/butler-build35-release.log，仅剩分享扩展无AppIntents元数据提示。此检查覆盖真机Release编译，不代替云端签名导出或TestFlight分发。

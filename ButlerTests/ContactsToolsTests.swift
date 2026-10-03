@@ -34,8 +34,12 @@ import XCTest
         let disk = try JSONDecoder().decode([PendingChange].self, from: Data(contentsOf: dir.appendingPathComponent("pending-changes.json")))
         XCTAssertTrue(disk.isEmpty)
         device.grant = .denied
-        let receipt = await tools.confirmIncludingSystemChanges()
-        XCTAssertTrue(receipt.joined().contains("✗"))
+        let receipt = await tools.confirmResults()
+        XCTAssertEqual(receipt.count, 1)
+        // System adapter errors remain conservative: no success and no automatic retry.
+        XCTAssertEqual(receipt.first?.state, .needsVerification)
+        XCTAssertTrue(receipt.first?.message.contains("未取得通讯录权限") == true)
+        XCTAssertEqual(device.grants, 1)
         let note = LocalMemory(id: UUID(), title: "普通笔记", text: "不依赖通讯录", quantity: nil, revision: 1)
         tools.add(.note(note), title: note.title, detail: nil)
         XCTAssertTrue(tools.confirmAll().joined().contains("✓"))

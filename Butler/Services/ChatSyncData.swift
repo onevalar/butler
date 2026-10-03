@@ -36,6 +36,8 @@ struct SyncedChatTurn: Codable {
 /// A separate opt-in stream: a disabled stream is never snapshotted, fetched or imported.
 /// Import only while all conversations are idle; do not overwrite an in-progress answer.
 @MainActor final class ChatSyncData: SyncLocalData {
+    nonisolated deinit {}
+
     let root: URL
     private let isWorking: () -> Bool
     private let didImport: (ChatScope) -> Void

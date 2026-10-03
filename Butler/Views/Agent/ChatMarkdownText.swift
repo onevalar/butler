@@ -21,7 +21,7 @@ struct ChatMarkdownText: View {
             .textSelection(.enabled)
     }
 
-    private static let theme = Theme.basic
+    private static let theme = MarkdownUI.Theme.basic
         .heading1 { heading($0, size: 1.25) }
         .heading2 { heading($0, size: 1.18) }
         .heading3 { heading($0, size: 1.10) }
@@ -63,6 +63,18 @@ struct ChatMarkdownText: View {
 // Block images remain available through an explicit tap; inline images keep their label.
 private struct ReplyImageProvider: ImageProvider {
     nonisolated func makeImage(url: URL?) -> some View {
+        ReplyImageLink(url: url)
+    }
+}
+
+private struct ReplyImageLink: View {
+    let url: URL?
+
+    nonisolated init(url: URL?) {
+        self.url = url
+    }
+
+    var body: some View {
         if let url {
             Link(destination: url) { Label("查看图片", systemImage: "photo") }
         } else {
