@@ -5,6 +5,43 @@ import XCTest
 
 @MainActor
 final class ChatSessionsTests: XCTestCase {
+    func testHomeAndGeneralCanFindCorrectionsAcrossPagesWithoutReadingDraftsOrExecutingHistory() throws {
+        let (_, directory, _, reminders, sessions) = try fixture()
+        let old = ChatTurn(question: "这周出差，周日回来", answer: "知道了", date: Date(timeIntervalSince1970: 100))
+        let correction = ChatTurn(question: "不是周日，是周六回来", answer: "按周六理解", date: Date(timeIntervalSince1970: 200))
+        var unfinished = ChatTurn(question: "尚未完成的请求", answer: "不能使用的片段")
+        unfinished.replyState = .answering
+        try ChatSessionFiles(scope: .general, root: directory).saveTurns([old])
+        try ChatSessionFiles(scope: .settings, root: directory).saveTurns([correction, unfinished])
+        let brief = ButlerBrief(greeting: "", text: "明早出差，今晚准备行李。", basis: "", target: nil,
+                                actions: [], source: .model, rationale: "已记录的出行安排")
+        let home = sessions.chat(for: .brief(BriefConversation(brief: brief, day: "2026-10-03")))
+        home.draft = "还未发送的个人安排"
+        let tools = try XCTUnwrap(home.tools)
+        let history = try XCTUnwrap(tools.conversation?())
+        XCTAssertEqual(history.turns.map(\.id), [old.id, correction.id])
+        XCTAssertEqual(history.sources[correction.id], .settings)
+        XCTAssertEqual(sessions.chat(for: .general).tools?.conversation?().turns.map(\.id), [old.id, correction.id])
+        XCTAssertTrue(tools.pending.isEmpty)
+        XCTAssertTrue(try reminders.taskSnapshot().isEmpty)
+        XCTAssertTrue(home.scopeContext.contains("已记录的出行安排"))
+        var sameCard = brief; sameCard.rationale = "另一段解释"
+        XCTAssertTrue(home === sessions.chat(for: .brief(BriefConversation(brief: sameCard, day: "2026-10-03"))))
+        XCTAssertTrue(sessions.chat(for: .lot(UUID())).tools?.conversation?().turns.isEmpty == true,
+                      "Object pages retain their scoped history")
+    }
+
+    func testUnreadableSharedHistoryIsNotReportedAsAnEmptyHistory() throws {
+        let (_, directory, _, _, sessions) = try fixture()
+        let files = ChatSessionFiles(scope: .settings, root: directory)
+        try files.prepare()
+        try Data("broken".utf8).write(to: files.transcript)
+        let archive = sessions.householdArchive()
+        XCTAssertNotNil(archive.overview()["error"])
+        XCTAssertNotNil(archive.search("出差", from: nil, to: nil, limit: 10)["error"])
+        XCTAssertNotNil(archive.read(fromTurn: nil, toTurn: nil, from: nil, to: nil, cursor: nil)["error"])
+    }
+
     func testSyncedHistoryReloadKeepsLocalDraftPhotosAndPendingWithoutExecutingHistory() async throws {
         let (_, directory, _, reminders, sessions) = try fixture()
         let chat = sessions.chat(for: .general), tools = try XCTUnwrap(chat.tools)
@@ -503,7 +540,9 @@ final class ChatSessionsTests: XCTestCase {
         XCTAssertEqual(source?["source_scope"] as? String, ChatScope.general.key)
         XCTAssertEqual(source?["user"] as? String, related.question)
         XCTAssertFalse(archive.turns.contains { $0.id == unrelated.id })
-        XCTAssertEqual(sessions.chat(for: .general).tools?.conversation?().turns, [related, unrelated])
+        let generalHistory = try XCTUnwrap(sessions.chat(for: .general).tools?.conversation?())
+        XCTAssertEqual(Set(generalHistory.turns.map(\.id)), [related.id, unrelated.id, own.id])
+        XCTAssertEqual(generalHistory.turns.count, 3, "General history includes all pages without duplicating references")
     }
 
     func testConfirmingNewInventoryLinksRealLotIDsToOriginalGeneralTurn() async throws {

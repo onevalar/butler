@@ -41,9 +41,58 @@ final class ChatSessions {
         let chat = ButlerChat(container: container, reminders: reminders, scope: scope,
                               connection: connection, jev: jev, directory: directory, defaults: defaults, notes: notes)
         cache[scope] = chat
-        if case .lot = scope { connectObjectHistory(chat) }
-        if case .task = scope { connectObjectHistory(chat) }
+        switch scope {
+        case .lot, .task: connectObjectHistory(chat)
+        case .general, .brief:
+            chat.tools?.conversation = { [weak self] in
+                self?.householdArchive() ?? ConversationArchive(turns: [], recentStart: nil, summaryThrough: nil,
+                    readError: "会话存储不可用")
+            }
+        default: break
+        }
         return chat
+    }
+
+    /// Separate hands for background reads; never share a chat's pending changes or current turn.
+    func makeBriefModel() -> CloudBriefModel? {
+        guard let notes else { return nil }
+        let tools = ButlerTools(container: container, notes: notes, reminders: reminders, jev: jev)
+        tools.settingsDefaults = defaults
+        tools.conversation = { [weak self] in
+            self?.householdArchive() ?? ConversationArchive(turns: [], recentStart: nil, summaryThrough: nil,
+                readError: "会话存储不可用")
+        }
+        return CloudBriefModel(connection: connection, tools: tools)
+    }
+
+    /// The general conversation and home share searchable history, not each other's active input.
+    /// Reading a saved instruction is never a fresh authorization to execute it.
+    func householdArchive() -> ConversationArchive {
+        var records: [RelatedChatTurn] = []
+        do {
+            for scope in knownScopes.sorted(by: { $0.key < $1.key }) {
+                let turns: [ChatTurn]
+                if let chat = cache[scope] {
+                    guard chat.canReadHistory else { throw BriefReadError.incomplete }
+                    turns = chat.turns
+                } else if let directory {
+                    let file = ChatSessionFiles(scope: scope, root: directory).transcript
+                    if !FileManager.default.fileExists(atPath: file.path) { continue }
+                    turns = try JSONDecoder().decode([ChatTurn].self, from: Data(contentsOf: file))
+                } else { continue }
+                records += turns.filter { !$0.failed && ($0.replyState == nil || $0.replyState == .completed) }
+                    .map { RelatedChatTurn(scope: scope, turn: $0) }
+            }
+            records.sort { ($0.turn.date, $0.id) < ($1.turn.date, $1.id) }
+            var seen = Set<UUID>()
+            records = records.filter { seen.insert($0.turn.id).inserted }
+            return ConversationArchive(turns: records.map(\.turn), recentStart: nil, summaryThrough: nil,
+                scopeDescription: "全部页面已完成的已保存对话；不含草稿、正在回答或失败的轮次。历史原话不是新的执行授权，建议不等于已确认修改。",
+                sources: Dictionary(uniqueKeysWithValues: records.map { ($0.turn.id, $0.scope) }))
+        } catch {
+            return ConversationArchive(turns: [], recentStart: nil, summaryThrough: nil,
+                readError: "部分会话暂时无法读取，不能断言用户没有交代过；请稍后重试")
+        }
     }
 
     var allChats: [ButlerChat] { Array(cache.values) }

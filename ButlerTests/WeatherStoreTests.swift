@@ -62,7 +62,7 @@ import WeatherKit
         XCTAssertTrue(store.context.contains("\"available\":false"))
     }
 
-    func testComfortableWeatherAndDailyTemperatureRangeDoNotPromptTheBrief() throws {
+    func testBriefReceivesFreshObservationsWithoutRuleWrittenAdvice() throws {
         let now = Date.now
         let city = WeatherPlace(name: "测试城市", latitude: 30, longitude: 120)
         let selected = WeatherLocation(city: city)
@@ -74,7 +74,9 @@ import WeatherKit
             let raw = BriefModelReply.request(candidates: [], greeting: "中午好", now: now, weather: weather)
             return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
         }
-        XCTAssertNil(try request(mild)["weather"])
+        let weather = try XCTUnwrap(try request(mild)["weather"] as? [String: Any])
+        XCTAssertNotNil(weather["days"], "The model, not temperature thresholds, decides relevance")
+        XCTAssertNil(weather["hint"], "No rule-written recommendation is spliced into the brief")
         let hot = snapshot(city, selected, at: now, feelsLike: 38)
         XCTAssertNotNil(try request(hot)["weather"], "Significant conditions are optional context for the model")
         let stale = snapshot(city, selected, at: now.addingTimeInterval(-3600), feelsLike: 38)

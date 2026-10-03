@@ -47,6 +47,18 @@ final class ButlerBriefTests: XCTestCase {
         XCTAssertEqual(snoozed.map(\.kind), [.dueTask, .expiringSoon, .lowStock])
     }
 
+    func testQuickActionValidationDoesNotLoseTasksBehindFiveExpiredItems() {
+        let now = at(9)
+        let food = (0..<8).map { lot("食物\($0)", package: day(-2, from: now), now: now) }
+        let trip = TimedReminder(text: "出发去机场", fireDate: at(8))
+        let agenda = HomeAgenda.build(lots: food, reminders: [trip], events: [], now: now)
+        let candidates = BriefCandidates.make(facts: food, agenda: agenda, now: now)
+        XCTAssertEqual(candidates.count, 9)
+        XCTAssertTrue(candidates.contains { $0.target == .task(trip.id) })
+        let reply = #"{"target":"\#(BriefTarget.task(trip.id).key)","text":"今天要出行，先确认出发安排。","actions":[]}"#
+        XCTAssertEqual(BriefModelReply.parse(reply, candidates: candidates)?.target, .task(trip.id))
+    }
+
     func testTheCardSumsUpTodaysTasksWithoutDetailsAndNeverTakesThemOffTheList() throws {
         let now = at(5)
         let yogurt = lot("红枣酸奶", package: day(-3, from: now), now: now)
@@ -143,7 +155,7 @@ final class ButlerBriefTests: XCTestCase {
 
     func testBadPartsOfAReplyAreDroppedAndBadWholesAreRefused() throws {
         let (lot, task) = candidates()
-        func parse(_ json: String) -> (text: String, target: BriefTarget?, actions: [BriefAction])? {
+        func parse(_ json: String) -> BriefModelReply.Parsed? {
             BriefModelReply.parse(json, candidates: [lot, task])
         }
         // A target that isn't a candidate is refused; no target at all is an overview without buttons.
@@ -183,7 +195,7 @@ final class ButlerBriefTests: XCTestCase {
         let request = BriefModelReply.request(candidates: [lot], greeting: "早上好", now: at(9))
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(request.utf8)) as? [String: Any])
         XCTAssertEqual(json["greeting"] as? String, "早上好")
-        let items = try XCTUnwrap(json["items"] as? [[String: Any]])
+        let items = try XCTUnwrap(json["action_targets"] as? [[String: Any]])
         XCTAssertEqual(items.first?["key"] as? String, lot.target.key)
         XCTAssertEqual(items.first?["kind"] as? String, "expiring_soon")
         for effect in ["close_depleted", "close_discarded", "close_gifted", "adjust_quantity", "snooze", "complete_task", "snooze_task", "open_detail"] {
@@ -310,7 +322,7 @@ final class ButlerBriefTests: XCTestCase {
         var reply: () async throws -> String
         private(set) var requests: [String] = []
         init(_ reply: @escaping () async throws -> String) { self.reply = reply }
-        func answer(_ request: String) async throws -> String {
+        func answer(_ request: String, context: BriefContext) async throws -> String {
             requests.append(request)
             return try await reply()
         }
@@ -369,6 +381,7 @@ final class ButlerBriefTests: XCTestCase {
         service.beginInteraction()
         await service.settle()
         model.reply = { self.reply(for: second, text: "鸡蛋也该处理了。") }
+        service.endInteraction()
         service.update(candidates: [second], lotCount: 1, taskCount: 0, usesCalendar: false, now: at(19))
         await service.settle()
         XCTAssertEqual(service.brief.target, second.target)
@@ -404,7 +417,7 @@ final class ButlerBriefTests: XCTestCase {
         let reopened = BriefService(defaults: store)
         let other = FakeModel { XCTFail("must not be asked again"); return "" }
         reopened.attach(model: other)
-        reopened.update(candidates: [item], lotCount: 4, taskCount: 0, usesCalendar: false, now: at(19, 30))
+        reopened.update(candidates: [item], lotCount: 4, taskCount: 0, usesCalendar: false, now: at(19, 29))
         XCTAssertEqual(reopened.brief.source, .model)
         XCTAssertEqual(reopened.brief.text, "今晚把红枣酸奶喝了吧，它后天到期。")
         XCTAssertFalse(reopened.isThinking)

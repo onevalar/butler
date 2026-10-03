@@ -9,20 +9,32 @@ struct BriefConversation: Hashable, Codable {
     let text: String
     let actionTarget: BriefTarget?
     let actions: [BriefAction]
+    let rationale: String?
 
     init(brief: ButlerBrief, day: String) {
         self.day = day
         text = brief.text
         actionTarget = brief.target
         actions = brief.actions
+        rationale = brief.rationale
     }
+
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.key == rhs.key }
+    func hash(into hasher: inout Hasher) { hasher.combine(key) }
 
     var key: String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         // All stored fields are plain Codable values. Hashing prevents reminder text from
         // entering a path, and stays stable across launches (unlike Swift's randomized hash).
-        let data = try! encoder.encode(self)
+        // A new explanation must not split the conversation for the same visible card.
+        struct Identity: Encodable {
+            let day: String
+            let text: String
+            let actionTarget: BriefTarget?
+            let actions: [BriefAction]
+        }
+        let data = try! encoder.encode(Identity(day: day, text: text, actionTarget: actionTarget, actions: actions))
         return "brief-" + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 }

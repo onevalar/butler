@@ -10,6 +10,7 @@ struct ConversationArchive {
     let summaryThrough: Int?
     var scopeDescription: String? = nil
     var sources: [UUID: ChatScope] = [:]
+    var readError: String? = nil
 
     /// Size of one page of original conversation, in characters.
     static let pageBudget = 12_000
@@ -18,6 +19,7 @@ struct ConversationArchive {
     private func number(_ index: Int) -> Int { index + 1 }
 
     func overview() -> [String: Any] {
+        if let readError { return ["error": readError, "complete": false] }
         let calendar = Calendar.current
         let days = Dictionary(grouping: turns.indices) { calendar.startOfDay(for: turns[$0].date) }
             .sorted { $0.key < $1.key }
@@ -34,6 +36,7 @@ struct ConversationArchive {
     }
 
     func search(_ query: String, from: Date?, to: Date?, limit: Int) -> [String: Any] {
+        if let readError { return ["error": readError, "complete": false] }
         let words = query.split(whereSeparator: { " ,，、;；".contains($0) }).map(String.init)
         let hits = turns.indices.reversed().filter { index in
             let turn = turns[index]
@@ -57,6 +60,7 @@ struct ConversationArchive {
 
     /// Original turns in order, one page at a time. `cursor` is the turn number to continue from.
     func read(fromTurn: Int?, toTurn: Int?, from: Date?, to: Date?, cursor: Int?) -> [String: Any] {
+        if let readError { return ["error": readError, "complete": false] }
         let lower = max(0, (cursor ?? fromTurn ?? 1) - 1)
         let upper = min(turns.count - 1, (toTurn ?? turns.count) - 1)
         var page: [[String: Any]] = []

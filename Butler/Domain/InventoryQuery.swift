@@ -65,7 +65,7 @@ enum LocalInventoryQuery {
             let lots = facts.filter { isFridge($0.storageLocation) }.sorted { InventoryGroups.urgencyOrder($0, $1) }
             return Answer(text: lots.isEmpty ? "冰箱里还没记东西。" : "冰箱里有 \(lots.count) 样：", title: "冰箱里", lots: lots)
         }
-        let places = Set(facts.compactMap(\.storageLocation)).filter { !$0.isEmpty && ($0 == rest || ($0.count >= 2 && rest.contains($0)) || (rest.count >= 2 && $0.contains(rest))) }
+        let places = Set(facts.compactMap(\.storageLocation)).filter { !$0.isEmpty && ($0 == rest || (rest.count >= 2 && $0.contains(rest))) }
         if !places.isEmpty {
             let lots = facts.filter { $0.storageLocation.map(places.contains) == true }.sorted { InventoryGroups.urgencyOrder($0, $1) }
             let name = places.count == 1 ? places.first! : rest
@@ -73,8 +73,7 @@ enum LocalInventoryQuery {
         }
         let named = facts.filter { lot in
             lot.name.localizedCaseInsensitiveContains(rest)
-                || (lot.name.count >= 2 && rest.localizedCaseInsensitiveContains(lot.name))
-                || (lot.brand.map { !$0.isEmpty && rest.localizedCaseInsensitiveContains($0) } ?? false)
+                || (lot.brand.map { !$0.isEmpty && rest.localizedCaseInsensitiveCompare($0) == .orderedSame } ?? false)
         }.sorted { InventoryGroups.urgencyOrder($0, $1) }
         // Nothing by that name: the model may know a stand-in, so let it answer.
         guard !named.isEmpty else { return nil }

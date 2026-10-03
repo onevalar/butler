@@ -91,6 +91,14 @@ final class ItemsPageTests: XCTestCase {
         XCTAssertNil(LocalInventoryQuery.answer("把酸奶放到冷冻", facts: home))
     }
 
+    func testQualifiersAreNotDiscardedByReverseNameOrLocationMatching() {
+        let milk = lot("牛奶", category: .food, place: "冰箱")
+        XCTAssertNotNil(LocalInventoryQuery.answer("有没有牛奶", facts: [milk]))
+        XCTAssertNil(LocalInventoryQuery.answer("有没有不含糖的牛奶", facts: [milk]))
+        XCTAssertNil(LocalInventoryQuery.answer("有没有不在冰箱里的牛奶", facts: [milk]))
+        XCTAssertNil(LocalInventoryQuery.answer("有没有儿童牛奶", facts: [milk]))
+    }
+
     func testRemovingALineNeedsItToBeClearlyOnTheList() throws {
         let list = ItemCollection(title: "修自行车用得上", items: home.filter { $0.category == .tools }.map { .init(id: $0.id, name: $0.name, reason: "") }
                                   + [.init(id: UUID(), name: "自攻螺丝", reason: "")])

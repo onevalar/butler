@@ -6,19 +6,55 @@ import SwiftData
 @MainActor
 protocol BriefModel {
     var isAvailable: Bool { get }
+    func snapshot(now: Date) -> BriefContext
     /// The model's raw reply to a request built by `BriefModelReply.request`.
-    func answer(_ request: String) async throws -> String
+    func answer(_ request: String, context: BriefContext) async throws -> String
 }
 
-/// The signed-in cloud model.
+extension BriefModel {
+    func snapshot(now: Date) -> BriefContext { BriefContext() }
+}
+
+/// The same model and read APIs as chat, with a separate, strictly read-only session.
 @MainActor
 struct CloudBriefModel: BriefModel {
     let connection: SubscriptionConnection
+    let tools: ButlerTools
     var isAvailable: Bool { connection.isLoggedIn }
 
-    func answer(_ request: String) async throws -> String {
-        let model = SubscriptionModel(connection: connection, instructions: { BriefModelReply.instructions() }, tools: { "[]" })
-        return try await model.reply(to: [.user(request)]).text
+    func snapshot(now: Date) -> BriefContext { BriefSources.snapshot(tools: tools, now: now) }
+
+    func validateSources(for context: BriefContext) throws {
+        let allowed = tools.systemCalendar.conversationAllowed && tools.systemCalendar.systemAuthorized
+        guard allowed == (context.metadata["calendar_allowed"] as? Bool ?? false) else {
+            throw BriefReadError.permissionChanged
+        }
+        // Conversation tools use numbered turns. A sync/import can insert older turns between
+        // requests; stop rather than resolve the old numbers against a different archive.
+        let revision = tools.conversation.map { BriefSources.historyRevision($0()) }
+        guard revision == context.metadata["history_revision"] as? String else {
+            throw BriefReadError.incomplete
+        }
+    }
+
+    func answer(_ request: String, context: BriefContext) async throws -> String {
+        let reads = BriefReadSession(context: context)
+        let definitions = try BriefReadSession.toolJSON(from: tools.toolJSON)
+        let checkSources = { try validateSources(for: context) }
+        let model = SubscriptionModel(connection: connection, instructions: { BriefModelReply.instructions() },
+            tools: { definitions }, beforeRequest: checkSources)
+        let data = try JSONSerialization.data(withJSONObject: reads.overview(), options: [.sortedKeys])
+        let call = LocalToolCall(id: "home-overview", name: "get_brief_overview", arguments: "{}")
+        var messages: [LocalAgentMessage] = [.user(request)]
+        let result = try await ToolConversationLoop.run(model: model, messages: &messages,
+            prefetched: [PrefetchedToolResult(call: call, output: String(decoding: data, as: UTF8.self))],
+            execute: { call in
+                try checkSources()
+                return await reads.execute(call, readTool: tools.execute)
+            }, completionFeedback: reads.completionFeedback)
+        try checkSources()
+        guard let result, reads.missingPages.isEmpty else { throw BriefReadError.incomplete }
+        return result
     }
 }
 
@@ -33,8 +69,8 @@ final class BriefService {
 
     @ObservationIgnored private var model: BriefModel?
     @ObservationIgnored private var signature = ""
-    @ObservationIgnored private var candidateSignature = ""
     @ObservationIgnored private var interactionStarted = false
+    @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private var task: Task<Void, Never>?
     @ObservationIgnored private var failedAt: [String: Date] = [:]
     /// The last situation seen, so a model that connects later (at launch, or after signing in) is still asked.
@@ -43,11 +79,11 @@ final class BriefService {
     @ObservationIgnored private let calendar: Calendar
 
     private static let cacheKey = "briefCache"
-    private static let cacheLife: TimeInterval = 8 * 3600
+    private static let cacheLife: TimeInterval = 30 * 60
     private static let retryAfter: TimeInterval = 10 * 60
     @ObservationIgnored private let timeout: Double
 
-    init(defaults: UserDefaults = .standard, calendar: Calendar = .current, timeout: Double = 15) {
+    init(defaults: UserDefaults = .standard, calendar: Calendar = .current, timeout: Double = 90) {
         self.defaults = defaults
         self.calendar = calendar
         self.timeout = timeout
@@ -57,8 +93,8 @@ final class BriefService {
     nonisolated deinit {}
 
     func beginInteraction() { interactionStarted = true }
+    func endInteraction() { interactionStarted = false }
 
-    func attach(_ connection: SubscriptionConnection) { attach(model: CloudBriefModel(connection: connection)) }
     func attach(model: BriefModel) {
         self.model = model
         // Home computes the card before the conversation services exist; ask again now that the model is here.
@@ -74,20 +110,23 @@ final class BriefService {
         }
         let basis = BriefLocal.basis(lotCount: lotCount, taskCount: taskCount, usesCalendar: usesCalendar)
         let base = BriefCandidates.signature(candidates, now: now, calendar: calendar)
-        let sig = "overview-v4|" + base + "|" + (weather?.briefSignature(at: now) ?? "")
+        let context = model?.snapshot(now: now) ?? BriefContext()
+        let weatherSignature = BriefContext.fingerprint(BriefModelReply.weatherContext(weather, now: now) ?? [:])
+        let sig = "overview-v5|" + base + "|" + context.signature + "|" + weatherSignature
         if sig == signature {
             if brief.basis != basis { brief.basis = basis }
-            return
+            if isThinking { return }
+            // A failed request must reach the retry gate; elapsed time alone does not change the signature.
+        } else {
+            generation = UUID()
+            task?.cancel()
         }
         signature = sig
-        if candidateSignature != base { interactionStarted = false }
-        candidateSignature = base
-        task?.cancel()
         isThinking = false
         let local = BriefLocal.compose(candidates: candidates, lotCount: lotCount, basis: basis, now: now, calendar: calendar)
-        guard !candidates.isEmpty else { brief = local; return }
         if var cached = cachedBrief(for: sig, now: now) {
             cached.basis = basis
+            cached.greeting = local.greeting
             if !interactionStarted { brief = cached }
             return
         }
@@ -97,9 +136,12 @@ final class BriefService {
             return
         }
         if let failed = failedAt[sig], now.timeIntervalSince(failed) < Self.retryAfter { return }
+        generation = UUID()
+        let requestGeneration = generation
         isThinking = true
         task = Task { [weak self] in
-            await self?.ask(model, candidates: candidates, local: local, signature: sig, now: now, weather: weather)
+            await self?.ask(model, candidates: candidates, local: local, signature: sig, generation: requestGeneration,
+                            context: context, now: now, weather: weather)
         }
     }
 
@@ -107,12 +149,13 @@ final class BriefService {
     func settle() async { await task?.value }
 
     private func ask(_ model: BriefModel, candidates: [BriefCandidate], local: ButlerBrief,
-                     signature sig: String, now: Date, weather: WeatherSnapshot?) async {
+                     signature sig: String, generation requestGeneration: UUID, context: BriefContext,
+                     now: Date, weather: WeatherSnapshot?) async {
         let request = BriefModelReply.request(candidates: candidates, greeting: local.greeting, now: now, calendar: calendar, weather: weather)
         let started = Date.now
         do {
-            let reply = try await Self.withTimeout(seconds: timeout) { try await model.answer(request) }
-            guard !Task.isCancelled, signature == sig else { return }
+            let reply = try await Self.withTimeout(seconds: timeout) { try await model.answer(request, context: context) }
+            guard !Task.isCancelled, generation == requestGeneration else { return }
             if let parsed = BriefModelReply.parse(reply, candidates: candidates) {
                 var actions = parsed.actions
                 if actions.isEmpty, let target = parsed.target, let mine = candidates.first(where: { $0.target == target }) {
@@ -120,8 +163,10 @@ final class BriefService {
                     actions = BriefLocal.compose(candidates: [mine], lotCount: 1, basis: local.basis, now: now, calendar: calendar).actions
                 }
                 let result = ButlerBrief(greeting: local.greeting, text: parsed.text, basis: local.basis,
-                                         target: parsed.target, actions: actions, source: .model, hasSubject: true)
+                                         target: parsed.target, actions: actions, source: .model, hasSubject: true,
+                                         rationale: parsed.rationale)
                 if !interactionStarted { brief = result }
+                failedAt.removeValue(forKey: sig)
                 store(result, signature: sig, now: now)
                 ChatDiagnostics.log("brief model ok \(String(format: "%.1f", Date.now.timeIntervalSince(started)))s chars=\(parsed.text.count) actions=\(actions.count)")
             } else {
@@ -129,11 +174,11 @@ final class BriefService {
                 ChatDiagnostics.log("brief model reply unusable chars=\(reply.count)")
             }
         } catch {
-            guard signature == sig else { return }
+            guard generation == requestGeneration else { return }
             failedAt[sig] = now
             ChatDiagnostics.log("brief model failed \(ChatDiagnostics.describe(error))")
         }
-        if signature == sig { isThinking = false }
+        if generation == requestGeneration { isThinking = false }
     }
 
     /// Gives up after `seconds` so the buttons never wait on a slow network.
@@ -141,7 +186,10 @@ final class BriefService {
         let job = Task { @MainActor in try await work() }
         let watchdog = Task { try await Task.sleep(for: .seconds(seconds)); job.cancel() }
         defer { watchdog.cancel() }
-        return try await job.value
+        return try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await job.value
+        } onCancel: { job.cancel() }
     }
 
     // MARK: Cache

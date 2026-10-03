@@ -6,6 +6,7 @@ enum ToolConversationLoop {
     static func run(model: any LocalAgentModel, messages: inout [LocalAgentMessage],
                     prefetched: [PrefetchedToolResult] = [],
                     rounds: Int = 30, execute: (LocalToolCall) async throws -> String,
+                    completionFeedback: (String) -> String? = { _ in nil },
                     progress: (String) -> Void = { _ in },
                     log: (String) -> Void = ChatDiagnostics.log) async throws -> String? {
         try Task.checkCancellation()
@@ -24,7 +25,13 @@ enum ToolConversationLoop {
             log("round \(round) \(String(format: "%.1f", Date.now.timeIntervalSince(asked)))s calls=\(reply.calls.map(\.name).joined(separator: ","))")
             try Task.checkCancellation()
             messages.append(.assistant(reply))
-            if reply.calls.isEmpty { return reply.text.isEmpty ? "好的。" : reply.text }
+            if reply.calls.isEmpty {
+                if let feedback = completionFeedback(reply.text) {
+                    messages.append(.context(feedback))
+                    continue
+                }
+                return reply.text.isEmpty ? "好的。" : reply.text
+            }
             for call in reply.calls.prefix(12) {
                 try Task.checkCancellation()
                 let output: String

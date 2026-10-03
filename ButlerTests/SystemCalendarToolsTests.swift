@@ -27,6 +27,78 @@ import XCTest
             "location": "东门", "start": "2027-07-13T09:27:00+08:00", "end": "2027-07-13T10:12:00+08:00",
             "timeZone": "Asia/Shanghai", "allDay": false, "alertMinutes": 17]]
     }
+
+    func testBriefSnapshotIncludesEveryTaskAndConfirmedNoteWithoutRequestingCalendarPermission() async throws {
+        let (tools, device) = try setup()
+        let now = Date.now
+        for index in 0..<37 {
+            try tools.reminders.add(TimedReminder(text: index == 36 ? "明早出差" : "任务\(index)",
+                fireDate: now.addingTimeInterval(Double(index + 1) * 3600)))
+        }
+        let note = LocalMemory(id: UUID(), title: "临时安排", text: "这周出差，周六回来", quantity: nil, revision: 1)
+        try tools.notes.upsert(note)
+        tools.add(.note(.init(id: UUID(), title: "未确认", text: "不能当成偏好", quantity: nil, revision: 1)),
+                  title: "未确认", detail: nil)
+        let before = try tools.reminders.taskSnapshot()
+        let context = BriefSources.snapshot(tools: tools, now: now)
+        XCTAssertEqual(context.sections["tasks"]?.count, 37)
+        XCTAssertTrue(context.sections["tasks"]?.contains { $0["text"] as? String == "明早出差" } == true)
+        XCTAssertEqual(context.sections["notes"]?.count, 1)
+        XCTAssertEqual(context.sections["notes"]?.first?["text"] as? String, note.text)
+        XCTAssertNil(context.sections["calendar"])
+        XCTAssertEqual(device.reads, 0)
+        XCTAssertEqual(device.authorizationCalls, 0)
+        XCTAssertEqual(try tools.reminders.taskSnapshot(), before)
+        XCTAssertEqual(tools.pending.count, 1)
+        var corrected = note; corrected.text = "不是周六，是周五回来"; corrected.revision = 2
+        try tools.notes.upsert(corrected)
+        XCTAssertNotEqual(context.signature, BriefSources.snapshot(tools: tools, now: now).signature)
+    }
+
+    func testBriefCalendarReadsKeepConsentGateAndRevokeCapturedSnapshot() async throws {
+        let (tools, device) = try setup()
+        let now = try ButlerTools.calendarDate("2027-07-13T00:00:00+08:00")
+        let model = CloudBriefModel(connection: SubscriptionConnection(keychainAccount: "brief-calendar-\(UUID())"), tools: tools)
+        let blocked = model.snapshot(now: now)
+        let reads = BriefReadSession(context: blocked)
+        let output = await reads.execute(.init(id: "calendar", name: "get_system_calendars", arguments: "{}"), readTool: tools.execute)
+        XCTAssertTrue(output.contains("error"))
+        XCTAssertEqual(device.reads, 0)
+        _ = try await tools.systemCalendar.apply(.access(true), operationID: UUID())
+        _ = try await call(tools, "propose_calendar_event", create())
+        _ = await tools.confirmIncludingSystemChanges()
+        let captured = model.snapshot(now: now)
+        XCTAssertEqual(captured.sections["calendar"]?.count, 1)
+        XCTAssertNoThrow(try model.validateSources(for: captured))
+        let writes = device.writes, permissions = device.authorizationCalls
+        _ = model.snapshot(now: now)
+        XCTAssertEqual(device.writes, writes)
+        XCTAssertEqual(device.authorizationCalls, permissions)
+        _ = try await tools.systemCalendar.apply(.access(false), operationID: UUID())
+        XCTAssertThrowsError(try model.validateSources(for: captured))
+        XCTAssertNil(model.snapshot(now: now).sections["calendar"])
+    }
+
+    func testBriefReadsAllRecentTurnsAcrossPagesAndRejectsShiftedHistoryNumbers() throws {
+        let (tools, _) = try setup()
+        let turns = (0..<14).map { index in
+            ChatTurn(question: "第\(index)轮" + String(repeating: "长原文", count: 2200), answer: "已收到",
+                     date: Date(timeIntervalSince1970: Double(index + 100)))
+        }
+        tools.conversation = { ConversationArchive(turns: turns, recentStart: nil, summaryThrough: nil) }
+        let model = CloudBriefModel(connection: SubscriptionConnection(keychainAccount: "brief-history-\(UUID())"), tools: tools)
+        let captured = model.snapshot(now: .now)
+        let recent = try XCTUnwrap(captured.sections["recent_conversation"])
+        XCTAssertEqual(recent.count, 12)
+        XCTAssertEqual(recent.first?["user"] as? String, turns[2].question)
+        XCTAssertEqual(recent.last?["user"] as? String, turns[13].question)
+        XCTAssertNoThrow(try model.validateSources(for: captured))
+        let imported = ChatTurn(question: "补同步的旧交代", date: Date(timeIntervalSince1970: 1))
+        tools.conversation = { ConversationArchive(turns: [imported] + turns, recentStart: nil, summaryThrough: nil) }
+        XCTAssertThrowsError(try model.validateSources(for: captured))
+        XCTAssertNoThrow(try model.validateSources(for: model.snapshot(now: .now)))
+    }
+
     func testSeparateConsentProposalRestoreAndNoDuplicateOrLocalNotification() async throws {
         let (tools, device) = try setup()
         XCTAssertTrue(device.authorized)

@@ -4,6 +4,26 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
+if [[ "$(uname -s)" == Linux ]]; then
+    echo "Preparing Swift 6.2.3 for the portable core tests..."
+    swiftly_home="$HOME/.local/share/swiftly"
+    if [[ ! -x "$swiftly_home/bin/swiftly" ]]; then
+        scratch="$(mktemp -d)"
+        trap 'rm -rf "$scratch"' EXIT
+        curl -fsSL "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz" -o "$scratch/swiftly.tar.gz"
+        tar xzf "$scratch/swiftly.tar.gz" -C "$scratch"
+        "$scratch/swiftly" init --platform ubuntu22.04 --skip-install --no-modify-profile --quiet-shell-followup -y
+    fi
+    if ! "$swiftly_home/bin/swift" --version 2>/dev/null | grep -q 'Swift version 6.2.3'; then
+        "$swiftly_home/bin/swiftly" install 6.2.3 -y
+        "$swiftly_home/bin/swiftly" use 6.2.3 --global-default -y
+    fi
+    marker='# Butler portable Swift tests'
+    if ! grep -Fqx "$marker" "$HOME/.bash_profile" 2>/dev/null; then
+        printf '\n%s\n%s\n' "$marker" 'export PATH="$HOME/.local/share/swiftly/bin:$PATH"' >> "$HOME/.bash_profile"
+    fi
+fi
+
 echo "Validating Butler's Xcode project metadata..."
 python3 - <<'PY'
 import json

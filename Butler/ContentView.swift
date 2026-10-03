@@ -142,7 +142,7 @@ struct ContentView: View {
                 sessions = store
                 SyncService.shared.attach(store)
                 chat = store.chat(for: .general)
-                briefService.attach(store.connection)
+                if let model = store.makeBriefModel() { briefService.attach(model: model) }
                 NotificationManager.shared.reminderStore = reminders
                 reminders.rescheduleAll()
             }
@@ -213,11 +213,15 @@ struct ContentView: View {
             )
             .navigationDestination(for: Route.self) { destination($0, facts: facts) }
         }
-        .onChange(of: briefKey + "|\(snoozeRevision)|\(WeatherStore.shared.snapshot?.fetchedAt.timeIntervalSince1970 ?? 0)", initial: true) {
+        .onChange(of: briefKey + "|\(snoozeRevision)|\(refreshID)|\(Int(agendaNow.timeIntervalSince1970 / 30))|\(WeatherStore.shared.snapshot?.fetchedAt.timeIntervalSince1970 ?? 0)", initial: true) {
+            guard scenePhase == .active else { return }
             briefService.update(candidates: candidates, lotCount: facts.count, taskCount: reminders.active.count,
                                 usesCalendar: calendarFeed.enabled && calendarFeed.canRead, now: agendaNow, weather: WeatherStore.shared.snapshot)
         }
-        .sheet(isPresented: Binding(get: { snoozingTarget != nil }, set: { if !$0 { snoozingTarget = nil } })) {
+        .sheet(isPresented: Binding(get: { snoozingTarget != nil }, set: { if !$0 { snoozingTarget = nil } }), onDismiss: {
+            briefService.endInteraction()
+            refreshID = UUID()
+        }) {
             if let target = snoozingTarget {
                 BriefSnoozeSheet(onChoose: { date in
                     guard date > Date.now else { return }
@@ -240,7 +244,11 @@ struct ContentView: View {
                 if let pending = confirmingBrief { runBrief(pending.action, pending.target, facts: facts) }
                 confirmingBrief = nil
             }
-            Button("取消", role: .cancel) { confirmingBrief = nil }
+            Button("取消", role: .cancel) {
+                confirmingBrief = nil
+                briefService.endInteraction()
+                refreshID = UUID()
+            }
         } message: {
             Text("这是药品，确认后才会更新库存。")
         }
@@ -294,6 +302,7 @@ struct ContentView: View {
             WidgetSnapshotPublisher.shared.refresh()
             handleSharedContent()
             refreshID = UUID()
+            briefService.endInteraction()
             let wasToday = Calendar.current.isDate(listDay, inSameDayAs: agendaNow)
             agendaNow = .now
             if wasToday { listDay = Calendar.current.startOfDay(for: agendaNow) }
@@ -320,7 +329,10 @@ struct ContentView: View {
             do { try ShortcutNavigation.shared.openWidgetURL(url); handleShortcutNavigation() }
             catch { notificationError = error.localizedDescription }
         }
-        .onChange(of: sessions?.working) { _, _ in handleShortcutNavigation(); handleSharedContent() }
+        .onChange(of: sessions?.working) { _, _ in
+            handleShortcutNavigation(); handleSharedContent()
+            refreshID = UUID()
+        }
         .onChange(of: onboardingDone) { _, _ in handleShortcutNavigation(); handleSharedContent() }
         .onChange(of: showingChat) { _, showing in if !showing { handleSharedContent() } }
         .onChange(of: capturing) { _, capturing in if !capturing { handleShortcutNavigation(); handleSharedContent() } }
@@ -438,6 +450,8 @@ struct ContentView: View {
     }
 
     private func finishChatDismissal() {
+        briefService.endInteraction()
+        refreshID = UUID()
         guard let destination = afterChatDismissal else { return }
         afterChatDismissal = nil
         switch destination {
@@ -482,7 +496,9 @@ struct ContentView: View {
     private func runBrief(_ action: BriefAction, _ target: BriefTarget, facts: [LotFacts]) {
         let runner = BriefActionRunner(container: modelContext.container, reminders: reminders)
         Task {
-            switch await runner.run(action, target: target, facts: facts, now: agendaNow) {
+            let outcome = await runner.run(action, target: target, facts: facts, now: agendaNow)
+            briefService.endInteraction()
+            switch outcome {
             case .done: snoozeRevision += 1
             case .open:
                 switch target {
