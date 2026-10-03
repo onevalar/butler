@@ -209,7 +209,7 @@ struct RelatedConversationView: View {
             ForEach(turns.reversed()) { item in
                 Section {
                     Text(item.turn.question).font(.body.bold())
-                    if !item.turn.answer.isEmpty { Text(item.turn.answer).textSelection(.enabled) }
+                    if !item.turn.answer.isEmpty { ChatMarkdownText(text: item.turn.answer) }
                     ForEach(Array(item.turn.receipts.enumerated()), id: \.offset) { _, receipt in Text(receipt).font(.footnote) }
                     Button("打开来源对话") { onOpen(item.scope) }
                 } header: {

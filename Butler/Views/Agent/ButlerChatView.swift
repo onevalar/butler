@@ -763,10 +763,9 @@ private struct ChatReplyBubble: View {
         if replying || !reply.isEmpty {
             HStack {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(verbatim: replying && reply.isEmpty ? "正在准备回复…" : reply)
+                    ChatMarkdownText(text: replying && reply.isEmpty ? "正在准备回复…" : reply)
                         .foregroundStyle(turn.failed && turn.partialReply == nil ? Color.red : .primary)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
                     if replying || turn.partialReply != nil {
                         Text(turn.partialReply != nil ? "未完成的过程文字 · 不代表执行结果"
                              : progress.isPreviousPass ? "上一段过程文字 · 正在继续处理"
@@ -792,7 +791,7 @@ private struct ChatWorkingIndicator: View {
     let stage: String
 
     var body: some View {
-        // Only the status line ticks; the reply keeps the same text node and width.
+        // Only the status line ticks; the reply keeps the same container and width.
         TimelineView(.periodic(from: .now, by: 1)) { context in
             let seconds = max(0, Int(context.date.timeIntervalSince(since ?? context.date)))
             let label = !progress.text.isEmpty && !progress.isPreviousPass ? "正在回复…" : stage

@@ -3,6 +3,30 @@ import XCTest
 @testable import Butler
 
 final class ChatReplyPresentationTests: XCTestCase {
+    @MainActor func testMarkdownRemainsIntactAcrossStreamingStopHistoryAndSync() async throws {
+        let partial = "## 建议\n\n- **牛奶🥛**\n\n```swift\nlet count = 3"
+        var turn = ChatTurn(question: "怎么安排", replyState: .answering)
+        let progress = ChatReplyProgress()
+        progress.begin(turn.id)
+        progress.receive(partial)
+        XCTAssertEqual(turn.displayedReply(using: progress), partial)
+        turn.replyState = .stopped
+        turn.partialReply = partial
+        turn.answer = "本轮未完成"
+        progress.finish()
+        let restored = try JSONDecoder().decode(ChatTurn.self, from: JSONEncoder().encode(turn))
+        XCTAssertEqual(restored.displayedReply(using: progress), partial, "Do not close fences or strip Markdown in storage")
+
+        let completed = partial + "\n```\n\n[说明](https://example.com)"
+        turn.partialReply = nil
+        turn.replyState = .completed
+        turn.answer = completed
+        XCTAssertEqual(turn.displayedReply(using: progress), completed)
+        let synced = try JSONDecoder().decode(SyncedChatTurn.self,
+            from: JSONEncoder().encode(SyncedChatTurn(scope: .general, turn: turn)))
+        XCTAssertEqual(synced.answer, completed)
+    }
+
     @MainActor func testRetryAndToolPassRetainLabeledTextUntilReplacementNotAppend() async {
         let progress = ChatReplyProgress()
         progress.begin(UUID())

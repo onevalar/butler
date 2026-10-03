@@ -49,5 +49,5 @@ for path in sorted(root.rglob("Contents.json")):
         json.load(file)
 PY
 
-echo "Setup complete. Butler has no third-party dependencies."
+echo "Setup complete. Xcode resolves MarkdownUI and its dependencies through Swift Package Manager; portable core tests do not need them."
 echo "Note: full builds require macOS, Xcode 26.2, and the iOS 26.2 SDK; Apple SDKs are unavailable in Debian orbs."

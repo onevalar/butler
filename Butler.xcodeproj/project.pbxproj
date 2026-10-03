@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		06A000012F20000100A00001 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = 06A000032F20000100A00001 /* MarkdownUI */; };
 		04A000012F20000100A00001 /* ButlerShareExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 04A000022F20000100A00001; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		03A000012F20000100A00001 /* ButlerAlarmWidget.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 03A000022F20000100A00001 /* ButlerAlarmWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
@@ -104,6 +105,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				06A000012F20000100A00001 /* MarkdownUI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -199,6 +201,7 @@
 			);
 			name = Butler;
 			packageProductDependencies = (
+				06A000032F20000100A00001 /* MarkdownUI */,
 			);
 			productName = Butler;
 			productReference = 01CCDCF62F0CFA8A00A689B2 /* Butler.app */;
@@ -255,6 +258,9 @@
 			);
 			mainGroup = 01CCDCED2F0CFA8A00A689B2;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				06A000022F20000100A00001 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 01CCDCF72F0CFA8A00A689B2 /* Products */;
 			projectDirPath = "";
@@ -686,6 +692,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		06A000022F20000100A00001 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/gonzalezreal/swift-markdown-ui";
+			requirement = {
+				kind = exactVersion;
+				version = 2.4.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		06A000032F20000100A00001 /* MarkdownUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 06A000022F20000100A00001 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */;
+			productName = MarkdownUI;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 01CCDCEE2F0CFA8A00A689B2 /* Project object */;
 }
