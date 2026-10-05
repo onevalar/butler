@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="data:,">
+<title>日程总览 · 方案 B</title>
+<link rel="stylesheet" href="./style.css">
+<div class="layout">
+  <aside class="guide">
+    <small>已选方案 B</small>
+    <h1>连续清单，浮层定位</h1>
+    <p>直接滚动查看过去与未来。右上角「日期」打开月历，选完回到清单，不会隐藏前后的安排。</p>
+    <div class="controls">
+      <label>示例内容<select id="scenario"><option value="normal">日常安排</option><option value="busy">40项与长标题</option><option value="empty">暂无安排</option></select></label>
+      <label>外观<select id="theme"><option value="light">浅色 · 雾面</option><option value="dark">深色 · 雾面</option></select></label>
+    </div>
+    <p class="disclaimer">浏览器交互设计稿，非 iPhone 实机。示例今天：2026年10月7日。使用固定示例数据，不读取或修改你的安排。</p>
+    <p class="disclaimer">原生源码已按此方向调整，尚待苹果设备验证。本页用于审阅布局和操作；页面浮动反馈按钮可圈选评论。</p>
+  </aside>
+  <div id="review">
+    <div class="watermark">方案 B · 交互设计稿，非实机</div>
+    <div class="phone" id="phone">
+      <div id="stage"></div>
+      <div id="overlay" class="overlay" hidden></div>
+    </div>
+  </div>
+</div>
+<div id="announce" class="sr-only" role="status"></div>
+<script type="module">
+const TODAY='2026-10-07', stage=document.querySelector('#stage'), phone=document.querySelector('#phone'), overlay=document.querySelector('#overlay');
+const date=s=>new Date(s+'T12:00:00Z'), iso=d=>d.toISOString().slice(0,10);
+const add=(s,n)=>{const d=date(s);d.setUTCDate(d.getUTCDate()+n);return iso(d)};
+const month=s=>s.slice(0,7)+'-01';
+const shiftMonth=(s,n)=>{const d=date(month(s));d.setUTCMonth(d.getUTCMonth()+n);return iso(d)};
+const short=s=>`${date(s).getUTCMonth()+1}月${date(s).getUTCDate()}日`;
+const label=s=>(s.slice(0,4)!==TODAY.slice(0,4)?s.slice(0,4)+'年':'')+short(s);
+const weekday=s=>['周日','周一','周二','周三','周四','周五','周六'][date(s).getUTCDay()];
+const icon=name=>`<svg aria-hidden="true" viewBox="0 0 24 24">${({calendar:'<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M7 3v4m10-4v4M3 10h18M7 14h2m4 0h2m-8 3h2"/>',left:'<path d="M15 5l-7 7 7 7"/>',right:'<path d="M9 5l7 7-7 7"/>',close:'<path d="M6 6l12 12M6 18L18 6"/>',check:'<path d="m5 12 4 4L19 6"/>'})[name]}</svg>`;
+const base=[
+ {id:'past1',day:'2026-09-28',time:'18:00',title:'取干洗衣物',done:true},
+ {id:'past2',day:'2026-10-04',time:'12:00',title:'和家人吃午饭',place:'外婆家',type:'calendar'},
+ {id:'past3',day:'2026-10-06',time:'16:00',title:'领取快递',done:true},
+ {id:'meeting',day:TODAY,time:'14:00',title:'项目沟通',place:'线上会议',type:'calendar',endTime:'15:00'},
+ {id:'call',day:TODAY,time:'19:00',title:'和妈妈视频'},
+ {id:'food',day:'2026-10-08',time:'全天',title:'酸奶到期',type:'food',detail:'2 盒 · 冷藏 · 包装有效期 10月8日'},
+ {id:'dentist',day:'2026-10-08',time:'09:30',title:'牙齿复诊',place:'市口腔医院',type:'calendar',endTime:'10:30'},
+ {id:'report',day:'2026-10-10',time:'10:00',title:'取体检报告'},
+ {id:'visit',day:'2026-10-13',time:'15:00',title:'去看望外婆'},
+ {id:'trip',day:'2026-10-16',end:'2026-10-18',time:'全天',title:'苏州短途旅行',type:'calendar'},
+ {id:'filter',day:'2026-11-03',time:'10:00',title:'更换净水器滤芯'}
+];
+let scenario='normal',selected=TODAY,locatedDate=TODAY,activeRange=null,rangeDraft=null;
+let calendarMonth=month(TODAY),lastTrigger=null,scrollFrame=0;
+function events(){return scenario==='empty'?[]:scenario==='busy'?[...base.filter(e=>e.day<TODAY),...Array.from({length:40},(_,i)=>({id:`busy-${i}`,day:add(TODAY,Math.floor(i/8)),time:`${String(8+i%8).padStart(2,'0')}:30`,title:i%4===0?'带上去年体检报告和近期用药记录，陪妈妈去医院复查甲状腺':['取干洗衣物','和物业确认厨房漏水维修时间','整理出差资料'][i%3]}))]:base}
+const hasEvents=d=>events().some(e=>e.day<=d&&(e.end||e.day)>=d);
+const inRange=d=>!activeRange||(d>=activeRange[0]&&d<=activeRange[1]);
+const routineOn=d=>scenario==='normal'&&d>='2026-10-07'&&d<='2026-10-11';
+function displayDay(e){
+  if(e.end&&e.day<=locatedDate&&e.end>=locatedDate)return locatedDate;
+  return activeRange&&e.day<activeRange[0]?activeRange[0]:e.day;
+}
+function row(e){return `<button class="event ${e.done?'completed':''}" data-event="${e.id}"><span class="event-time">${e.time}${e.endTime?`<small>–${e.endTime}</small>`:''}</span><span class="event-copy"><strong>${e.title}</strong>${e.place?`<small>${e.place}</small>`:e.end?`<small>${label(e.day)}—${label(e.end)}</small>`:''}</span>${e.done?`<span class="done-mark" aria-label="已完成">${icon('check')}</span>`:''}</button>`}
+function dayList(){
+  const entries=events().filter(e=>!activeRange||(e.day<=activeRange[1]&&(e.end||e.day)>=activeRange[0]));
+  const dates=new Set(entries.map(displayDay));
+  if(inRange(locatedDate))dates.add(locatedDate);
+  if(inRange(TODAY))dates.add(TODAY);
+  // Recurrences are shown within their actual dates, never as a global sticky reminder.
+  if(scenario==='normal')for(let d='2026-10-07';d<='2026-10-11';d=add(d,1))if(inRange(d))dates.add(d);
+  return [...dates].sort().map(d=>{
+    const rows=entries.filter(e=>displayDay(e)===d).map(row).join('');
+    const routine=routineOn(d)?`<details class="routine"><summary>每日提醒 · 1</summary><button class="event" data-routine="${d}"><span class="event-time">08:00</span><span class="event-copy"><strong>服用维生素</strong></span></button></details>`:'';
+    return `<section class="agenda-day" data-date="${d}"><h3 class="day-heading">${label(d)}<span>${weekday(d)}${d===TODAY?' · 今天':''}</span></h3>${rows}${routine}${!rows&&!routine?'<p class="quiet-day">没有安排</p>':''}</section>`;
+  }).join('');
+}
+function render(){
+  cancelAnimationFrame(scrollFrame);
+  stage.innerHTML=`<div class="status" aria-hidden="true"><span>9:41</span><span>▮▮▮ ▰</span></div><header class="topbar"><button data-action="home" aria-label="返回首页入口预览">${icon('left')}</button><h2>日程总览</h2><div><button data-action="calendar" class="calendar-button">${icon('calendar')}<span>日期</span></button></div></header>
+  ${activeRange?`<div class="range-chip"><button data-action="calendar" aria-label="修改日期范围">${label(activeRange[0])}—${label(activeRange[1])}</button><button data-action="clear-range">取消限定</button></div>`:''}
+  <main id="agenda" tabindex="0" aria-label="安排清单，可向前浏览历史、向后浏览未来">${dayList()}<div class="end-space" aria-hidden="true"></div></main>`;
+  stage.querySelector('#agenda').addEventListener('scroll',()=>{cancelAnimationFrame(scrollFrame);scrollFrame=requestAnimationFrame(syncScroll)},{passive:true});
+}
+function locate(d){
+  selected=d;locatedDate=d;render();
+  const box=stage.querySelector('#agenda'),target=stage.querySelector(`[data-date="${d}"]`);
+  if(!target)return;
+  stage.querySelector('.end-space').style.height=Math.max(28,box.clientHeight-target.offsetHeight)+'px';
+  box.scrollTop=target.offsetTop;
+  document.querySelector('#announce').textContent=`已定位到${label(d)}，可继续浏览前后安排`;
+}
+function syncScroll(){
+  const box=stage.querySelector('#agenda'),top=box.getBoundingClientRect().top;
+  const visible=[...box.querySelectorAll('[data-date]')].find(e=>e.getBoundingClientRect().bottom>top+44);
+  if(visible)selected=visible.dataset.date;
+}
+function closeSheet(){
+  overlay.hidden=true;overlay.innerHTML='';stage.inert=false;document.querySelector('.guide').inert=false;
+  (lastTrigger?.isConnected?lastTrigger:stage.querySelector('[data-action=calendar]'))?.focus({preventScroll:true});
+}
+function sheet(title,body){
+  stage.inert=true;document.querySelector('.guide').inert=true;overlay.hidden=false;
+  overlay.innerHTML=`<section class="sheet" role="dialog" aria-modal="true" aria-label="${title}"><div class="handle" aria-hidden="true"></div><header class="sheet-head"><h3 tabindex="-1">${title}</h3><button data-action="close" aria-label="关闭${title}">${icon('close')}</button></header><div class="sheet-body">${body}</div></section>`;
+}
+const rangeTooLong=()=>rangeDraft?.[1]&&(date(rangeDraft[1])-date(rangeDraft[0]))/86400000>=366;
+function calendarHTML(){
+  const first=month(calendarMonth),n=date(add(shiftMonth(first,1),-1)).getUTCDate(),leading=(date(first).getUTCDay()+6)%7;
+  const year=date(first).getUTCFullYear(),years=Array.from({length:21},(_,i)=>year-10+i);
+  return `<div class="calendar-nav"><button data-month="-1" aria-label="上个月">${icon('left')}</button><div><select id="year" aria-label="年份">${years.map(y=>`<option ${y===year?'selected':''}>${y}</option>`).join('')}</select><select id="month" aria-label="月份">${Array.from({length:12},(_,i)=>`<option value="${i+1}" ${i===date(first).getUTCMonth()?'selected':''}>${i+1}月</option>`).join('')}</select></div><button data-month="1" aria-label="下个月">${icon('right')}</button></div>
+  <div class="calendar-grid">${['一','二','三','四','五','六','日'].map(x=>`<span>${x}</span>`).join('')}${'<i></i>'.repeat(leading)}${Array.from({length:n},(_,i)=>{
+    const d=add(first,i),picked=rangeDraft?(d===rangeDraft[0]||d===rangeDraft[1]):d===selected,between=rangeDraft?.[1]&&d>rangeDraft[0]&&d<rangeDraft[1];
+    return `<button data-day="${d}" class="${picked?'picked':''} ${between?'between':''}" aria-pressed="${picked}" ${d===TODAY?'aria-current="date"':''} aria-label="${d}${hasEvents(d)?'，有安排':''}"><b>${i+1}</b><i class="${hasEvents(d)?'has-events':''}"></i></button>`;
+  }).join('')}</div>
+  <div class="calendar-bottom"><button data-action="range-toggle" aria-pressed="${rangeDraft!==null}">${rangeDraft?'取消时间段':'选择时间段'}</button><button data-action="calendar-today">今天</button></div>
+  ${rangeDraft?`<div class="range-confirm"><span>${rangeDraft[0]?label(rangeDraft[0])+' — '+(rangeDraft[1]?label(rangeDraft[1]):'选择结束日期'):'选择开始日期'}</span><button data-action="apply-range" ${!rangeDraft[1]||rangeTooLong()?'disabled':''}>查看</button></div>${rangeTooLong()?'<p class="range-error" role="alert">一次最多查看366天，请缩短时间段。</p>':''}`:''}`;
+}
+function showCalendar(){sheet('选择日期',calendarHTML())}
+stage.addEventListener('click',e=>{
+  const b=e.target.closest('button');if(!b)return;const action=b.dataset.action;
+  if(action==='calendar'){lastTrigger=b;calendarMonth=month(selected);rangeDraft=activeRange?[...activeRange]:null;showCalendar();overlay.querySelector('h3').focus();return}
+  if(action==='clear-range'){
+    const old=stage.querySelector(`[data-date="${selected}"]`),box=stage.querySelector('#agenda');
+    const offset=old.getBoundingClientRect().top-box.getBoundingClientRect().top;
+    activeRange=null;locate(selected);stage.querySelector('#agenda').scrollTop-=offset;
+    stage.querySelector('[data-action=calendar]').focus({preventScroll:true});return;
+  }
+  if(action==='home'){
+    const count=events().filter(e=>e.day>=TODAY&&e.day<='2026-10-11'&&!e.done).length;
+    const subtitle=count?`本周还有 ${count} 项${scenario==='normal'?' · 另有 1 项每日提醒':''}`:'本周剩余时间暂无安排';
+    lastTrigger=b;sheet('首页入口预览',`<button class="home-entry" data-action="close"><strong>日程总览</strong><span>${subtitle} ›</span></button>`);overlay.querySelector('h3').focus();return;
+  }
+  if(b.dataset.routine){lastTrigger=b;sheet('安排详情',`<div class="detail"><h4>服用维生素</h4><p>${label(b.dataset.routine)} · 08:00</p><p class="muted">每日提醒 · 10月7日至10月11日</p></div>`);overlay.querySelector('h3').focus();return}
+  if(b.dataset.event){const event=events().find(x=>x.id===b.dataset.event);lastTrigger=b;sheet('安排详情',`<div class="detail"><h4>${event.title}</h4><p>${label(event.day)}${event.end?'—'+label(event.end):' '+weekday(event.day)} · ${event.time}${event.endTime?'—'+event.endTime:''}</p>${event.place?'<p>'+event.place+'</p>':''}${event.detail?'<p>'+event.detail+'</p>':''}<p class="muted">${event.done?'已完成':event.type==='calendar'?'系统日历':event.type==='food'?'物品提醒':'本地提醒'}</p></div>`);overlay.querySelector('h3').focus()}
+});
+overlay.addEventListener('click',e=>{
+  if(e.target===overlay){closeSheet();return}
+  const b=e.target.closest('button');if(!b)return;const action=b.dataset.action;
+  if(action==='close'){closeSheet();return}
+  if(b.dataset.month){calendarMonth=shiftMonth(calendarMonth,Number(b.dataset.month));showCalendar();overlay.querySelector(`[data-month="${b.dataset.month}"]`).focus();return}
+  if(action==='range-toggle'){rangeDraft=rangeDraft?null:[];showCalendar();overlay.querySelector('[data-action=range-toggle]').focus();return}
+  if(action==='calendar-today'){activeRange=null;locate(TODAY);closeSheet();return}
+  if(b.dataset.day){const d=b.dataset.day;if(rangeDraft){rangeDraft=rangeDraft.length!==1?[d]:[rangeDraft[0],d].sort();showCalendar();overlay.querySelector(`[data-day="${d}"]`).focus();return}activeRange=null;locate(d);closeSheet();return}
+  if(action==='apply-range'&&rangeDraft?.[1]&&!rangeTooLong()){activeRange=[...rangeDraft];locate(activeRange[0]);closeSheet()}
+});
+overlay.addEventListener('change',e=>{if(!['year','month'].includes(e.target.id))return;calendarMonth=`${overlay.querySelector('#year').value}-${overlay.querySelector('#month').value.padStart(2,'0')}-01`;showCalendar();overlay.querySelector('#'+e.target.id).focus()});
+document.addEventListener('keydown',e=>{
+  if(overlay.hidden)return;
+  if(e.key==='Escape'){e.preventDefault();closeSheet()}
+  if(e.key==='Tab'){const es=[...overlay.querySelectorAll('button:not(:disabled),select')],first=es[0],last=es.at(-1);if(e.shiftKey&&(document.activeElement===first||document.activeElement===overlay.querySelector('h3'))){e.preventDefault();last.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus()}}
+});
+document.querySelector('#scenario').onchange=e=>{scenario=e.target.value;activeRange=null;locate(TODAY)};
+document.querySelector('#theme').onchange=e=>phone.classList.toggle('dark',e.target.value==='dark');
+locate(TODAY);
+</script>
+</html>

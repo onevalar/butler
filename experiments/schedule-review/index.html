@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="data:,">
+<title>日程总览 · 当前实现交互预览</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#dfe2e7;color:#191a1e;font:16px/1.5 -apple-system,BlinkMacSystemFont,"Noto Sans CJK SC",sans-serif;padding:32px 20px}button,input,select{font:inherit;color:inherit}button{border:0;background:none;cursor:pointer;touch-action:manipulation}button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid #2877d7;outline-offset:2px}button:disabled{opacity:.4;cursor:default}button:active:not(:disabled){background-color:#8080801a}h1,h2,h3,p{margin:0}button svg{width:22px;height:22px;vertical-align:middle;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}.layout{display:flex;gap:70px;max-width:950px;margin:auto;align-items:flex-start}.guide{max-width:360px;padding-top:32px}.guide h1{font-size:26px;line-height:1.5;margin:12px 0}.guide p{color:#545a65;font-size:15px;line-height:1.9;margin:12px 0}.guide label{display:block;font-size:14px;margin:18px 0 6px}.guide select{width:100%;min-height:44px;border:1px solid #b9bec8;border-radius:10px;background:#f0f1f4;padding:6px 10px}.guide small{font-size:12px;color:#626875}.guide .entry{margin-top:18px;border-top:1px solid #bfc4cd;padding:18px 0;text-align:left;width:100%;display:flex;justify-content:space-between;align-items:center}.entry span{display:block;font-size:14px;color:#626875;margin-top:4px}.review{width:390px;flex-shrink:0}.watermark{font-size:12px;color:#59606d;padding:0 3px 10px;text-align:center}.phone{--muted:#636670;--card:#ffffff57;--edge:#fff9;--ink:#191a1e;--nav:#eff0f3ec;--divider:#c8ccd3;color:var(--ink);height:844px;border-radius:32px;overflow:hidden;position:relative;box-shadow:0 15px 48px #24293b20,0 0 0 1px #ffffff8a;background:radial-gradient(ellipse 520px 340px at 50% 20%,#ffffffd9,transparent),linear-gradient(#f1f2f4,#e9ebee 60%,#e2e4e8);display:flex;flex-direction:column}.phone.dark{--muted:#b2b6c0;--card:#ffffff0f;--edge:#ffffff2a;--ink:#f2f2f6;--nav:#191a1eec;--divider:#353740;background:radial-gradient(ellipse at 50% 20%,#ffffff0f,transparent 55%),linear-gradient(#17181c,#0c0c0f)}.status{height:52px;flex-shrink:0;display:flex;justify-content:space-between;align-items:center;padding:0 28px;font-size:14px;font-weight:600}.status span:last-child{font-size:12px;letter-spacing:1px}.bar{display:grid;grid-template-columns:72px 1fr 72px;align-items:center;min-height:48px;padding:0 12px;background:var(--nav);flex-shrink:0}.bar h2{font-size:17px;text-align:center;font-weight:600}.bar button{min-width:44px;min-height:44px;padding:0;text-align:left}.bar button:last-child{text-align:right}.navigation{padding:0 16px 12px;background:var(--nav);flex-shrink:0}.segments{display:flex;background:#7777821c;padding:3px;border-radius:9px;gap:2px}.segments button{flex:1;font-size:13px;min-height:30px;padding:3px 4px;border-radius:7px;white-space:nowrap}.segments [aria-pressed=true]{background:var(--card);box-shadow:0 1px 4px #0002;font-weight:600}.period-nav{display:flex;gap:6px;align-items:center;margin-top:10px}.period-nav button{min-height:44px}.period-nav .step{width:44px;flex-shrink:0}.period-nav .date-title{flex:1;font-size:15px;font-weight:600;line-height:1.45;padding:0 3px}.date-title small{display:block;font-size:12px;font-weight:400;color:var(--muted);margin-top:3px}.return{font-size:15px;min-height:44px;width:100%;margin-top:10px}.list{overflow:auto;flex:1;padding:0 16px 26px;scrollbar-width:none}.period{margin-bottom:22px}.heading{padding:0 6px;margin-bottom:10px}.heading h3{display:flex;justify-content:space-between;gap:12px;font-size:17px;font-weight:600}.heading h3 span{font-size:15px;color:var(--muted);font-weight:400}.heading p{font-size:13px;color:var(--muted);margin-top:4px}.heading .count-note{font-size:12px}.day-label{font-size:13px;font-weight:600;color:var(--muted);margin:0 6px 7px}.day{margin-bottom:10px}.glass{border-radius:26px;background:var(--card);border:.6px solid var(--edge);box-shadow:0 6px 14px #29245c0f;overflow:hidden;padding:4px 0}.row{width:100%;display:flex;text-align:left;padding:16px;gap:14px;align-items:flex-start;min-height:60px;position:relative}.row+.row:before{position:absolute;content:"";top:0;left:92px;right:16px;height:.5px;background:var(--divider)}.time{width:48px;flex-shrink:0;font-size:15px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.6}.kind{width:3px;height:26px;flex-shrink:0;border-radius:3px;background:#007aff;margin-top:3px}.kind.calendar{background:#34a853}.kind.food{background:#d08609}.kind.done{background:#8e8e93}.row-copy{flex:1;min-width:0}.row-copy strong{font-weight:400;font-size:17px;line-height:1.5;display:block;overflow-wrap:anywhere}.row-copy small{font-size:15px;line-height:1.5;display:block;color:var(--muted);margin-top:3px}.row-copy .span{font-size:13px}.row.completed strong{text-decoration:line-through;color:var(--muted)}.chevron{font-size:19px;color:#9396a0;line-height:1.5}.footnote{font-size:13px;color:var(--muted);margin:6px 6px 0;line-height:1.55}.routine{margin-bottom:22px}.empty{padding:18px;font-size:15px;color:var(--muted)}.calendar-status{font-size:13px;color:var(--muted);margin:0 0 22px}.home-indicator{height:5px;width:130px;background:var(--ink);border-radius:4px;position:absolute;bottom:8px;left:50%;transform:translateX(-50%);pointer-events:none;opacity:.8}.overlay{position:absolute;inset:0;background:#0004;display:flex;align-items:flex-end;z-index:10}.overlay[hidden]{display:none}.sheet{width:100%;height:94%;border-radius:28px 28px 0 0;background:var(--nav);display:flex;flex-direction:column}.handle{width:36px;height:5px;background:#8e8e9366;border-radius:4px;margin:10px auto 3px}.sheet-content{padding:16px;overflow:auto;flex:1}.sheet-content>.segments{margin-bottom:18px}.date-field{display:flex;gap:12px;align-items:center;justify-content:space-between;margin-bottom:18px;font-size:16px}.date-field input{width:156px;min-height:40px;background:#77778215;border:0;border-radius:7px;padding:5px;font-size:16px}.month-head{display:flex;align-items:center;padding:0 8px;margin:18px 0 8px;gap:6px}.month-head strong{font-size:17px;flex:1}.month-head button{min-width:34px;min-height:34px}.grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px 0}.weekday{text-align:center;font-size:12px;color:var(--muted);padding:6px 0}.grid button{min-height:42px;padding:2px 0;font-size:16px;font-variant-numeric:tabular-nums}.number{display:grid;place-items:center;width:32px;height:32px;border-radius:50%;margin:auto}.number.selected{background:var(--ink);color:var(--nav)}.number.today:not(.selected){color:#d5392a;font-weight:600}.dots{display:flex;justify-content:center;height:4px;gap:2px;margin-top:2px}.dots i{width:4px;height:4px;border-radius:50%;background:#007aff}.dots i.calendar{background:#34a853}.dots i.food{background:#d08609}.confirm{min-height:44px;background:var(--ink);color:var(--nav);padding:10px 16px;border-radius:12px;margin-top:18px;width:100%}.validation{font-size:13px;color:#c73124;margin-top:12px}.detail-title{font-size:24px;line-height:1.5;margin:10px 4px 18px}.detail-content{padding:18px;line-height:1.8}.back-home{padding:16px}.back-home h3{font-size:18px;margin-bottom:12px}
+@media(max-width:760px){body{padding:16px 10px}.layout{flex-direction:column;gap:20px;align-items:center}.guide{padding:0;max-width:390px}.guide h1{font-size:22px}.guide p{margin:6px 0}.guide .entry{display:none}.guide label{display:inline-block;margin:10px 8px 0 0}.guide select{width:auto;max-width:220px}.review{max-width:100%}.phone{height:min(844px,90dvh);min-height:620px;border-radius:24px}}
+.sheet{background:#f2f2f6}.dark .sheet{background:#17181c}
+</style>
+<div class="layout">
+  <aside class="guide">
+    <small>小当家 · 待你确认</small>
+    <h1>连续看安排，<br>按周、月或日期查找。</h1>
+    <p>按当前 SwiftUI 代码复现的信息结构和操作。直接点右侧的「周」「月」、左右箭头或日历，可以实际切换。</p>
+    <p>这是浏览器交互预览，<strong>不是 iPhone 实机截图</strong>。字体、系统日期控件和玻璃材质以原生版本为准。示例日期固定为 2026年10月7日，不读取你的数据。</p>
+    <label for="scenario">示例内容</label><select id="scenario"><option value="normal">有安排的一周</option><option value="routine">本周只有每日提醒</option><option value="empty">没有安排</option><option value="busy">40项安排与长标题</option></select>
+    <label for="theme">外观</label><select id="theme"><option value="light">浅色 · 雾面</option><option value="dark">深色 · 雾面</option></select>
+    <label for="calendar-state">系统日历</label><select id="calendar-state"><option value="ready">已读取</option><option value="off">未开启</option><option value="denied">没有读取权限</option><option value="loading">正在读取</option></select>
+    <button class="entry" id="home-entry"><div>日程总览<span id="home-subtitle"></span></div>›</button>
+    <p>目前没有提交、推送或发布。可用页面上的浮动反馈按钮圈选并评论。</p>
+  </aside>
+  <div class="review" id="review">
+    <div class="watermark">当前设计 · 浏览器交互预览 · 非 iPhone 实机</div>
+    <div class="phone" id="phone">
+      <div class="status" aria-hidden="true"><span>9:41</span><span>▮▮▮ ▰</span></div>
+      <div id="app" style="display:flex;flex-direction:column;min-height:0;flex:1"></div>
+      <div class="home-indicator" aria-hidden="true"></div>
+      <div class="overlay" id="overlay" hidden></div>
+    </div>
+  </div>
+</div>
+<script>
+// Review-only fixture. No native app, network, user data or persistence is involved.
+const TODAY='2026-10-07', app=document.querySelector('#app'), overlay=document.querySelector('#overlay');
+const date=s=>new Date(s+'T12:00:00Z'), iso=d=>d.toISOString().slice(0,10);
+const add=(s,n)=>{const d=date(s);d.setUTCDate(d.getUTCDate()+n);return iso(d)};
+const full=s=>`${date(s).getUTCFullYear()}年${date(s).getUTCMonth()+1}月${date(s).getUTCDate()}日`;
+const md=s=>`${date(s).getUTCMonth()+1}月${date(s).getUTCDate()}日`;
+const week=s=>add(s,-((date(s).getUTCDay()+6)%7));
+const month=s=>s.slice(0,7)+'-01';
+const shiftMonth=(s,n)=>{const d=date(month(s));d.setUTCMonth(d.getUTCMonth()+n);return iso(d)};
+const label=s=>`${s===TODAY?'今天 · ':s===add(TODAY,1)?'明天 · ':''}${md(s)} ${['周日','周一','周二','周三','周四','周五','周六'][date(s).getUTCDay()]}`;
+const rangeLabel=(a,b)=>a===b?full(a):`${full(a)} — ${full(b)}`;
+const icon=(name)=>`<svg aria-hidden="true" viewBox="0 0 24 24">${name==='calendar'?'<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M7 3v4m10-4v4M3 10h18m-13 4h2m4 0h2m-8 3h2"/>':`<path d="${name==='left'?'M15 5l-7 7 7 7':'M9 5l7 7-7 7'}"/>`}</svg>`;
+const fixtures=[
+ {id:'done',day:TODAY,time:'09:00',title:'领取快递',source:'已完成 · 10月7日 09:20 完成',done:true},
+ {id:'meet',day:TODAY,time:'14:00',title:'项目沟通',source:'工作日历 · 线上会议',type:'calendar',span:'2026年10月7日 14:00 — 2026年10月7日 15:00'},
+ {id:'food',day:'2026-10-08',time:'全天',title:'酸奶到期',source:'2 盒 · 包装有效期 10月8日',type:'food'},
+ {id:'mom',day:'2026-10-08',time:'19:00',title:'和妈妈视频',source:''},
+ {id:'dentist',day:'2026-10-10',time:'09:30',title:'牙齿复诊',source:'健康日历 · 市口腔医院',type:'calendar',span:'2026年10月10日 09:30 — 2026年10月10日 10:30'},
+ {id:'report',day:'2026-10-13',time:'10:00',title:'取体检报告',source:''},
+ {id:'trip',day:'2026-10-16',end:'2026-10-18',time:'全天',title:'苏州短途旅行',source:'个人日历',type:'calendar',span:'2026年10月16日 — 2026年10月18日'},
+ {id:'filter',day:'2026-11-03',time:'10:00',title:'更换净水器滤芯',source:''}
+];
+const routine={id:'daily',day:TODAY,time:'08:00',title:'服用维生素',source:'每天重复',routine:true};
+let mode='upcoming',anchor=TODAY,last=TODAY,scenario='normal',calendarState='ready',modalStart=TODAY,modalEnd=TODAY,modalMonth=month(TODAY),rangeMode=false,returnFocus=null;
+function events(){let es=scenario==='empty'?[]:scenario==='routine'?fixtures.filter(e=>e.day>'2026-10-11'):scenario==='busy'?Array.from({length:40},(_,i)=>({id:`busy-${i}`,day:add(TODAY,Math.floor(i/8)),time:`${String(8+i%8).padStart(2,'0')}:30`,title:i%4===0?'带上去年体检报告和近期用药记录，陪妈妈去医院复查甲状腺':['领取干洗衣物','和物业确认厨房漏水维修时间','整理下周出差资料'][i%3],source:'定时提醒'})):fixtures;return calendarState==='ready'?es:es.filter(e=>e.type!=='calendar')}
+function range(){if(mode==='upcoming')return[TODAY,add(TODAY,364)];if(mode==='week')return[week(anchor),add(week(anchor),6)];if(mode==='month')return[month(anchor),add(shiftMonth(anchor,1),-1)];return[anchor,last]}
+function inRange(a,b){return events().filter(e=>e.day<=b&&(e.end||e.day)>=a).map(e=>({...e,groupDay:e.day<a?a:e.day}))}
+function routines(a,b){return scenario!=='empty'&&b>=TODAY?[{...routine,day:a<TODAY?TODAY:a}]:[]}
+function row(e){return `<button class="row ${e.done?'completed':''}" data-event="${e.id}"><span class="time">${e.time}</span><span aria-hidden="true" class="kind ${e.done?'done':e.type||''}"></span><span class="row-copy"><strong>${e.title}</strong>${e.source?`<small>${e.source}</small>`:''}${e.span?`<small class="span">${e.span}</small>`:e.routine?`<small class="span">本段首次：${md(e.day)}</small>`:''}</span><span class="chevron" aria-hidden="true">›</span></button>`}
+function grouped(es){return [...new Set(es.map(e=>e.groupDay))].map(d=>`<section class="day"><h3 class="day-label">${label(d)}</h3><div class="glass">${es.filter(e=>e.groupDay===d).map(row).join('')}</div></section>`).join('')}
+function routineSection(a,b){const rs=routines(a,b);return rs.length?`<section class="routine"><h3 class="day-label">每日提醒</h3><div class="glass">${rs.map(row).join('')}</div><p class="footnote">单独列出，不计入上方数量；时间为所选范围内首次提醒，具体起止见详情。</p></section>`:''}
+function period(title,a,b,es){const text=calendarState==='loading'?'本地暂无安排，系统日历仍在读取中。':routines(a,b).length?'这段时间没有其他已知安排，每日提醒见下方。':'这段时间暂无已知安排。';return `<section class="period"><header class="heading"><h3>${title}<span>${es.filter(e=>!e.done).length} 项安排</span></h3><p>${rangeLabel(a,b)}</p><p class="count-note">不含已完成与每日提醒</p></header>${es.length?grouped(es):`<div class="glass empty">${text}</div>`}</section>`}
+function subtitle(){const n=inRange(TODAY,add(week(TODAY),6)).filter(e=>!e.done).length;return n?`本周还有 ${n} 项 · 另有 1 项每日提醒`:scenario==='empty'?'本周剩余时间暂无安排':'本周只有每日提醒'}
+function render(){
+ const[a,b]=range();let list='';
+ const status={off:'未开启系统日历，以下为本地提醒与物品安排。',denied:'暂时无法读取系统日历，以下不包含日历安排。可在设置中检查日历权限。',loading:'正在读取这段时间的系统日历…'}[calendarState];if(status)list+=`<p class="calendar-status">${status}</p>`;
+ if(mode==='upcoming'){const all=inRange(a,b),end=add(week(TODAY),6),next=add(end,7);[[TODAY,end,'本周剩余'],[add(end,1),next,'下周'],[add(next,1),b,'更晚']].forEach(([s,e,t],i)=>{const es=all.filter(x=>x.groupDay>=s&&x.groupDay<=e);if(i===0||es.length)list+=period(t,s,e,es);if(i===0)list+=routineSection(a,b)})}
+ else list+=period('所选时间内',a,b,inRange(a,b))+routineSection(a,b);
+ list+=`<p class="footnote">${mode==='upcoming'?'已列出未来一年内的已知安排；更远的日期可用周、月或日历查找。':'仅列出所选时间内的已知安排。'}</p>`;
+ app.innerHTML=`<header class="bar"><button data-action="home" aria-label="返回首页入口预览">‹ 首页</button><h2>日程总览</h2><button data-action="dates" aria-label="按日历查找日期或时间段">${icon('calendar')}</button></header><nav class="navigation" aria-label="查看时间"><div class="segments">${[['upcoming','接下来'],['week','周'],['month','月'],...(mode==='dates'?[['dates','所选日期']]:[])].map(([m,t])=>`<button data-mode="${m}" aria-pressed="${mode===m}">${t}</button>`).join('')}</div><div class="period-nav">${mode!=='upcoming'?`<button class="step" data-step="-1" aria-label="上一${mode==='week'?'周':mode==='month'?'月':'段时间'}">${icon('left')}</button>`:''}<button class="date-title" data-action="dates">${mode==='upcoming'?'接下来的安排<small>从今天开始 · 按日期连续查看</small>':rangeLabel(a,b)}</button>${mode!=='upcoming'?`<button class="step" data-step="1" aria-label="下一${mode==='week'?'周':mode==='month'?'月':'段时间'}">${icon('right')}</button>`:''}</div>${mode!=='upcoming'?'<button class="return" data-action="reset">回到今天起的安排</button>':''}</nav><main class="list" id="list" aria-label="安排清单">${list}</main>`;
+ document.querySelector('#home-subtitle').textContent=subtitle();
+}
+function closeModal(){overlay.hidden=true;overlay.innerHTML='';app.inert=false;const focus=returnFocus?.isConnected?returnFocus:app.querySelector('[data-action="dates"]');focus?.focus({preventScroll:true})}
+function showModal(html,title){app.inert=true;overlay.hidden=false;overlay.innerHTML=`<section class="sheet" role="dialog" aria-modal="true" aria-label="${title}"><div class="handle" aria-hidden="true"></div><header class="bar"><button data-action="close">取消</button><h2>${title}</h2><span></span></header><div class="sheet-content">${html}</div></section>`}
+function renderDates(){
+ let html=`<div class="segments"><button data-pick="day" aria-pressed="${!rangeMode}">某一天</button><button data-pick="range" aria-pressed="${rangeMode}">一段时间</button></div>`;
+ if(rangeMode)html+=`<label class="date-field">开始日期<input id="start" type="date" value="${modalStart}"></label><label class="date-field">结束日期（含当天）<input id="end" type="date" value="${modalEnd}"></label><p class="footnote">一次最多查看 366 天，可选择过去或未来的日期。</p><p class="validation" id="validation" role="status"></p><button class="confirm" data-action="apply">查看这段时间的安排</button>`;
+ else{const first=month(modalMonth),n=date(add(shiftMonth(first,1),-1)).getUTCDate(),leading=(date(first).getUTCDay()+6)%7;
+ html+=`<label class="date-field">快速跳到年月<input id="jump" type="date" value="${modalStart}"></label><div class="month-head"><strong>${date(first).getUTCFullYear()}年${date(first).getUTCMonth()+1}月</strong><button data-month="-1" aria-label="上个月">${icon('left')}</button><button data-month="1" aria-label="下个月">${icon('right')}</button></div><div class="grid">${['一','二','三','四','五','六','日'].map(x=>`<span class="weekday">${x}</span>`).join('')}${'<span></span>'.repeat(leading)}${Array.from({length:n},(_,i)=>{const d=add(first,i),types=[...new Set(inRange(d,d).map(e=>e.type||''))];return`<button data-day="${d}" aria-label="${full(d)}${types.length?'，有安排':''}"><span class="number ${d===modalStart?'selected':''} ${d===TODAY?'today':''}">${i+1}</span><span class="dots">${types.map(t=>`<i class="${t}"></i>`).join('')}</span></button>`}).join('')}</div>${calendarState==='loading'?'<p class="footnote">正在读取该月日历，日期标记尚未完整。</p>':''}<p class="footnote" style="margin-top:18px">点选日期，直接查看当天的安排清单。</p>`}
+ showModal(html,'查找安排');if(rangeMode)validate();
+}
+function validate(){const length=modalStart&&modalEnd?(date(modalEnd)-date(modalStart))/86400000:-1,ok=length>=0&&length<366;document.querySelector('#validation').textContent=ok?'':'结束日期不能早于开始日期，且范围不能超过 366 天。';document.querySelector('[data-action="apply"]').disabled=!ok;return ok}
+function reset(){mode='upcoming';anchor=last=TODAY;render()}
+app.addEventListener('click',ev=>{const b=ev.target.closest('button');if(!b)return;
+ if(b.dataset.mode){mode=b.dataset.mode;if(mode==='upcoming')anchor=last=TODAY;render();app.querySelector(`[data-mode="${mode}"]`)?.focus();return}
+ if(b.dataset.step){const direction=Number(b.dataset.step),[a,e]=range(),length=Math.round((date(e)-date(a))/86400000)+1;anchor=mode==='month'?shiftMonth(a,direction):add(a,direction*length);if(mode==='dates')last=add(anchor,length-1);render();app.querySelector(`[data-step="${direction}"]`)?.focus();return}
+ if(b.dataset.action==='reset'){reset();return}
+ if(b.dataset.action==='dates'){returnFocus=b;modalStart=range()[0];modalEnd=modalStart;modalMonth=month(modalStart);rangeMode=false;renderDates();overlay.querySelector('button').focus();return}
+ if(b.dataset.action==='home'){app.innerHTML=`<header class="bar"><span></span><h2>首页入口预览</h2><span></span></header><main class="back-home"><p class="footnote">这里只展示本次改动的首页入口。</p><button class="entry" data-action="reset" style="text-align:left;min-height:80px;width:100%">日程总览<span>${subtitle()}</span></button></main>`;return}
+ if(b.dataset.event){returnFocus=b;const e=[...events(),routine].find(x=>x.id===b.dataset.event);showModal(`<h3 class="detail-title">${e.title}</h3><div class="glass detail-content">${e.routine?'每天':full(e.day)} · ${e.time}<br>${e.source}${e.span?'<br>'+e.span:''}</div><p class="footnote" style="margin-top:18px">仅用于预览点击路径。原生版点击本地事项进入其现有页面，点击日历事项打开系统日历；这里不操作真实数据。</p>`,'事项预览');overlay.querySelector('button').focus()}
+});
+overlay.addEventListener('click',ev=>{const b=ev.target.closest('button');if(!b)return;
+ if(b.dataset.action==='close'){closeModal();return}
+ if(b.dataset.pick){rangeMode=b.dataset.pick==='range';renderDates();overlay.querySelector(`[data-pick="${b.dataset.pick}"]`).focus();return}
+ if(b.dataset.month){modalMonth=shiftMonth(modalMonth,Number(b.dataset.month));renderDates();overlay.querySelector(`[data-month="${b.dataset.month}"]`).focus();return}
+ if(b.dataset.day){mode='dates';anchor=last=b.dataset.day;render();closeModal();return}
+ if(b.dataset.action==='apply'&&validate()){mode='dates';anchor=modalStart;last=modalEnd;render();closeModal()}
+});
+overlay.addEventListener('input',ev=>{if(ev.target.id==='start')modalStart=ev.target.value;if(ev.target.id==='end')modalEnd=ev.target.value;if(rangeMode)validate()});
+overlay.addEventListener('change',ev=>{if(ev.target.id==='jump'&&ev.target.value){modalStart=ev.target.value;modalMonth=month(modalStart);renderDates()}});
+document.addEventListener('keydown',ev=>{if(overlay.hidden)return;if(ev.key==='Escape'){ev.preventDefault();closeModal()}if(ev.key==='Tab'){const bs=[...overlay.querySelectorAll('button:not(:disabled),input')],first=bs[0],last=bs.at(-1);if(ev.shiftKey&&document.activeElement===first){ev.preventDefault();last.focus()}else if(!ev.shiftKey&&document.activeElement===last){ev.preventDefault();first.focus()}}});
+document.querySelector('#scenario').onchange=ev=>{scenario=ev.target.value;reset()};
+document.querySelector('#theme').onchange=ev=>document.querySelector('#phone').classList.toggle('dark',ev.target.value==='dark');
+document.querySelector('#calendar-state').onchange=ev=>{calendarState=ev.target.value;render()};
+document.querySelector('#home-entry').onclick=reset;
+render();
+</script>
+</html>

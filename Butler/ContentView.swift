@@ -34,6 +34,7 @@ struct AgendaKey: Hashable {
     let events: Int
     let minute: Int
     let browsingMonths: [Date]
+    let overviewInterval: DateInterval?
 }
 
 struct ContentView: View {
@@ -69,6 +70,7 @@ struct ContentView: View {
     @State private var calendarFeed = CalendarFeed()
     @State private var listDay = Calendar.current.startOfDay(for: .now)
     @State private var browsingMonth = Calendar.current.startOfDay(for: .now)
+    @State private var overviewInterval: DateInterval?
     @State private var snoozingTarget: BriefTarget?
     @State private var agendaCache = AgendaCache()
     @State private var briefService = Self.isTesting ? BriefService() : BriefRefreshController.shared.service
@@ -244,6 +246,10 @@ struct ContentView: View {
             calendarFeed.focusedDate = browsingMonth
             Task { await calendarFeed.refresh() }
         }
+        .onChange(of: overviewInterval) {
+            calendarFeed.focusedInterval = overviewInterval
+            Task { await calendarFeed.refresh() }
+        }
         .alert("\(confirmingBrief?.action.label ?? "")？", isPresented: Binding(get: { confirmingBrief != nil }, set: { if !$0 { confirmingBrief = nil } })) {
             Button("确认") {
                 if let pending = confirmingBrief { runBrief(pending.action, pending.target, facts: facts) }
@@ -389,18 +395,16 @@ struct ContentView: View {
             })
         case .day(let day):
             DayScheduleView(agenda: yearAgenda(facts: facts), day: day, onOpen: open)
-        case .overview:
-            CalendarOverviewView(agenda: yearAgenda(facts: facts), onOpenDay: { path.append(.day($0)) }, onOpen: open)
-                .task {
-                    calendarFeed.horizonDays = 370
-                    await calendarFeed.refresh()
+        case .overview, .upcoming:
+            CalendarOverviewView(agenda: yearAgenda(facts: facts), onBrowse: { overviewInterval = $0 },
+                                 onBrowseMonth: { browsingMonth = $0 }) { entry in
+                if case .calendarEvent = entry.target {
+                    let date = entry.calendarSpan?.start ?? entry.start ?? entry.day
+                    if let url = URL(string: "calshow:\(date.timeIntervalSinceReferenceDate)") { openURL(url) }
+                } else {
+                    open(entry.target)
                 }
-        case .upcoming:
-            CalendarOverviewView(agenda: yearAgenda(facts: facts), initialMode: .list, onOpenDay: { path.append(.day($0)) }, onOpen: open)
-                .task {
-                    calendarFeed.horizonDays = 370
-                    await calendarFeed.refresh()
-                }
+            }
         case .memories:
             if let chat { MemoriesView(chat: chat) }
         case .items:
@@ -426,9 +430,12 @@ struct ContentView: View {
             products: products.map { "\($0.id)|\($0.revision)" },
             tasks: reminders.reminders.map { "\($0.id)|\($0.revision)|\($0.status)|\($0.activity.count)" },
             events: calendarFeed.events.hashValue,
-            minute: Int(agendaNow.timeIntervalSince1970 / 60), browsingMonths: months)
+            minute: Int(agendaNow.timeIntervalSince1970 / 60), browsingMonths: months, overviewInterval: overviewInterval)
         if agendaCache.key == key, let cached = agendaCache.agenda { return cached }
-        let built = HomeAgenda.build(lots: facts, reminders: reminders.reminders, events: calendarFeed.events, now: agendaNow, dayCount: 366, additionalDays: months.flatMap { HomeAgenda.browsingDays(around: $0) })
+        let extraDays = months.flatMap { HomeAgenda.browsingDays(around: $0) }
+            + (overviewInterval.map { AgendaWindow.days(in: $0, calendar: calendar) } ?? [])
+        let built = HomeAgenda.build(lots: facts, reminders: reminders.reminders, events: calendarFeed.events,
+                                     now: agendaNow, dayCount: 366, additionalDays: extraDays)
         agendaCache.key = key
         agendaCache.agenda = built
         return built

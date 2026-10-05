@@ -263,11 +263,9 @@ struct HomeView: View {
 
     // MARK: One quiet line
 
-    /// 日程总览, with what the coming week holds; things at home are reached from the top-right icon.
+    /// The same today-through-Sunday window as the overview; routines are named separately.
     private var quietLinks: some View {
-        let week = HomeList.weekAhead(agenda: agenda)
-        return quietRow("日程总览", week.map { "这周还有 \($0.count) 件 · \($0.preview)" } ?? "这周没有别的安排",
-                        action: onOpenOverview)
+        quietRow("日程总览", AgendaOverview.homeSubtitle(agenda: agenda), action: onOpenOverview)
     }
 
     private func quietRow(_ title: String, _ subtitle: String, action: @escaping () -> Void) -> some View {

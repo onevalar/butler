@@ -557,18 +557,11 @@ final class ButlerBriefTests: XCTestCase {
         XCTAssertTrue(HomeList.build(day: day(5, from: now), agenda: a, facts: [yogurt], now: now).rows.isEmpty)
     }
 
-    func testQuietLines() throws {
+    func testQuietPlacesLine() {
         let now = at(10)
         let apples = lot("苹果", quantity: 5, package: day(4, from: now), place: "常温", now: now)
         let milk = lot("牛奶", package: day(30, from: now), place: "冷藏", now: now)
         let ham = lot("火腿", package: day(30, from: now), place: "冷藏", now: now)
-        let pickup = TimedReminder(text: "取快递", fireDate: at(15, dayOffset: 2))
-        let daily = TimedReminder(text: "吃药", fireDate: at(21), repeats: .daily, createdAt: day(-3, from: now))
-        let a = agenda([apples, milk, ham], reminders: [pickup, daily], now: now)
-        let week = try XCTUnwrap(HomeList.weekAhead(agenda: a))
-        XCTAssertEqual(week.count, 2, "the daily routine isn't counted")
-        XCTAssertTrue(week.preview.contains("取快递"))
-        XCTAssertNil(HomeList.weekAhead(agenda: agenda([], now: now)))
         XCTAssertEqual(HomeList.places(facts: [apples, milk, ham]), "冷藏 2 · 常温 1")
     }
 }

@@ -119,17 +119,6 @@ enum HomeList {
 
     // MARK: Quiet lines
 
-    /// "这周还有 3 件" and a short preview, from tomorrow to a week ahead. Daily routines and finished tasks don't count.
-    static func weekAhead(agenda: HomeAgenda, calendar: Calendar = .current) -> (count: Int, preview: String)? {
-        var seen = Set<AgendaEntry.Target>()
-        let entries = (1...6).compactMap { calendar.date(byAdding: .day, value: $0, to: agenda.today) }.flatMap { day in
-            agenda.entries(on: day).filter { !$0.isRoutine && !$0.isCompleted }
-        }.filter { seen.insert($0.target).inserted }
-        guard !entries.isEmpty else { return nil }
-        let preview = entries.prefix(3).map { "\($0.day.relativeDayName(from: agenda.today, calendar: calendar))\($0.title)" }
-        return (entries.count, preview.joined(separator: " · "))
-    }
-
     /// "冷藏 6 · 冷冻 2 · 常温 4 · 卫生间 2".
     static func places(facts: [LotFacts]) -> String {
         let groups = Dictionary(grouping: facts) { StorageLocation.groupName(for: $0.storageLocation) }

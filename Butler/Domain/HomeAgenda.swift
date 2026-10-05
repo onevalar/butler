@@ -26,6 +26,9 @@ struct AgendaEntry: Identifiable, Hashable {
     /// Happens every day (a daily reminder): shown once in lists and not dotted on every day.
     var isRoutine = false
     var isCompleted = false
+    /// Original calendar occurrence, shared by its daily slices but not by other repeats.
+    var calendarOccurrenceID: String? = nil
+    var calendarSpan: DateInterval? = nil
 
     var isAllDay: Bool { start == nil }
 
@@ -186,10 +189,12 @@ struct HomeAgenda {
                       event.start < next, event.end > day || (event.end == event.start && event.start >= day) else { continue }
                 let subtitle = [event.calendarName, event.location].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
                 byDay[day, default: []].append(AgendaEntry(
-                    id: "event-\(event.id)-\(day.timeIntervalSince1970)", kind: .calendar, title: event.title,
+                    id: "event-\(event.id)-\(event.start.timeIntervalSince1970)-\(day.timeIntervalSince1970)", kind: .calendar, title: event.title,
                     subtitle: subtitle.isEmpty ? nil : subtitle, day: day,
                     start: event.isAllDay ? nil : max(event.start, day), end: event.isAllDay ? nil : min(event.end, next),
-                    target: .calendarEvent(event.id)))
+                    target: .calendarEvent(event.id),
+                    calendarOccurrenceID: "\(event.id)|\(event.start.timeIntervalSince1970)",
+                    calendarSpan: DateInterval(start: event.start, end: max(event.start, event.end))))
             }
         }
 

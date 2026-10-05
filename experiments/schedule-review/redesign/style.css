@@ -1,0 +1,62 @@
+/* Isolated design review. Colours follow Butler's mist appearance. */
+*{box-sizing:border-box}
+body{margin:0;padding:32px 20px;background:#dfe2e7;color:#1c1d22;font:16px/1.5 -apple-system,BlinkMacSystemFont,"Noto Sans CJK SC",sans-serif}
+button,select{font:inherit;color:inherit}
+button{background:none;border:0;cursor:pointer;touch-action:manipulation;min-height:44px;min-width:44px}
+button:disabled{opacity:.4;cursor:default}
+button:focus-visible,select:focus-visible,summary:focus-visible,[tabindex]:focus-visible{outline:2px solid #2877d7;outline-offset:-2px}
+button:active:not(:disabled){background-color:#77777714}
+button svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;vertical-align:middle}
+h1,h2,h3,h4,p{margin:0}
+.layout{max-width:930px;margin:auto;display:flex;align-items:flex-start;gap:76px}
+.guide{width:340px;padding-top:40px;flex-shrink:0}
+.guide small{font-size:12px;color:#656b77}.guide h1{font-size:28px;font-weight:600;margin:16px 0}
+.guide p{color:#555c68;line-height:1.85;margin:18px 0}.guide .disclaimer{font-size:13px}
+.controls{display:grid;gap:14px;margin:28px 0}
+.controls label{font-size:14px;display:flex;justify-content:space-between;align-items:center}
+.controls select{min-height:44px;min-width:210px;border:1px solid #b9bec7;border-radius:10px;padding:6px 10px;background:#eef0f3}
+.watermark{font-size:12px;color:#5f6673;text-align:center;margin-bottom:10px}
+#review{width:390px;flex-shrink:0;max-width:100%}
+.phone{--ink:#1c1d22;--secondary:#656b76;--divider:#ced2d97a;--glass:#ffffff57;--panel:#f3f4f6;color:var(--ink);height:844px;border-radius:32px;overflow:hidden;position:relative;box-shadow:0 18px 45px #2226381a,0 0 0 1px #ffffff91;background:radial-gradient(ellipse 520px 340px at 50% 20%,#ffffffd9,transparent),linear-gradient(#f1f2f4,#e9ebee 60%,#e2e4e8)}
+.phone.dark{--ink:#f3f3f6;--secondary:#b1b6bf;--divider:#ffffff18;--glass:#ffffff0f;--panel:#1b1c20;background:radial-gradient(ellipse at 50% 20%,#ffffff0f,transparent 55%),linear-gradient(#17181c,#0c0c0f)}
+#stage{height:100%;display:flex;flex-direction:column}
+.status{height:52px;display:flex;justify-content:space-between;align-items:center;padding:0 28px;font-weight:600;font-size:14px;flex-shrink:0}.status span:last-child{font-size:12px}
+.topbar{display:flex;align-items:center;gap:6px;padding:0 14px 12px;flex-shrink:0}
+.topbar h2{font-size:19px;font-weight:600;flex:1;white-space:nowrap}
+.topbar>button{padding:0;text-align:left}
+.topbar>div{display:flex;align-items:center;gap:6px}
+.topbar button{font-size:14px;padding:0 4px}
+.calendar-button{display:flex;align-items:center;gap:5px}
+#agenda{overflow:auto;flex:1;min-height:0;padding:0 24px 24px;background:var(--panel);scrollbar-width:none;position:relative;overflow-anchor:none;overscroll-behavior:contain}
+.agenda-day{padding-bottom:16px;scroll-margin-top:0}
+.day-heading{position:sticky;top:0;z-index:1;background:var(--panel);font-size:16px;font-weight:600;padding:12px 0;display:flex;align-items:baseline;flex-wrap:wrap;gap:8px;border-bottom:.5px solid var(--divider)}
+.day-heading span{font-size:12px;font-weight:400;color:var(--secondary)}
+.event{display:flex;gap:14px;width:100%;text-align:left;align-items:flex-start;padding:14px 0;min-height:60px;position:relative;scroll-margin-top:52px}
+.event+.event{border-top:.5px solid var(--divider)}
+.event-time{font-size:14px;font-variant-numeric:tabular-nums;color:var(--secondary);width:54px;flex-shrink:0;padding-top:3px;line-height:1.5}
+.event-time small{display:block;font-size:12px;margin-top:1px}
+.event-copy{flex:1;min-width:0}.event-copy strong{display:block;font-weight:500;font-size:17px;line-height:1.6;overflow-wrap:anywhere}
+.event-copy small{display:block;font-size:13px;color:var(--secondary);margin-top:3px;line-height:1.6}
+.done-mark{color:var(--secondary);padding-top:4px}.done-mark svg{width:15px;height:15px}.completed .event-copy strong{color:var(--secondary)}
+.routine summary{cursor:pointer;min-height:44px;padding:12px 0;color:var(--secondary);font-size:13px;touch-action:manipulation}
+.quiet-day{color:var(--secondary);font-size:14px;padding:20px 0 28px}
+.range-chip{margin:0 20px 8px;padding:0 8px;background:var(--glass);border-radius:10px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-shrink:0}
+.range-chip button{font-size:13px;text-align:left}.range-chip [data-action=clear-range]{white-space:nowrap}
+.overlay{position:absolute;inset:0;display:flex;align-items:flex-end;background:#0003;z-index:5}.overlay[hidden]{display:none}
+.sheet{background:var(--panel);border-radius:28px 28px 0 0;width:100%;max-height:92%;display:flex;flex-direction:column;padding-bottom:20px;box-shadow:0 -10px 40px #0000000a}
+.handle{width:32px;height:4px;border-radius:4px;background:#8e8e9355;margin:10px auto 6px;flex-shrink:0}
+.sheet-head{display:flex;align-items:center;justify-content:space-between;padding:0 20px;flex-shrink:0}.sheet-head h3{font-size:17px;font-weight:600}.sheet-head button{color:var(--secondary)}
+.sheet-body{padding:4px 16px 12px;overflow:auto}
+.calendar-nav{display:flex;align-items:center;justify-content:space-between;gap:6px;margin:8px 0}.calendar-nav select{font-size:16px;border:0;background:none;min-height:44px}
+.calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px 0}
+.calendar-grid>span{font-size:12px;text-align:center;color:var(--secondary);padding-bottom:6px}
+.calendar-grid button{padding:3px 0;border-radius:10px}.calendar-grid b{font-weight:400;font-size:16px;display:block;margin-bottom:3px;font-variant-numeric:tabular-nums}
+.calendar-grid button i{width:3px;height:3px;border-radius:50%;display:block;margin:auto}.has-events{background:var(--secondary)}
+.calendar-grid .picked{background:var(--ink);color:var(--panel)}.calendar-grid .picked i{background:var(--panel)}.calendar-grid .between{background:var(--divider)}
+.calendar-bottom{display:flex;justify-content:space-between;align-items:center;margin-top:14px;border-top:.5px solid var(--divider);padding-top:6px}.calendar-bottom button{font-size:14px}
+.range-confirm{display:flex;align-items:center;gap:10px;justify-content:space-between;margin-top:6px}.range-confirm span{font-size:13px;color:var(--secondary)}
+.range-confirm button{padding:8px 20px;background:var(--ink);color:var(--panel);border-radius:12px;font-size:14px;flex-shrink:0}.range-error{font-size:13px;color:var(--ink);margin-top:12px}
+.detail{padding:18px 4px}.detail h4{font-size:22px;font-weight:550;line-height:1.6;margin-bottom:16px}.detail p{margin-top:10px;font-size:15px}.muted{color:var(--secondary)}
+.home-entry{padding:18px 4px;display:flex;flex-direction:column;gap:8px;text-align:left}.home-entry span{font-size:14px;color:var(--secondary)}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+@media(max-width:760px){body{padding:16px 10px 32px}.layout{flex-direction:column;align-items:center;gap:16px}.guide{width:min(100%,390px);padding:0}.guide h1{font-size:22px;margin:8px 0}.guide p{margin:8px 0;font-size:14px}.guide .disclaimer{font-size:12px}.controls{margin:12px 0;gap:8px}.controls select{min-width:170px}.phone{height:800px;border-radius:24px}#agenda{padding-inline:20px}.sheet-body{padding-inline:14px}}

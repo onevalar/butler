@@ -20,6 +20,9 @@ final class CalendarFeed {
     var horizonDays = 8
     /// A separately queried month keeps arbitrary history browsing bounded.
     var focusedDate = Date.now
+    /// The overview can request a week, month or explicit date interval beyond the default horizon.
+    var focusedInterval: DateInterval?
+    private(set) var readIntervals: [DateInterval] = []
 
     init() {
         observer = NotificationCenter.default.addObserver(forName: .EKEventStoreChanged, object: store, queue: .main) { [weak self] _ in
@@ -32,6 +35,10 @@ final class CalendarFeed {
     var canRead: Bool { status == .fullAccess }
     /// The owner said no (or a profile blocks calendars): only system settings can change it.
     var isBlocked: Bool { status == .denied || status == .restricted }
+
+    func covers(_ interval: DateInterval) -> Bool {
+        readIntervals.contains { $0.start <= interval.start && $0.end >= interval.end }
+    }
 
     /// Asks for access when the owner turns the calendar on. Returns whether it can be read.
     @discardableResult
@@ -49,11 +56,15 @@ final class CalendarFeed {
         status = EKEventStore.authorizationStatus(for: .event)
         guard enabled, canRead, let end = Calendar.current.date(byAdding: .day, value: days, to: start) else {
             events = []
+            readIntervals = []
             return
         }
         var intervals = [DateInterval(start: start, end: end)]
         if let month = Calendar.current.dateInterval(of: .month, for: focusedDate), month.start < start || month.end > end {
             intervals.append(month)
+        }
+        if let focusedInterval, !intervals.contains(where: { $0.start <= focusedInterval.start && $0.end >= focusedInterval.end }) {
+            intervals.append(focusedInterval)
         }
         var seen = Set<String>()
         events = intervals.flatMap { interval in
@@ -61,9 +72,10 @@ final class CalendarFeed {
         }.filter { event in
             seen.insert("\(event.eventIdentifier ?? event.calendarItemIdentifier)|\(event.startDate.timeIntervalSince1970)").inserted
         }.map { event in
-            CalendarEventInfo(id: event.eventIdentifier ?? UUID().uuidString, title: event.title ?? "日程",
+            CalendarEventInfo(id: event.eventIdentifier ?? event.calendarItemIdentifier, title: event.title ?? "日程",
                               location: event.location, calendarName: event.calendar?.title ?? "日历",
                               start: event.startDate, end: event.endDate, isAllDay: event.isAllDay)
         }
+        readIntervals = intervals
     }
 }
