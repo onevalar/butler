@@ -91,8 +91,6 @@ final class ButlerChat {
     private(set) var tools: ButlerTools?
     private(set) var turns: [ChatTurn] = []
     private(set) var working = false
-    /// When the current answer was asked for, to show how long it has been.
-    private(set) var workingSince: Date?
     private(set) var workingStage = ""
     let replyProgress = ChatReplyProgress()
     /// Kept with this cached conversation, never serialized or synchronized.
@@ -271,7 +269,6 @@ final class ButlerChat {
         let submittedRevision = draftRevision
         replyStarted = submittedAt
         working = true
-        workingSince = .now
         workingStage = "正在准备相关资料…"
         replyProgress.begin(turn.id)
         tools.inputPhotos = attached
@@ -287,7 +284,6 @@ final class ButlerChat {
                 let keys = Set(turns[index].relatedScopeKeys ?? []).union(tools.relatedScopes.map(\.key))
                 turns[index].relatedScopeKeys = keys.isEmpty ? nil : keys.sorted()
                 working = false
-                workingSince = nil
                 workingStage = ""
                 replyProgress.finish()
                 replyStarted = nil
@@ -609,10 +605,9 @@ final class ButlerChat {
         }
         if selected.contains(where: \.requiresAsyncConfirmation) {
             working = true
-            workingSince = .now
             workingStage = "正在核对系统操作…"
             task = Task {
-                defer { working = false; workingSince = nil; workingStage = ""; task = nil; confirmationID = nil }
+                defer { working = false; workingStage = ""; task = nil; confirmationID = nil }
                 let results = await tools.confirmResults(ids: Set(selected.map(\.id))) { [self] results in
                     try recordConfirmationProgress(id, results: results)
                 }

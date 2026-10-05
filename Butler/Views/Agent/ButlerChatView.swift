@@ -393,7 +393,7 @@ struct ButlerChatView: View {
     }
 
     private var workingIndicator: some View {
-        ChatWorkingIndicator(progress: chat.replyProgress, since: chat.workingSince, stage: chat.workingStage)
+        ChatWorkingIndicator(label: chat.workingStage)
     }
 
     private func turnView(_ turn: ChatTurn) -> some View {
@@ -425,7 +425,7 @@ struct ButlerChatView: View {
                                     notice: turn.collectionNotice)
             }
             ChatReplyBubble(turn: turn, progress: chat.replyProgress,
-                            workingSince: chat.workingSince, workingStage: chat.workingStage)
+                            workingStage: chat.workingStage)
             if turn.replyState == .interrupted {
                 Text("上次回复中断，未自动重发。已保存的消息和操作回执仍保留，请核对后继续。")
                     .font(.footnote).foregroundStyle(.secondary).textSelection(.enabled)
@@ -751,32 +751,33 @@ struct ButlerChatView: View {
 
 /// Keep high-frequency text observation inside the bubble, not in the history,
 /// photo decoding, inventory cards, or composer builders above.
-private struct ChatReplyBubble: View {
+struct ChatReplyBubble: View {
     let turn: ChatTurn
     let progress: ChatReplyProgress
-    let workingSince: Date?
     let workingStage: String
 
     var body: some View {
         let replying = turn.replyState == .answering && progress.turnID == turn.id
         let reply = turn.displayedReply(using: progress)
         if replying || !reply.isEmpty {
-            HStack {
+            HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 8) {
-                    ChatMarkdownText(text: replying && reply.isEmpty ? "正在准备回复…" : reply)
-                        .foregroundStyle(turn.failed && turn.partialReply == nil ? Color.red : .primary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    if replying || turn.partialReply != nil {
-                        Text(turn.partialReply != nil ? "未完成的过程文字 · 不代表执行结果"
-                             : progress.isPreviousPass ? "上一段过程文字 · 正在继续处理"
-                             : "正在生成 · 尚非最终答复")
+                    if !reply.isEmpty {
+                        ChatMarkdownText(text: reply)
+                            .foregroundStyle(turn.failed && turn.partialReply == nil ? Color.red : .primary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    if replying {
+                        ChatWorkingIndicator(label: progress.status(stage: workingStage))
+                    } else if turn.partialReply != nil {
+                        Text("未完成的过程文字 · 不代表执行结果")
                             .font(.caption).foregroundStyle(.secondary)
                     }
-                    if replying { ChatWorkingIndicator(progress: progress, since: workingSince, stage: workingStage) }
                     if turn.partialReply != nil, !turn.answer.isEmpty {
                         Text(turn.answer).font(.footnote).foregroundStyle(.red).textSelection(.enabled)
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 14).padding(.vertical, 9)
                 .glassCard(radius: 18)
                 Spacer(minLength: 40)
@@ -785,24 +786,17 @@ private struct ChatReplyBubble: View {
     }
 }
 
-private struct ChatWorkingIndicator: View {
-    let progress: ChatReplyProgress
-    let since: Date?
-    let stage: String
+struct ChatWorkingIndicator: View {
+    let label: String
 
     var body: some View {
-        // Only the status line ticks; the reply keeps the same container and width.
-        TimelineView(.periodic(from: .now, by: 1)) { context in
-            let seconds = max(0, Int(context.date.timeIntervalSince(since ?? context.date)))
-            let label = !progress.text.isEmpty && !progress.isPreviousPass ? "正在回复…" : stage
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                ProgressView().accessibilityHidden(true)
-                Text(label + (seconds < 6 ? "" : " \(seconds) 秒")
-                     + (seconds < 25 ? "" : "，可以点停止"))
-                    .monospacedDigit()
-            }
-            .accessibilityElement(children: .combine)
+        // A spinner has no text baseline. Center it with the label, including
+        // when larger accessibility text wraps onto multiple lines.
+        HStack(alignment: .center, spacing: 8) {
+            ProgressView().controlSize(.small).accessibilityHidden(true)
+            Text(label).fixedSize(horizontal: false, vertical: true)
         }
         .font(.subheadline).foregroundStyle(.secondary)
+        .accessibilityElement(children: .combine)
     }
 }

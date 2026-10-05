@@ -3,6 +3,32 @@ import XCTest
 @testable import Butler
 
 final class ChatReplyPresentationTests: XCTestCase {
+    @MainActor func testSingleStatusFollowsWaitingStreamingToolsAndRetry() async {
+        let progress = ChatReplyProgress()
+        progress.begin(UUID())
+        XCTAssertEqual(progress.status(stage: "正在准备相关资料…"), "正在准备相关资料…")
+        progress.prepareNextPass()
+        XCTAssertEqual(progress.status(stage: "正在整理结果…"), "正在整理结果…",
+                       "An empty bubble needs only the actual stage, not draft warnings")
+
+        progress.receive("先核对车次。")
+        XCTAssertEqual(progress.status(stage: "正在理解你的安排…"), "正在回复…")
+        progress.prepareNextPass()
+        XCTAssertEqual(progress.status(stage: "正在查看任务和提醒…"), "正在查看任务和提醒… · 上文待更新")
+        progress.receive("")
+        XCTAssertEqual(progress.status(stage: "正在整理结果…"), "正在整理结果… · 上文待更新")
+        XCTAssertEqual(progress.text, "先核对车次。", "Keep the passage while waiting; do not flash an empty bubble")
+        progress.receive("先核对车次。")
+        XCTAssertEqual(progress.status(stage: "正在整理结果…"), "正在回复…",
+                       "Even identical text received in a new pass is current again")
+
+        progress.finish()
+        XCTAssertEqual(progress.status(stage: "正在核对系统操作…"), "正在核对系统操作…",
+                       "Confirmation must not inherit a previous reply's status")
+        progress.begin(UUID())
+        XCTAssertEqual(progress.status(stage: "正在准备相关资料…"), "正在准备相关资料…")
+    }
+
     @MainActor func testMarkdownRemainsIntactAcrossStreamingStopHistoryAndSync() async throws {
         let partial = "## 建议\n\n- **牛奶🥛**\n\n```swift\nlet count = 3"
         var turn = ChatTurn(question: "怎么安排", replyState: .answering)

@@ -13,6 +13,13 @@ final class ChatReplyProgress {
 
     nonisolated deinit {}
 
+    /// One status for waiting, streaming, and tool/retry passes. Retained text
+    /// stays visibly provisional without adding a second explanation row.
+    func status(stage: String) -> String {
+        if text.isEmpty { return stage }
+        return isPreviousPass ? "\(stage) · 上文待更新" : "正在回复…"
+    }
+
     func begin(_ id: UUID) {
         turnID = id
         text = ""
