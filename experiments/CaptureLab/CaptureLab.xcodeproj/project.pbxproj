@@ -1,0 +1,64 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 77;
+	objects = {
+		CA0000000000000000000001 /* Project */ = {
+			isa = PBXProject;
+			attributes = { BuildIndependentTargetsInParallel = 1; LastUpgradeCheck = 2620; };
+			buildConfigurationList = CA0000000000000000000010;
+			developmentRegion = "zh-Hans";
+			knownRegions = ("zh-Hans", en, Base);
+			mainGroup = CA0000000000000000000002;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = CA0000000000000000000003;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (CA0000000000000000000004);
+		};
+		CA0000000000000000000002 = {
+			isa = PBXGroup;
+			children = (CA0000000000000000000005, CA0000000000000000000006, CA0000000000000000000007, CA0000000000000000000003);
+			sourceTree = "<group>";
+		};
+		CA0000000000000000000003 = { isa = PBXGroup; children = (CA0000000000000000000008); name = Products; sourceTree = "<group>"; };
+		CA0000000000000000000004 /* CaptureLab */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CA0000000000000000000011;
+			buildPhases = (CA0000000000000000000009, CA000000000000000000000A, CA000000000000000000000B);
+			buildRules = ();
+			dependencies = ();
+			fileSystemSynchronizedGroups = (CA0000000000000000000005, CA0000000000000000000006);
+			name = CaptureLab;
+			packageProductDependencies = ();
+			productName = CaptureLab;
+			productReference = CA0000000000000000000008;
+			productType = "com.apple.product-type.application";
+		};
+		CA0000000000000000000005 = { isa = PBXFileSystemSynchronizedRootGroup; path = App; sourceTree = "<group>"; };
+		CA0000000000000000000006 = { isa = PBXFileSystemSynchronizedRootGroup; path = Core; sourceTree = "<group>"; };
+		CA0000000000000000000007 = { isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = CaptureLab.xcconfig; sourceTree = "<group>"; };
+		CA0000000000000000000008 = { isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CaptureLab.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		CA0000000000000000000009 = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		CA000000000000000000000A = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		CA000000000000000000000B = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		CA0000000000000000000010 = { isa = XCConfigurationList; buildConfigurations = (CA0000000000000000000012, CA0000000000000000000013); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		CA0000000000000000000011 = { isa = XCConfigurationList; buildConfigurations = (CA0000000000000000000014, CA0000000000000000000015); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		CA0000000000000000000012 = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = CA0000000000000000000007;
+			buildSettings = { SWIFT_OPTIMIZATION_LEVEL = "-Onone"; SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)"; ENABLE_TESTABILITY = YES; DEBUG_INFORMATION_FORMAT = dwarf; };
+			name = Debug;
+		};
+		CA0000000000000000000013 = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = CA0000000000000000000007;
+			buildSettings = { SWIFT_COMPILATION_MODE = wholemodule; DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym"; };
+			name = Release;
+		};
+		CA0000000000000000000014 = { isa = XCBuildConfiguration; buildSettings = {}; name = Debug; };
+		CA0000000000000000000015 = { isa = XCBuildConfiguration; buildSettings = {}; name = Release; };
+	};
+	rootObject = CA0000000000000000000001;
+}

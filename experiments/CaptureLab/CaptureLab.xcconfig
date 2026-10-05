@@ -1,0 +1,23 @@
+// Separate identity and container. Do not add production entitlements or extensions.
+PRODUCT_NAME = $(TARGET_NAME)
+PRODUCT_BUNDLE_IDENTIFIER = com.anvalar.Butler.CaptureLab
+DEVELOPMENT_TEAM = H4982D35ZR
+CODE_SIGN_STYLE = Automatic
+CURRENT_PROJECT_VERSION = 1
+MARKETING_VERSION = 0.1
+SDKROOT = iphoneos
+SUPPORTED_PLATFORMS = iphoneos iphonesimulator
+IPHONEOS_DEPLOYMENT_TARGET = 26.2
+TARGETED_DEVICE_FAMILY = 1
+SUPPORTS_MACCATALYST = NO
+SWIFT_VERSION = 5.0
+SWIFT_STRICT_CONCURRENCY = complete
+CLANG_ENABLE_MODULES = YES
+GENERATE_INFOPLIST_FILE = YES
+INFOPLIST_KEY_CFBundleDisplayName = 小当家采集实验
+INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES
+INFOPLIST_KEY_UILaunchScreen_Generation = YES
+INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait
+INFOPLIST_KEY_NSMicrophoneUsageDescription = 仅在实验录入时听取你这次想做什么；离开页面会停止，录音不会保存。
+INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = 将你的自由表达转成文字，仅尝试设备端中文识别，不可用时改用打字。
+LD_RUNPATH_SEARCH_PATHS = $(inherited) @executable_path/Frameworks
