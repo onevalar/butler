@@ -49,6 +49,9 @@ struct ButlerSettingsView: View {
                 NavigationLink { ModelSettingsPage(chat: chat, hasOtherWork: hasOtherWork) } label: {
                     LabeledContent("对话模型", value: chat.connection.isLoggedIn ? "GPT-6 Sol" : "未登录")
                 }
+                NavigationLink { ScreenshotSetupView() } label: {
+                    Label("从其他 App 采集", systemImage: "camera.viewfinder")
+                }
                 NavigationLink { SpeechRecognitionSettingsView() } label: {
                     LabeledContent("语音识别", value: (SpeechRecognitionProvider(rawValue: speechProvider) ?? .apple).title)
                 }

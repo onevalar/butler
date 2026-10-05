@@ -112,7 +112,7 @@ final class ButlerChat {
         }
     }
 
-    static let photoPrompt = "帮我看看这张照片，需要记到家里的就帮我记上。"
+    static let photoPrompt = "帮我看看这些图片。先说明内容；如果我的用途不明确，请问我想做什么，不要直接记录物品或安排任务。"
 
     private var messages: [LocalAgentMessage] = []
     /// Older conversation condensed by the model, so nothing is simply cut off.
@@ -219,7 +219,7 @@ final class ButlerChat {
             throw ShareInbox.Failure("请等通用对话空闲且草稿可读取后再试。分享原件仍保留。")
         }
         guard !receivedShareIDs.contains(record.id) else { return }
-        let combined = draft + (draft.isEmpty ? "" : "\n\n") + content.text
+        let combined = draft + (draft.isEmpty || content.text.isEmpty ? "" : "\n\n") + content.text
         guard combined.count <= 8000, photos.count + content.photos.count <= 4 else {
             throw ShareInbox.Failure("原草稿较长或附件已满，请先处理原草稿，再加入这条分享。没有覆盖原草稿。")
         }

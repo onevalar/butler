@@ -786,4 +786,23 @@ final class ChatSessionsTests: XCTestCase {
         XCTAssertTrue(content.text.contains("不是对已有待确认项的批准"))
         XCTAssertTrue(content.photos.isEmpty)
     }
+    func testScreenshotKeepsIntentDraftAndImportsOnceWithoutSending() throws {
+        let (_, directory, _, reminders, sessions) = try fixture()
+        let chat = sessions.chat(for: .general)
+        chat.draft = "帮我安排这件事"
+        let record = ShareInbox.Record(id: UUID(), createdAt: .now, text: "", attachments: [])
+        let content = ShareContentReader.Content(text: "", photos: [Data([7, 8])])
+        try chat.receiveShare(record, content: content)
+        XCTAssertEqual(chat.draft, "帮我安排这件事")
+        sessions.reloadFromDisk()
+        try chat.receiveShare(record, content: content)
+        XCTAssertEqual(chat.photos, content.photos)
+        XCTAssertTrue(chat.turns.isEmpty)
+        XCTAssertFalse(chat.working)
+        XCTAssertTrue(chat.tools?.pending.isEmpty == true)
+        XCTAssertTrue(try reminders.taskSnapshot().isEmpty)
+        let saved = try JSONDecoder().decode(ChatDraft.self, from: Data(contentsOf: ChatSessionFiles(scope: .general, root: directory).draft))
+        XCTAssertEqual(saved.receivedShareIDs, [record.id])
+    }
+
 }

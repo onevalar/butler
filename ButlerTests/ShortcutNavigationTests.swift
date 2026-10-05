@@ -32,4 +32,12 @@ import XCTest
         try navigation.open(.inventory(String(repeating: "物", count: 10_000)))
         XCTAssertNotNil(navigation.request)
     }
+    func testScreenshotRequestPreservesModeAndCannotReplacePendingCapture() throws {
+        let navigation = ShortcutNavigation(), id = UUID()
+        try navigation.open(.screenshot(id, .voice))
+        XCTAssertEqual(navigation.request?.destination, .screenshot(id, .voice))
+        XCTAssertThrowsError(try navigation.open(.screenshot(UUID(), .typing)))
+        XCTAssertEqual(navigation.request?.destination, .screenshot(id, .voice))
+    }
+
 }

@@ -5,12 +5,15 @@ import Observation
 /// This is navigation only: it cannot authorize an inventory or task write.
 @MainActor @Observable final class ShortcutNavigation {
     struct Request: Identifiable, Equatable {
-        enum Destination: Equatable { case task(UUID), inventory(String), lot(UUID), general }
+        enum Destination: Equatable { case task(UUID), inventory(String), lot(UUID), general, screenshot(UUID, CaptureInputMode) }
         let id = UUID()
         let destination: Destination
     }
     static let shared = ShortcutNavigation()
     private(set) var request: Request?
+
+    // Avoid the iOS 26.2 runtime's isolated-deinit task-local crash during request teardown.
+    nonisolated deinit {}
 
     func open(_ destination: Request.Destination) throws {
         guard request == nil else { throw NavigationError("上一条快捷指令尚未打开，请先回到小当家") }

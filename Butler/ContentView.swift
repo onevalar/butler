@@ -592,6 +592,22 @@ struct ContentView: View {
             }
             path = [.lot(id)]
             selectChat(.lot(id))
+        case .screenshot(let id, let mode):
+            selectChat(.general)
+            do {
+                let inbox = try ShareInbox.onDevice()
+                guard let record = try inbox.list().records.first(where: { $0.id == id }),
+                      let attachment = record.attachments.first else {
+                    throw ShareInbox.Failure("没有找到截图，请重新采集。")
+                }
+                let url = try inbox.fileURL(attachment, in: record)
+                let photo = try ShareContentReader.image(Data(contentsOf: url))
+                guard let chat else { return }
+                try chat.receiveShare(record, content: .init(text: "", photos: [photo]))
+                chatRequest = ChatRequest(start: mode == .voice ? .voice : .typing)
+            } catch {
+                notificationError = "截图未加入对话：\(error.localizedDescription) 截图已保存在分享收件箱，可处理原草稿后再加入。"
+            }
         case .general:
             selectChat(.general)
         }
