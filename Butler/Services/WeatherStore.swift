@@ -103,6 +103,7 @@ final class WeatherStore: NSObject, CLLocationManagerDelegate {
         finishLocation(.failure(CancellationError()))
         selection = value; snapshot = nil; failedAt = nil; error = nil
         defaults.set(data, forKey: "weatherLocation"); defaults.removeObject(forKey: "weatherSnapshot")
+        NotificationCenter.default.post(name: .init("butlerBriefSourcesChanged"), object: nil)
     }
     func search(_ query: String) async throws -> [WeatherPlace] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -125,7 +126,12 @@ final class WeatherStore: NSObject, CLLocationManagerDelegate {
         isRefreshing = true; error = nil
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { if generation == token { isRefreshing = false; refreshTask = nil } }
+            defer {
+                if generation == token {
+                    isRefreshing = false; refreshTask = nil
+                    NotificationCenter.default.post(name: .init("butlerBriefSourcesChanged"), object: nil)
+                }
+            }
             do {
                 let place: WeatherPlace
                 if let manual = selection.city { place = manual }

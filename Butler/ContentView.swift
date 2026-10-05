@@ -71,7 +71,7 @@ struct ContentView: View {
     @State private var browsingMonth = Calendar.current.startOfDay(for: .now)
     @State private var snoozingTarget: BriefTarget?
     @State private var agendaCache = AgendaCache()
-    @State private var briefService = BriefService()
+    @State private var briefService = Self.isTesting ? BriefService() : BriefRefreshController.shared.service
     @State private var snoozeRevision = 0
     /// A brief button that changes medicine stock asks once more.
     @State private var confirmingBrief: (action: BriefAction, target: BriefTarget)?
@@ -99,18 +99,11 @@ struct ContentView: View {
         lots.map { "\($0.id)|\($0.revision)" }.sorted() + [refreshID.uuidString]
     }
 
-    /// What the butler might raise right now, most pressing first (things already snoozed are left out).
-    private func briefCandidates(facts: [LotFacts], agenda: HomeAgenda) -> [BriefCandidate] {
-        BriefCandidates.make(facts: facts, agenda: agenda, now: agendaNow, snoozed: BriefSnoozes.active(now: agendaNow))
-    }
-
     var body: some View {
         let facts = facts
         // A year ahead: home swipes between days, the date panel shows dots, and the overview needs the same.
         let agenda = yearAgenda(facts: facts)
-        let candidates = briefCandidates(facts: facts, agenda: agenda)
-        let briefKey = BriefCandidates.signature(candidates, now: agendaNow) + "|\(facts.count)|\(reminders.active.count)|\(calendarFeed.enabled)"
-        let surface = homeSurface(facts: facts, agenda: agenda, candidates: candidates, briefKey: briefKey)
+        let surface = homeSurface(facts: facts, agenda: agenda)
         .sheet(isPresented: $showingChat, onDismiss: finishChatDismissal) {
             if let chat {
                 ButlerChatView(chat: chat, request: $chatRequest, onQuickCapture: {
@@ -138,13 +131,17 @@ struct ContentView: View {
         .task {
             // Shared services, independently persisted conversations.
             if sessions == nil {
-                let store = ChatSessions(container: modelContext.container, reminders: reminders)
+                if !Self.isTesting { BriefRefreshController.shared.configure(container: modelContext.container) }
+                let store = BriefRefreshController.shared.sessions ?? ChatSessions(container: modelContext.container, reminders: reminders)
                 sessions = store
                 SyncService.shared.attach(store)
                 chat = store.chat(for: .general)
-                if let model = store.makeBriefModel() { briefService.attach(model: model) }
                 NotificationManager.shared.reminderStore = reminders
                 reminders.rescheduleAll()
+                if !Self.isTesting {
+                    BriefRefreshController.shared.checkNow(allowGeneration: false)
+                    BriefRefreshController.shared.requestUpdate()
+                }
             }
             handleShortcutNavigation()
             handleSharedContent()
@@ -185,7 +182,7 @@ struct ContentView: View {
 
 
     /// Separate the visual surface and lifecycle modifiers so Swift can type-check each view expression.
-    private func homeSurface(facts: [LotFacts], agenda: HomeAgenda, candidates: [BriefCandidate], briefKey: String) -> some View {
+    private func homeSurface(facts: [LotFacts], agenda: HomeAgenda) -> some View {
         NavigationStack(path: $path) {
             HomeView(
                 agenda: agenda,
@@ -213,10 +210,9 @@ struct ContentView: View {
             )
             .navigationDestination(for: Route.self) { destination($0, facts: facts) }
         }
-        .onChange(of: briefKey + "|\(snoozeRevision)|\(refreshID)|\(Int(agendaNow.timeIntervalSince1970 / 30))|\(WeatherStore.shared.snapshot?.fetchedAt.timeIntervalSince1970 ?? 0)", initial: true) {
+        .onChange(of: "\(snoozeRevision)|\(refreshID)", initial: true) {
             guard scenePhase == .active else { return }
-            briefService.update(candidates: candidates, lotCount: facts.count, taskCount: reminders.active.count,
-                                usesCalendar: calendarFeed.enabled && calendarFeed.canRead, now: agendaNow, weather: WeatherStore.shared.snapshot)
+            BriefRefreshController.shared.requestUpdate()
         }
         .sheet(isPresented: Binding(get: { snoozingTarget != nil }, set: { if !$0 { snoozingTarget = nil } }), onDismiss: {
             briefService.endInteraction()
@@ -225,10 +221,19 @@ struct ContentView: View {
             if let target = snoozingTarget {
                 BriefSnoozeSheet(onChoose: { date in
                     guard date > Date.now else { return }
-                    BriefSnoozes.snooze(target, until: date)
-                    snoozingTarget = nil
-                    agendaNow = .now
-                    snoozeRevision += 1
+                    Task {
+                        BriefRefreshController.shared.checkNow(allowGeneration: false)
+                        await briefService.settle()
+                        guard briefService.actionsAreCurrent, !briefService.isUpdating else {
+                            snoozingTarget = nil
+                            briefError = "安排已经变化或暂时无法核实，请查看更新后的提醒。"
+                            return
+                        }
+                        BriefSnoozes.snooze(target, until: date)
+                        snoozingTarget = nil
+                        agendaNow = .now
+                        snoozeRevision += 1
+                    }
                 })
             }
         }
@@ -282,6 +287,7 @@ struct ContentView: View {
         .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { now in
             guard scenePhase == .active else { return }
             SyncService.shared.foregroundTick()
+            BriefRefreshController.shared.foregroundTick()
             TaskDisplayService.reconcile()
             let previousDay = Calendar.current.startOfDay(for: agendaNow)
             if Int(now.timeIntervalSince1970 / 1800) != Int(agendaNow.timeIntervalSince1970 / 1800) {
@@ -482,6 +488,12 @@ struct ContentView: View {
 
     private func briefTapped(_ action: BriefAction, _ target: BriefTarget, facts: [LotFacts]) {
         briefService.beginInteraction()
+        BriefRefreshController.shared.checkNow()
+        guard briefService.actionsAreCurrent else {
+            briefService.endInteraction()
+            briefError = "安排已经变化，请查看更新后的提醒。"
+            return
+        }
         if case .snooze = action.effect {
             snoozingTarget = target
             return
@@ -496,7 +508,14 @@ struct ContentView: View {
     private func runBrief(_ action: BriefAction, _ target: BriefTarget, facts: [LotFacts]) {
         let runner = BriefActionRunner(container: modelContext.container, reminders: reminders)
         Task {
-            let outcome = await runner.run(action, target: target, facts: facts, now: agendaNow)
+            BriefRefreshController.shared.checkNow(allowGeneration: false)
+            await briefService.settle()
+            guard briefService.actionsAreCurrent, !briefService.isUpdating else {
+                briefService.endInteraction()
+                briefError = "安排已经变化或暂时无法核实，请查看更新后的提醒。"
+                return
+            }
+            let outcome = await runner.run(action, target: target, facts: facts, now: .now)
             briefService.endInteraction()
             switch outcome {
             case .done: snoozeRevision += 1

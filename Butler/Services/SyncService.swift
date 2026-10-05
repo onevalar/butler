@@ -12,6 +12,7 @@ import UIKit
     private var job: Task<Void, Never>?
     private var accountObserver: NSObjectProtocol?
     private let sessions = NSHashTable<ChatSessions>.weakObjects()
+    var isSyncingForBrief: Bool { job != nil || store?.busy == true || chatStore?.busy == true }
     private init() {}
     func attach(_ sessions: ChatSessions) { self.sessions.add(sessions) }
     func configure(container: ModelContainer) {
@@ -62,11 +63,32 @@ import UIKit
         try pause()
         try store?.prepareForRestore(); try chatStore?.prepareForRestore(); try photoStore?.prepareForRestore()
     }
+
+    /// Only already-enabled sources needed by the brief; no photo transfers or permission prompts.
+    func refreshForBrief() async {
+        guard UIApplication.shared.isProtectedDataAvailable,
+              let store, store.enabled, !store.busy, job == nil else { return }
+        let refresh = Task { [weak self] in
+            try? await store.synchronize()
+            guard !Task.isCancelled, store.enabled else { return }
+            if let chats = self?.chatStore, chats.enabled, !chats.busy { try? await chats.synchronize() }
+        }
+        job = refresh
+        defer {
+            job = nil
+            NotificationCenter.default.post(name: .init("butlerBriefBatchFinished"), object: nil)
+        }
+        await withTaskCancellationHandler { await refresh.value } onCancel: { refresh.cancel() }
+    }
+
     func foregroundTick() {
         guard UIApplication.shared.applicationState == .active, UIApplication.shared.isProtectedDataAvailable,
               let store, store.enabled, !store.busy, job == nil else { return }
         job = Task { [weak self] in
-            defer { self?.job = nil }
+            defer {
+                self?.job = nil
+                NotificationCenter.default.post(name: .init("butlerBriefBatchFinished"), object: nil)
+            }
             try? await store.synchronize()
             if store.enabled, let chats = self?.chatStore, chats.enabled, !chats.busy {
                 try? await chats.synchronize()

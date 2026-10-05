@@ -36,6 +36,7 @@ struct InventoryActions {
         product.revision += 1
         product.updatedAt = .now
         try context.save()
+        NotificationCenter.default.post(name: .init("butlerBriefSourcesChanged"), object: nil)
         WidgetSnapshotPublisher.shared.refresh()
     }
 

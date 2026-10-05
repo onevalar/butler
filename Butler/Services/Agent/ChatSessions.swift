@@ -55,7 +55,8 @@ final class ChatSessions {
 
     /// Separate hands for background reads; never share a chat's pending changes or current turn.
     func makeBriefModel() -> CloudBriefModel? {
-        guard let notes else { return nil }
+        let availableNotes = notes ?? (directory == BackupService.supportDirectory ? try? LocalMemoryStore.openNotes() : nil)
+        guard let notes = availableNotes else { return nil }
         let tools = ButlerTools(container: container, notes: notes, reminders: reminders, jev: jev)
         tools.settingsDefaults = defaults
         tools.conversation = { [weak self] in
@@ -100,6 +101,7 @@ final class ChatSessions {
 
     func reloadSyncedHistory(_ scope: ChatScope) {
         cache[scope]?.reloadSyncedHistory()
+        NotificationCenter.default.post(name: .init("butlerBriefSourcesChanged"), object: nil)
     }
 
     func reloadSyncedPhotos() { cache.values.forEach { $0.reloadSyncedPhotos() } }

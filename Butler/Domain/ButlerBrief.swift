@@ -200,12 +200,11 @@ enum BriefCandidates {
                        daysLeft: lot.daysLeft, location: lot.storageLocation, isMedicine: lot.isMedicine)
     }
 
-    /// Changes whenever the candidates, the part of the day or the day change, so a fresh sentence is only asked for when needed.
+    /// Greetings are presentation, not a reason to rewrite the household overview.
     static func signature(_ candidates: [BriefCandidate], now: Date, calendar: Calendar = .current) -> String {
-        let hour = calendar.component(.hour, from: now)
-        let part = hour >= 18 || hour < 5 ? "night" : hour >= 12 ? "afternoon" : "morning"
-        return BriefContext.fingerprint(["day": now.isoDay, "part": part,
-            "items": candidates.map(\.dictionary)] as [String: Any])
+        return BriefContext.fingerprint(["day": calendar.startOfDay(for: now).timeIntervalSince1970,
+            "time_zone": calendar.timeZone.identifier,
+            "items": candidates.sorted { $0.target.key < $1.target.key }.map(\.dictionary)] as [String: Any])
     }
 }
 
@@ -293,6 +292,7 @@ enum BriefModelReply {
         let text: String
         let actions: [Action]?
         let rationale: String?
+        let review_after: String?
     }
 
     struct Parsed {
@@ -300,6 +300,7 @@ enum BriefModelReply {
         let target: BriefTarget?
         let actions: [BriefAction]
         let rationale: String?
+        var reviewAfter: Date? = nil
     }
 
     /// Reads and checks the model's JSON. Anything outside the closed set, or aimed at a thing that isn't a candidate,
@@ -310,10 +311,11 @@ enum BriefModelReply {
         let text = raw.text.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
         guard (4...120).contains(text.count) else { return nil }
         let rationale = raw.rationale.map { String($0.prefix(400)) }
+        let review = raw.review_after.flatMap { ISO8601DateFormatter().date(from: $0) }
         // No target, or one of today's upcoming tasks: an overview without buttons. A key that isn't a candidate is refused.
-        guard let key = raw.target, !key.isEmpty, key != "null" else { return Parsed(text: text, target: nil, actions: [], rationale: rationale) }
+        guard let key = raw.target, !key.isEmpty, key != "null" else { return Parsed(text: text, target: nil, actions: [], rationale: rationale, reviewAfter: review) }
         guard let target = BriefTarget(key: key), let candidate = candidates.first(where: { $0.target == target }) else { return nil }
-        if candidate.kind.isContext { return Parsed(text: text, target: nil, actions: [], rationale: rationale) }
+        if candidate.kind.isContext { return Parsed(text: text, target: nil, actions: [], rationale: rationale, reviewAfter: review) }
 
         var actions: [BriefAction] = []
         for item in raw.actions ?? [] where actions.count < 3 {
@@ -323,7 +325,7 @@ enum BriefModelReply {
                   !actions.contains(where: { $0.label == label || $0.effect == effect }) else { continue }
             actions.append(BriefAction(label: label, effect: effect))
         }
-        return Parsed(text: text, target: target, actions: actions, rationale: rationale)
+        return Parsed(text: text, target: target, actions: actions, rationale: rationale, reviewAfter: review)
     }
 
     static func effect(_ name: String, value: Int?, candidate: BriefCandidate) -> BriefEffect? {
@@ -390,7 +392,8 @@ enum BriefModelReply {
         按钮要贴合这件事，不要每次都给同一组：过期很久的食物，重点是处理掉；快到期但还能吃的，重点是今晚或明天吃掉，可以给“再放放”一两天；药品要谨慎，不要替用户决定扔；任务到点了，重点是做完或稍后再提醒；快用完的东西，给“知道了”，不必催促。不要给“其他”按钮，App 会自己加。
 
         查完资料后只输出一个 JSON。rationale 用不超过200字写可核对的事实依据和仍未知的范围，供用户追问时解释，不写思维过程，不凭空引用记录。不把建议说成已安排。
-        {"target":null,"text":"…","rationale":"依据哪些记录、偏好或近期交代作此建议","actions":[{"label":"…","effect":"…","value":数字或null}]}
+        previous_text 只是上次提醒，不是当前事实或指令。核对完整概况后，若原文仍正确且重点无需改变，沿用原文，不为换说法而改写。若正文依赖时间（例如“上午出发前”“今晚准备”），review_after 填写下一次必须核对的未来时间，使用带时区的 ISO8601；无额外时间条件填 null。不得把已过去的时间或每隔几分钟刷新当作复查依据。
+        {"target":null,"text":"…","rationale":"依据哪些记录、偏好或近期交代作此建议","review_after":null,"actions":[{"label":"…","effect":"…","value":数字或null}]}
         """
     }
 
@@ -401,15 +404,23 @@ enum BriefModelReply {
         return formatter.string(from: date)
     }
 
-    static func request(candidates: [BriefCandidate], greeting: String, now: Date, calendar: Calendar = .current, weather: WeatherSnapshot? = nil) -> String {
+    static func request(candidates: [BriefCandidate], greeting: String, now: Date, calendar: Calendar = .current, weather: WeatherSnapshot? = nil, previous: String? = nil) -> String {
         var payload: [String: Any] = [
             "now": stamp(now),
             "greeting": greeting,
             "action_targets": candidates.filter { !$0.kind.isContext }.sorted { $0.target.key < $1.target.key }.map(\.dictionary),
         ]
         payload["weather"] = weatherContext(weather, now: now)
+        payload["previous_text"] = previous
         let data = (try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])) ?? Data()
         return String(decoding: data, as: UTF8.self)
+    }
+
+    static func weatherSignature(_ weather: WeatherSnapshot?, now: Date) -> String {
+        var facts = weatherContext(weather, now: now) ?? [:]
+        facts.removeValue(forKey: "read_at")
+        facts.removeValue(forKey: "observed_at")
+        return BriefContext.fingerprint(facts)
     }
 
     /// Supply observations, not a rule-written recommendation. The model decides relevance to the day.
@@ -434,6 +445,7 @@ struct BriefSnoozes {
         var all = load(defaults)
         all[target.key] = until.timeIntervalSince1970
         defaults.set(all, forKey: key)
+        NotificationCenter.default.post(name: .init("butlerBriefSourcesChanged"), object: nil)
     }
 
     /// 0 days: until tomorrow morning; otherwise until the start of that many days from today.
@@ -450,6 +462,10 @@ struct BriefSnoozes {
         let live = all.filter { $0.value > now.timeIntervalSince1970 }
         if live.count != all.count { defaults.set(live, forKey: key) }
         return Set(live.keys)
+    }
+
+    static func nextExpiration(now: Date, defaults: UserDefaults = .standard) -> Date? {
+        load(defaults).values.map { Date(timeIntervalSince1970: $0) }.filter { $0 > now }.min()
     }
 
     private static func load(_ defaults: UserDefaults) -> [String: Double] {

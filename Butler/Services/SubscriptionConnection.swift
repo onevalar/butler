@@ -57,6 +57,7 @@ final class SubscriptionConnection {
     private(set) var signingIn = false
     var error: String?
     var isLoggedIn: Bool { credentials != nil }
+    var accountIdentifier: String? { credentials?.accountID }
 
     // Match other observable services: avoid iOS 26's isolated-deinit runtime crash.
     nonisolated deinit {}
@@ -64,14 +65,22 @@ final class SubscriptionConnection {
     init(network: URLSession = .shared, keychainAccount: String = "personal") {
         self.network = network
         self.keychainAccount = keychainAccount
+        reloadStoredCredentials()
+    }
+
+    /// A background launch may happen while the keychain is locked. Retry locally after unlock.
+    func reloadStoredCredentials() {
+        let previous = accountIdentifier
         var query = vaultQuery
         query[kSecReturnData as String] = true
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         if status == errSecSuccess, let data = result as? Data {
-            do { credentials = try JSONDecoder().decode(SubscriptionCredentials.self, from: data) }
+            do { credentials = try JSONDecoder().decode(SubscriptionCredentials.self, from: data); error = nil }
             catch { self.error = "登录记录无法读取，请重新登录。" }
-        } else if status != errSecItemNotFound { error = SubscriptionError.keychain.localizedDescription }
+        } else if status == errSecItemNotFound { credentials = nil }
+        else { error = SubscriptionError.keychain.localizedDescription }
+        if previous != accountIdentifier { NotificationCenter.default.post(name: .init("butlerBriefSourcesChanged"), object: nil) }
     }
 
     private var vaultQuery: [String: Any] {
@@ -88,7 +97,9 @@ final class SubscriptionConnection {
             status = SecItemAdd(vaultQuery.merging(attributes) { _, new in new } as CFDictionary, nil)
         }
         guard status == errSecSuccess else { throw SubscriptionError.keychain }
+        let changedAccount = credentials?.accountID != value.accountID
         credentials = value
+        if changedAccount { NotificationCenter.default.post(name: .init("butlerBriefSourcesChanged"), object: nil) }
     }
 
     func signOut() throws {
@@ -97,6 +108,7 @@ final class SubscriptionConnection {
         credentials = nil
         deviceCode = nil
         error = nil
+        NotificationCenter.default.post(name: .init("butlerBriefSourcesChanged"), object: nil)
     }
 
     func beginLogin() async {

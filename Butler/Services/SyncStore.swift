@@ -264,7 +264,12 @@ import Foundation
     func synchronize() async throws {
         guard enabled else { throw SyncFailure("同步尚未开启。") }
         guard !busy else { throw SyncFailure("同步正在进行。") }
-        busy = true; defer { busy = false }; let token = generation
+        busy = true
+        defer {
+            busy = false
+            NotificationCenter.default.post(name: .init("butlerBriefBatchFinished"), object: nil)
+        }
+        let token = generation
         do {
             let account = try await checkAccount(token)
             let head = try await transport.head(account: account); try ready(token)

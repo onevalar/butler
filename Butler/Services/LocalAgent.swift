@@ -102,6 +102,7 @@ final class LocalMemoryStore {
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try JSONEncoder().encode(next).write(to: file, options: .atomic)
         snapshot = next
+        NotificationCenter.default.post(name: .init("butlerBriefSourcesChanged"), object: nil)
     }
 
     /// Sync has its own compare-and-replace boundary and monotonic local revision.
@@ -111,6 +112,7 @@ final class LocalMemoryStore {
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try JSONEncoder().encode(next).write(to: file, options: .atomic)
         snapshot = next; preview = nil
+        NotificationCenter.default.post(name: .init("butlerBriefSourcesChanged"), object: nil)
     }
 
     func recordsForSync() throws -> [LocalMemory] {
@@ -132,6 +134,7 @@ final class LocalMemoryStore {
         next.records.removeAll { $0.id == id }
         try JSONEncoder().encode(next).write(to: file, options: .atomic)
         snapshot = next
+        NotificationCenter.default.post(name: .init("butlerBriefSourcesChanged"), object: nil)
     }
 
     /// The owner's real notes and habits (the file name is historical).
@@ -154,6 +157,7 @@ final class LocalMemoryStore {
         try data.write(to: file, options: .atomic)
         snapshot = next
         self.preview = nil
+        NotificationCenter.default.post(name: .init("butlerBriefSourcesChanged"), object: nil)
     }
 }
 

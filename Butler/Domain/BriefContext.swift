@@ -5,6 +5,8 @@ import Foundation
 struct BriefContext {
     var sections: [String: [[String: Any]]] = [:]
     var metadata: [String: Any] = [:]
+    /// Local scheduling hints, not facts sent to the model or part of the content fingerprint.
+    var boundaries: [Date] = []
     static let pageSize = 30
     static let pageBytes = 12_000
 
@@ -39,7 +41,36 @@ struct BriefContext {
     }
 }
 
-enum BriefReadError: Error { case invalidPage, incomplete, permissionChanged }
+enum BriefReadError: Error { case invalidPage, incomplete, permissionChanged, sourceUnavailable }
+
+/// Records the actual read, including empty query results. Stored only on this device.
+struct BriefReadDependency: Codable, Sendable {
+    let name: String
+    let arguments: String
+    let fingerprint: String
+    var boundaries: [Date] = []
+
+    static func fingerprint(_ output: String, now: Date = .now) -> String {
+        let value = (try? JSONSerialization.jsonObject(with: Data(output.utf8))) ?? ["text": output]
+        return BriefContext.fingerprint(["result": value, "passed_boundaries": boundaries(in: output)
+            .filter { $0 <= now }.map { $0.ISO8601Format() }])
+    }
+
+    /// Live calendar reads may extend outside the overview's seven-day window.
+    static func boundaries(in output: String) -> [Date] {
+        guard let json = try? JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any] else { return [] }
+        let events = (json["events"] as? [[String: Any]] ?? []) + (json["event"].map { [$0 as? [String: Any] ?? [:]] } ?? [])
+        return events.flatMap { event -> [Date] in
+            guard let fields = event["fields"] as? [String: Any] else { return [] }
+            return ["start", "end"].compactMap { fields[$0] as? String }.compactMap { ISO8601DateFormatter().date(from: $0) }
+        }.sorted()
+    }
+}
+
+struct BriefAnswer: Sendable {
+    let text: String
+    var dependencies: [BriefReadDependency] = []
+}
 
 /// Both advertised tools and actual dispatch use the same allowlist. Model output is not authority.
 @MainActor
@@ -49,6 +80,7 @@ final class BriefReadSession {
         "get_system_calendars", "get_calendar_events", "get_calendar_event"]
     let context: BriefContext
     private var read: [String: Set<Int>] = [:]
+    private(set) var dependencies: [BriefReadDependency] = []
 
     init(context: BriefContext) { self.context = context }
 
@@ -112,6 +144,9 @@ final class BriefReadSession {
         guard Self.allowed.contains(call.name) else {
             return #"{"error":"首页仅可读取已允许的资料，不能提出或执行修改，也不能请求新权限"}"#
         }
-        return await readTool(call)
+        let output = await readTool(call)
+        dependencies.append(BriefReadDependency(name: call.name, arguments: call.arguments,
+            fingerprint: BriefReadDependency.fingerprint(output), boundaries: BriefReadDependency.boundaries(in: output)))
+        return output
     }
 }

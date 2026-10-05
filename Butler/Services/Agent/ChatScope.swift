@@ -100,6 +100,7 @@ struct ChatSessionFiles {
     func saveTurns(_ turns: [ChatTurn]) throws {
         try prepare()
         try JSONEncoder().encode(turns).write(to: transcript, options: .atomic)
+        NotificationCenter.default.post(name: .init("butlerBriefSourcesChanged"), object: nil)
     }
 
     /// Complete, validated read results may outlive the model's final prose.

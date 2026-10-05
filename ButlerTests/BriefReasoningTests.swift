@@ -24,17 +24,34 @@ final class BriefReasoningTests: XCTestCase {
 
     private final class Model: BriefModel {
         var isAvailable = true
+        var cacheIdentity = "local"
         var context = BriefContext()
         var requests = 0
         var fail = false
+        var readFails = false
+        var lastRequest = ""
+        var dependencyOutput: String?
         var delay: Duration = .zero
         var reply = #"{"target":null,"text":"明早出差，今晚先把行李准备好。","rationale":"已记录的明早出行；没有替用户新建提醒。","actions":[]}"#
         func snapshot(now: Date) -> BriefContext { context }
         func answer(_ request: String, context: BriefContext) async throws -> String {
             requests += 1
+            lastRequest = request
             if delay > .zero { try await Task.sleep(for: delay) }
             if fail { throw URLError(.notConnectedToInternet) }
             return reply
+        }
+        func generate(_ request: String, context: BriefContext) async throws -> BriefAnswer {
+            let text = try await answer(request, context: context)
+            let dependencies = dependencyOutput.map {
+                [BriefReadDependency(name: "get_calendar_events", arguments: #"{"start":"2026-10-20T00:00:00Z"}"#,
+                                     fingerprint: BriefReadDependency.fingerprint($0))]
+            } ?? []
+            return BriefAnswer(text: text, dependencies: dependencies)
+        }
+        func validate(_ dependencies: [BriefReadDependency]) async throws -> Bool {
+            if readFails { throw BriefReadError.sourceUnavailable }
+            return dependencies.allSatisfy { $0.fingerprint == BriefReadDependency.fingerprint(dependencyOutput ?? "") }
         }
     }
 
@@ -135,7 +152,7 @@ final class BriefReasoningTests: XCTestCase {
         XCTAssertEqual(service.brief.source, .model)
     }
 
-    func testLoginRecoveryAndCacheExpiryDoNotNeedANewCandidate() async throws {
+    func testLoginRecoveryDoesNotRestoreTheOldThirtyMinuteExpiry() async throws {
         let model = Model(); model.isAvailable = false
         let service = BriefService(defaults: defaults())
         service.attach(model: model)
@@ -149,7 +166,7 @@ final class BriefReasoningTests: XCTestCase {
         XCTAssertEqual(model.requests, 1)
         update(service, at: now.addingTimeInterval(1800))
         await service.settle()
-        XCTAssertEqual(model.requests, 2)
+        XCTAssertEqual(model.requests, 1)
     }
 
     func testConfirmedCorrectionInvalidatesCacheButDoesNotReplaceTouchedCard() async throws {
@@ -186,8 +203,10 @@ final class BriefReasoningTests: XCTestCase {
 
     private final class DeferredModel: BriefModel {
         var isAvailable = true
+        var context = BriefContext()
         var waiting: CheckedContinuation<String, Never>?
         var requests = 0
+        func snapshot(now: Date) -> BriefContext { context }
         func answer(_ request: String, context: BriefContext) async throws -> String {
             requests += 1
             if requests == 1 { return await withCheckedContinuation { waiting = $0 } }
@@ -215,6 +234,292 @@ final class BriefReasoningTests: XCTestCase {
         let reopened = BriefService(defaults: store)
         update(reopened, at: now, candidates: [candidate(name: "酸奶")])
         XCTAssertEqual(reopened.brief.text, service.brief.text, "The cache must also retain the newer result")
+    }
+
+    func testTenColdOpensAndGreetingChangeReuseTheSameSentence() async {
+        let storage = defaults(), model = Model()
+        let original = BriefService(defaults: storage)
+        original.attach(model: model)
+        update(original, at: now)
+        await original.settle()
+        for index in 1...10 {
+            let reopened = BriefService(defaults: storage)
+            reopened.attach(model: model)
+            update(reopened, at: now.addingTimeInterval(Double(index) * 1801))
+            XCTAssertEqual(reopened.brief.text, "明早出差，今晚先把行李准备好。")
+            XCTAssertFalse(reopened.isThinking)
+            await reopened.settle()
+        }
+        XCTAssertEqual(model.requests, 1)
+        update(original, at: now.addingTimeInterval(4 * 3600))
+        XCTAssertNotEqual(original.brief.greeting, DailyBrief.greeting(hour: 9))
+        XCTAssertEqual(model.requests, 1, "A different greeting is not a different situation")
+    }
+
+    func testExplicitReviewBoundaryAndMidnightInvalidateWithoutAnEdit() async {
+        let model = Model(), service = BriefService(defaults: defaults())
+        let deadline = now.addingTimeInterval(37 * 60)
+        model.reply = "{\"text\":\"出发前先把行李准备好。\",\"review_after\":\"\(deadline.ISO8601Format())\"}"
+        service.attach(model: model)
+        update(service, at: now)
+        await service.settle()
+        XCTAssertEqual(service.nextCheckAt, deadline)
+        update(service, at: deadline.addingTimeInterval(-1))
+        await service.settle()
+        XCTAssertEqual(model.requests, 1)
+        model.reply = #"{"text":"现在可以准备出发了。"}"#
+        update(service, at: deadline)
+        await service.settle()
+        XCTAssertEqual(model.requests, 2)
+        XCTAssertEqual(service.brief.text, "现在可以准备出发了。")
+        let midnight = Calendar.current.startOfDay(for: now).addingTimeInterval(86400)
+        update(service, at: midnight)
+        await service.settle()
+        XCTAssertEqual(model.requests, 3)
+    }
+
+    func testLocalBoundaryOnlyChecksUnlessTheSituationChanges() async {
+        let model = Model(), service = BriefService(defaults: defaults())
+        model.context.boundaries = [now.addingTimeInterval(1200)]
+        service.attach(model: model)
+        update(service, at: now)
+        await service.settle()
+        XCTAssertEqual(service.nextCheckAt, now.addingTimeInterval(1200))
+        model.context.boundaries = []
+        update(service, at: now.addingTimeInterval(1200))
+        await service.settle()
+        XCTAssertEqual(model.requests, 1)
+        model.context.sections["calendar"] = [["id": "trip", "phase": "ongoing"]]
+        update(service, at: now.addingTimeInterval(1201))
+        await service.settle()
+        XCTAssertEqual(model.requests, 2)
+    }
+
+    func testEmptyExtraQueryIsPersistedAndNewEventInvalidatesIt() async {
+        let storage = defaults(), model = Model()
+        model.dependencyOutput = #"{"events":[],"total":0}"#
+        let service = BriefService(defaults: storage)
+        service.attach(model: model)
+        update(service, at: now)
+        await service.settle()
+        let reopened = BriefService(defaults: storage)
+        reopened.attach(model: model)
+        update(reopened, at: now.addingTimeInterval(3600))
+        XCTAssertFalse(reopened.isThinking, "Revalidating reads is not a model request")
+        await reopened.settle()
+        XCTAssertEqual(model.requests, 1)
+        model.dependencyOutput = #"{"events":[{"id":"new-trip"}],"total":1}"#
+        model.reply = #"{"text":"新增了一趟出行，记得提前准备。"}"#
+        update(reopened, at: now.addingTimeInterval(3601))
+        await reopened.settle()
+        XCTAssertEqual(model.requests, 2)
+        XCTAssertEqual(reopened.brief.text, "新增了一趟出行，记得提前准备。")
+    }
+
+    func testReadSessionTracksEmptyQueriesButNotDeniedTools() async throws {
+        let reads = BriefReadSession(context: BriefContext())
+        let arguments = #"{"start":"2026-10-20T00:00:00Z","end":"2026-10-21T00:00:00Z"}"#
+        _ = await reads.execute(.init(id: "empty", name: "get_calendar_events", arguments: arguments)) { _ in
+            #"{"events":[],"total":0}"#
+        }
+        _ = await reads.execute(.init(id: "forbidden", name: "propose_task", arguments: "{}")) { _ in
+            XCTFail("Must not execute a write"); return ""
+        }
+        XCTAssertEqual(reads.dependencies.count, 1)
+        XCTAssertEqual(reads.dependencies.first?.arguments, arguments)
+        XCTAssertEqual(BriefReadDependency.fingerprint(#"{"events":[],"total":0}"#),
+                       BriefReadDependency.fingerprint(#"{"total":0,"events":[]}"#))
+    }
+
+    func testBatchChecksCanInvalidateTouchedCardWithoutStartingGeneration() async {
+        let model = Model(), service = BriefService(defaults: defaults())
+        service.attach(model: model)
+        service.update(candidates: [], lotCount: 0, taskCount: 0, usesCalendar: false, now: now, allowGeneration: false)
+        await service.settle()
+        XCTAssertEqual(model.requests, 0)
+        model.dependencyOutput = #"{"events":[]}"#
+        update(service, at: now)
+        await service.settle()
+        let original = service.brief
+        service.beginInteraction()
+        model.dependencyOutput = #"{"events":[{"id":"new"}]}"#
+        service.update(candidates: [], lotCount: 0, taskCount: 0, usesCalendar: false, now: now, allowGeneration: false)
+        await service.settle()
+        XCTAssertEqual(model.requests, 1)
+        XCTAssertEqual(service.brief, original)
+        XCTAssertFalse(service.actionsAreCurrent)
+        service.endInteraction()
+        update(service, at: now)
+        await service.settle()
+        XCTAssertEqual(model.requests, 2)
+    }
+
+    func testUnreadableExtraQueryBlocksOldActionsAndRecoversWithoutRewriting() async {
+        let model = Model(), service = BriefService(defaults: defaults())
+        model.dependencyOutput = #"{"events":[]}"#
+        service.attach(model: model)
+        update(service, at: now)
+        await service.settle()
+        model.readFails = true
+        update(service, at: now.addingTimeInterval(1))
+        await service.settle()
+        XCTAssertFalse(service.actionsAreCurrent)
+        XCTAssertEqual(service.brief.text, "部分资料暂时无法读取，请稍后再看。")
+        XCTAssertEqual(service.nextCheckAt, now.addingTimeInterval(61))
+        model.readFails = false
+        update(service, at: now.addingTimeInterval(61))
+        await service.settle()
+        XCTAssertEqual(model.requests, 1)
+        XCTAssertEqual(service.brief.source, .model)
+        XCTAssertTrue(service.actionsAreCurrent)
+    }
+
+    func testExtraCalendarQueryChangesAtStartAndEndEvenWithIdenticalStoredFields() {
+        let output = #"{"events":[{"fields":{"start":"2026-10-20T09:00:00Z","end":"2026-10-20T10:30:00Z"}}]}"#
+        let start = ISO8601DateFormatter().date(from: "2026-10-20T09:00:00Z")!
+        let end = start.addingTimeInterval(90 * 60)
+        XCTAssertEqual(BriefReadDependency.boundaries(in: output), [start, end])
+        let before = BriefReadDependency.fingerprint(output, now: start.addingTimeInterval(-1))
+        let ongoing = BriefReadDependency.fingerprint(output, now: start)
+        XCTAssertNotEqual(before, ongoing)
+        XCTAssertEqual(ongoing, BriefReadDependency.fingerprint(output, now: end.addingTimeInterval(-1)))
+        XCTAssertNotEqual(ongoing, BriefReadDependency.fingerprint(output, now: end))
+    }
+
+    func testPastReviewIsNotCachedAndDoesNotCauseAnImmediateRetryLoop() async {
+        let model = Model(), storage = defaults()
+        let past = now.addingTimeInterval(-60)
+        model.reply = "{\"text\":\"出发前先把行李准备好。\",\"review_after\":\"\(past.ISO8601Format())\"}"
+        let saved = BriefService(defaults: storage)
+        saved.attach(model: model)
+        update(saved, at: now)
+        await saved.settle()
+        XCTAssertNil(storage.data(forKey: "briefCache"))
+        XCTAssertEqual(saved.nextCheckAt, now.addingTimeInterval(600))
+        update(saved, at: now.addingTimeInterval(1))
+        await saved.settle()
+        XCTAssertEqual(model.requests, 1)
+        XCTAssertEqual(saved.brief.source, .local)
+    }
+
+    func testChangeDuringRequestIsRejectedEvenWithoutAnotherUpdateCall() async throws {
+        let model = DeferredModel(), storage = defaults()
+        let service = BriefService(defaults: storage)
+        var invalidated = false
+        service.onNeedsUpdate = { invalidated = true }
+        service.attach(model: model)
+        invalidated = false
+        update(service, at: now)
+        for _ in 0..<1000 where model.waiting == nil { await Task.yield() }
+        let waiting = try XCTUnwrap(model.waiting)
+        model.context.sections["notes"] = [["text": "行程取消了"]]
+        waiting.resume(returning: #"{"text":"明早出差，今晚准备行李。"}"#)
+        await service.settle()
+        XCTAssertTrue(invalidated)
+        XCTAssertEqual(service.brief.source, .local)
+        XCTAssertNil(storage.data(forKey: "briefCache"))
+    }
+
+    func testUncooperativeRequestTimesOutAndItsLateAnswerIsIgnored() async throws {
+        let model = DeferredModel(), storage = defaults()
+        let service = BriefService(defaults: storage, timeout: 0.02)
+        service.attach(model: model)
+        update(service, at: now, candidates: [candidate()])
+        await service.settle()
+        XCTAssertFalse(service.isThinking)
+        XCTAssertEqual(service.brief.source, .local)
+        let waiting = try XCTUnwrap(model.waiting)
+        waiting.resume(returning: #"{"text":"这是一段已经超时的旧提醒。"}"#)
+        for _ in 0..<10 { await Task.yield() }
+        XCTAssertNil(storage.data(forKey: "briefCache"))
+        XCTAssertEqual(service.brief.source, .local)
+    }
+
+    func testFailureBackoffSurvivesReopenButDoesNotBlockNewFacts() async {
+        let storage = defaults(), model = Model()
+        model.fail = true
+        let service = BriefService(defaults: storage)
+        service.attach(model: model)
+        update(service, at: now)
+        await service.settle()
+        model.fail = false
+        let reopened = BriefService(defaults: storage)
+        reopened.attach(model: model)
+        update(reopened, at: now.addingTimeInterval(60))
+        await reopened.settle()
+        XCTAssertEqual(model.requests, 1)
+        model.context.sections["tasks"] = [["text": "新增紧急出行"]]
+        update(reopened, at: now.addingTimeInterval(61))
+        await reopened.settle()
+        XCTAssertEqual(model.requests, 2)
+    }
+
+    func testUnreadableSourcesNeverBecomeAnEmptyDayAndOldButtonsAreInvalid() async {
+        let model = Model(), service = BriefService(defaults: defaults())
+        service.attach(model: model)
+        update(service, at: now, candidates: [candidate()])
+        await service.settle()
+        service.beginInteraction()
+        model.context.metadata["unavailable"] = ["tasks": "读取失败"]
+        update(service, at: now.addingTimeInterval(1))
+        XCTAssertFalse(service.actionsAreCurrent)
+        service.endInteraction()
+        update(service, at: now.addingTimeInterval(2))
+        XCTAssertEqual(service.brief.text, "部分资料暂时无法读取，请稍后再看。")
+        XCTAssertTrue(service.brief.actions.isEmpty)
+        XCTAssertEqual(model.requests, 1)
+    }
+
+    func testAccountAndPermissionChangesCannotReuseAnOldAnswer() async {
+        let model = Model(), service = BriefService(defaults: defaults())
+        model.context.metadata["calendar_allowed"] = true
+        service.attach(model: model)
+        update(service, at: now)
+        await service.settle()
+        model.context.sections["notes"] = [["text": "新增交代"]]
+        update(service, at: now.addingTimeInterval(0.5))
+        await service.settle()
+        XCTAssertTrue(model.lastRequest.contains("previous_text"))
+        model.cacheIdentity = "another-account"
+        update(service, at: now.addingTimeInterval(1))
+        await service.settle()
+        XCTAssertEqual(model.requests, 3)
+        XCTAssertFalse(model.lastRequest.contains("previous_text"), "Do not send a previous account's reminder")
+        model.context.metadata["calendar_allowed"] = false
+        model.context.metadata["unavailable"] = ["calendar": "未授权"]
+        update(service, at: now.addingTimeInterval(2))
+        await service.settle()
+        XCTAssertEqual(model.requests, 4, "Denied access is different from a failed authorized read")
+        XCTAssertFalse(model.lastRequest.contains("previous_text"), "Do not resubmit calendar content after permission is revoked")
+    }
+
+    private func weather(at date: Date, rain: Double = 0.2) -> WeatherSnapshot {
+        let url = URL(string: "https://example.com/weather")!
+        return WeatherSnapshot(place: WeatherPlace(name: "上海", latitude: 31, longitude: 121), selection: WeatherLocation(),
+            fetchedAt: date, observedAt: date, temperature: 22, feelsLike: 23, condition: "晴", symbol: "sun.max",
+            windKPH: 8, uvIndex: 3,
+            days: [.init(date: Calendar.current.startOfDay(for: now), symbol: "sun.max", condition: "晴", low: 18, high: 25, rainChance: rain)],
+            alerts: [], legalURL: url, lightMark: url, darkMark: url)
+    }
+
+    func testWeatherFetchTimeDoesNotRewriteButForecastAndFreshnessDo() async {
+        let model = Model(), service = BriefService(defaults: defaults())
+        service.attach(model: model)
+        func refresh(_ date: Date, _ weather: WeatherSnapshot) {
+            service.update(candidates: [], lotCount: 0, taskCount: 0, usesCalendar: false, now: date, weather: weather)
+        }
+        refresh(now, weather(at: now))
+        await service.settle()
+        let later = now.addingTimeInterval(1900)
+        refresh(later, weather(at: later))
+        await service.settle()
+        XCTAssertEqual(model.requests, 1, "Same weather fetched again after 30 minutes must still reuse")
+        refresh(later.addingTimeInterval(1), weather(at: later, rain: 0.9))
+        await service.settle()
+        XCTAssertEqual(model.requests, 2)
+        refresh(later.addingTimeInterval(1800), weather(at: later, rain: 0.9))
+        await service.settle()
+        XCTAssertEqual(model.requests, 3, "Stale observations cannot remain current indefinitely")
     }
 
     private final class PagingModel: LocalAgentModel {

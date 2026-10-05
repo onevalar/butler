@@ -108,6 +108,7 @@ final class InventoryRepository {
 
             if !appliedOperationIDs.isEmpty {
                 try modelContext.save()
+                NotificationCenter.default.post(name: .init("butlerBriefSourcesChanged"), object: nil)
                 WidgetSnapshotPublisher.shared.refresh()
             }
         } catch {

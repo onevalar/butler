@@ -10,10 +10,11 @@ enum BriefSources {
         context.metadata["time_zone"] = calendar.timeZone.identifier
         context.metadata["scope"] = "全部在库物品、全部本地任务（含暂停/完成状态）、全部已确认笔记；最近对话只作线索，可查历史原文。没有按类别或紧急程度筛选。"
         context.metadata["snoozed_targets"] = BriefSnoozes.active(now: now, defaults: tools.settingsDefaults).sorted()
+        if let expiration = BriefSnoozes.nextExpiration(now: now, defaults: tools.settingsDefaults) { context.boundaries.append(expiration) }
         do {
             context.sections["inventory"] = try tools.activeFacts().sorted { $0.id.uuidString < $1.id.uuidString }.map { lot in
                 var row: [String: Any] = ["key": BriefTarget.lot(lot.id).key, "name": lot.name,
-                    "quantity": lot.quantity, "unit": lot.unit, "revision": lot.revision,
+                    "quantity": lot.quantity, "unit": lot.unit,
                     "category": lot.category.rawValue, "quantity_only": lot.quantityOnly, "medicine": lot.isMedicine]
                 row["brand"] = lot.brand
                 row["storage"] = lot.storageLocation
@@ -29,15 +30,19 @@ enum BriefSources {
             context.sections["tasks"] = try tools.reminders.taskSnapshot().sorted { $0.id.uuidString < $1.id.uuidString }.map { task in
                 var row = try json(task)
                 row.removeValue(forKey: "activity")
+                row.removeValue(forKey: "revision")
                 row["key"] = BriefTarget.task(task.id).key
-                row["next_occurrences"] = ReminderSchedule.preview(task, now: now, limit: 3).map { $0.ISO8601Format() }
+                let occurrences = ReminderSchedule.preview(task, now: now, limit: 3)
+                context.boundaries += occurrences.filter { $0 > now }
+                if let end = task.autoCompleteAt, end > now { context.boundaries.append(end) }
+                row["next_occurrences"] = occurrences.map { $0.ISO8601Format() }
                 row["occurrence_scope"] = "最多展示接下来3次；完整规则见 phases/repeats，不代表只有3次"
                 return row
             }
         } catch { unavailable["tasks"] = "任务读取失败，不能当作没有安排" }
         do {
             context.sections["notes"] = try tools.notes.recordsForSync().sorted { $0.id.uuidString < $1.id.uuidString }.map {
-                ["id": $0.id.uuidString, "title": $0.title, "text": $0.text, "revision": $0.revision]
+                ["id": $0.id.uuidString, "title": $0.title, "text": $0.text, "quantity": $0.quantity as Any? ?? NSNull()]
             }
         } catch { unavailable["notes"] = "笔记读取失败或正在更新，不能把旧偏好当作最新交代" }
         if let archive = tools.conversation?() {
@@ -64,7 +69,12 @@ enum BriefSources {
         if allowed {
             do {
                 context.sections["calendar"] = try tools.systemCalendar.events(start: start, end: end, calendarID: nil)
-                    .map { try json($0) }.sorted {
+                    .map { event in
+                        context.boundaries += [event.fields.start, event.fields.end].filter { $0 > now }
+                        var row = try json(event)
+                        row["phase"] = now < event.fields.start ? "upcoming" : now < event.fields.end ? "ongoing" : "ended"
+                        return row
+                    }.sorted {
                         BriefContext.fingerprint($0) < BriefContext.fingerprint($1)
                     }
             } catch { unavailable["calendar"] = "日历读取失败，不能断言没有日历安排" }

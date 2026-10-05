@@ -88,13 +88,13 @@ final class ButlerBriefTests: XCTestCase {
         XCTAssertNotNil(BriefModelReply.parse(#"{"target":null,"text":"今天两趟车，一大早就要出门。","actions":[]}"#, candidates: onlyTasks))
     }
 
-    func testSignatureChangesWithTheSituationAndThePartOfTheDayButNotWithTheClock() {
+    func testSignatureChangesWithTheSituationAndDateButNotWithTheGreeting() {
         let morning = at(9)
         let egg = BriefCandidate(target: .lot(UUID()), kind: .expired, name: "土鸡蛋", detail: "已过期 4 天", quantity: 6, unit: "枚",
                                  daysLeft: -4, location: nil, isMedicine: false)
         let a = BriefCandidates.signature([egg], now: morning)
         XCTAssertEqual(a, BriefCandidates.signature([egg], now: at(10, 30)))
-        XCTAssertNotEqual(a, BriefCandidates.signature([egg], now: at(19)))
+        XCTAssertEqual(a, BriefCandidates.signature([egg], now: at(19)))
         XCTAssertNotEqual(a, BriefCandidates.signature([], now: morning))
         XCTAssertNotEqual(a, BriefCandidates.signature([egg], now: at(9, dayOffset: 1)))
     }
@@ -347,6 +347,9 @@ final class ButlerBriefTests: XCTestCase {
         service.update(candidates: [item], lotCount: 4, taskCount: 0, usesCalendar: false, now: at(19))
         XCTAssertEqual(service.brief.source, .local)
         let model = FakeModel { self.reply(for: item) }
+        service.onNeedsUpdate = { [weak service] in
+            service?.update(candidates: [item], lotCount: 4, taskCount: 0, usesCalendar: false, now: self.at(20))
+        }
         service.attach(model: model)
         await service.settle()
         XCTAssertEqual(model.requests.count, 1)

@@ -380,6 +380,7 @@ final class ReminderStore {
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try JSONEncoder().encode(next).write(to: file, options: .atomic)
         reminders = next
+        NotificationCenter.default.post(name: .init("butlerBriefSourcesChanged"), object: nil)
         if schedules { WidgetSnapshotPublisher.shared.refresh(); TaskDisplayService.reconcile() }
     }
 

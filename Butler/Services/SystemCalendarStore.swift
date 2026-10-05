@@ -91,6 +91,7 @@ import Foundation
                 try Task.checkCancellation()
             }
             var next = state; next.conversationAllowed = allowed; try save(next)
+            NotificationCenter.default.post(name: .init("butlerBriefSourcesChanged"), object: nil)
             return allowed ? "已允许按请求将相关日历内容用于对话；未读取或修改事件" : "已关闭后续对话日历访问；首页展示不受影响，历史对话中的内容不会自动删除"
         }
         try ready()

@@ -104,6 +104,7 @@ import SwiftData
             try replaceInventory(key.id, value, revision: revision)
         }
         WidgetSnapshotPublisher.shared.refresh()
+        NotificationCenter.default.post(name: .init("butlerBriefSourcesChanged"), object: nil)
     }
     private func replaceInventory(_ id: UUID, _ value: Inventory?, revision: Int) throws {
         let context = ModelContext(container); context.autosaveEnabled = false
