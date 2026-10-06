@@ -1,12 +1,86 @@
 # Butler 开发日志
 
-**阅读说明（2026-10-06 补充）**：本文件由三段排序不同的内容组成，历史条目保持原文不改写。
+所有条目按日期**新的在前**；同一天内按写入日志的先后排列，越晚写入越靠前。新条目加在最前面。2026-10-06 统一整理过顺序和标题格式（原先分三段，排序不一），各条正文保持当时原文，其中“未提交 / 未推送 / 待验收”等状态是当时的事实，最新状态以更新的条目和 [功能与工作原理](docs/FEATURES_AND_JEV_GUIDE.md) 开头的状态表为准。
 
-1. 从开头到“对话面板说话后改为约 3/4 高”：**新的在前**，2026-09-29 至今的功能与修复。新条目继续加在最前面。
-2. “Butler Project Development Log & Handover Notes”至“Troubleshooting for "Future Me"”：**新的在前**，2026-09-29 之前的早期记录与英文 MVP 交接说明。
-3. “2026-09-29 通用物品与混合交互能力”到文件末尾：**按时间顺序追加**，包含 TestFlight 构建 25–35 的发布与修复记录。查找某次构建结果请看这一段。
+最近一次完整 Xcode 验证：Build 35（2026-10-04，`84fd591`），本机 661 项通过、1 项既有跳过。之后的提交尚未完整编译，见 [代码结构与健壮性整理方案](docs/CODE_HEALTH_PLAN.md)。查找 TestFlight 构建结果可搜索“Build”或“TestFlight”。
 
-最近一次完整 Xcode 验证：Build 35（2026-10-04，`84fd591`），本机 661 项通过、1 项既有跳过。之后的提交尚未完整编译，见下方 10-05 条目及 [代码结构与健壮性整理方案](docs/CODE_HEALTH_PLAN.md)。
+## 目录
+- 2026-10-06 · 文档结构整理：日志统一排序、功能说明按现状重写、过时状态标注
+- 2026-10-06 · 核心测试脚本可在 macOS 运行、修复 alarm 脚本编译失败、文档整理
+- 2026-10-05 · 10-05 五个提交补记（截图采集、简报刷新、回复进度、日程总览）
+- 2026-10-04 · Build 35 发布阻塞修复
+- 2026-10-02 · 六批对话改进汇总提交
+- 2026-10-02 · 对话可靠性第六批：缩小流式刷新范围、补齐耗时节点
+- 2026-10-02 · 对话可靠性第五批：只读清单提前显示、先保存后呈现
+- 2026-10-02 · 对话可靠性第四批：保留阅读位置、明确回最新与关闭后导航
+- 2026-10-02 · 对话可靠性第三批：回复原位呈现、卡片稳定与警告保留
+- 2026-10-02 · 对话可靠性第二批：请求来源、独立执行记录与明确状态
+- 2026-10-02 · 对话可靠性第一批：发送前完整保存、失败保留输入
+- 2026-10-02 · Build 33 测试失败修复
+- 2026-10-02 · Build 32 验证与警告计划
+- 2026-10-01 · 最新远端版本的 TestFlight 发布修复
+- 2026-09-30 · 管家卡片指令改为“贴身秘书的综合提醒”
+- 2026-09-30 · 修复：打开 App 后管家卡片一直停在手机本地句子
+- 2026-09-30 · 管家提醒改为“今天的总览”，不再把某件事从清单里搬上去
+- 2026-09-30 · 首页任务一点即完成、管家提醒今天稍后的任务、日期面板高度与底色
+- 2026-09-30 · 管家卡片安静时不显示“其他”，已完成改为小标题
+- 2026-09-29 · 首页日期面板精简、底部只留“日程总览”、清单改名“今日提醒”
+- 2026-09-29 · 设置页清理：去掉大标题与使用天数，测试入口不再出现在普通安装
+- 2026-09-29 · 对话输入栏按“信息”App 的样式重做
+- 2026-09-29 · 对话输入栏重做：按钮变小、长文字占满宽度、语音状态只有一个图标
+- 2026-09-29 · 首页与对话细节：“其他”并入按钮行、日期改纯文字、纸箱图标、天气面板重排、对话顶部拆开
+- 2026-09-29 · 物品页顶部单层背景、语音收尾的取消离水晶球更远
+- 2026-09-29 · 对话面板说话后改为约 3/4 高
+- 2026-09-29 · 物品页改版与统一的对话面板
+- 2026-09-29 · TestFlight 1.0（26）
+- 2026-09-29 · 云端区域差异修复
+- 2026-09-29 · 本轮 TestFlight 发布准备
+- 2026-09-29 · “其他安排”属于整张管家提醒
+- 2026-09-29 · AiHubMix 鉴权排查与实时语音
+- 2026-09-29 · 语音提示与自定义转写服务
+- 2026-09-29 · 恢复被误删的液态玻璃视觉
+- 2026-09-29 · 等待回复时保持悬浮输入区
+- 2026-09-29 · 已确认触感接入正式水晶球，短按文字/长按语音
+- 2026-09-29 · 试用页首次起振延迟
+- 2026-09-29 · 连续触感独立试用页
+- 2026-09-29 · 紧急撤回失效的原生长按入口
+- 2026-09-29 · 取消后第二次按压无响应
+- 2026-09-29 · 原生触碰与语音准备脉冲
+- 2026-09-29 · 提醒卡片、稳定水晶球、删除与等待优化
+- 2026-09-29 · 真机反馈后的首页交互纠正
+- 2026-09-29 · 通用物品与混合交互能力
+- 2026-09-29 · 首页日期浏览、后台建议与完整清单
+- 2026-09-29 · 两张卡片的内容与排版：确认卡说人话，管家卡片更紧凑
+- 2026-09-29 · 长按说话：去掉重复文案，理顺取消区形状
+- 2026-09-29 · 首页简报卡片：去掉“依据”，“其他”改为安静的文字入口
+- 2026-09-29 · 按住水晶球说话：即时反馈、先录后识别、连成一体的取消区
+- 2026-09-29 · 首页改版：管家一句话、当天清单与三套主题
+- 2026-09-29 · 完成记录保留与禁止水晶球环形进度
+- 2026-09-28 · 开关对比度、未完成任务保留与水晶球反馈
+- 2026-09-28 · Xcode Cloud 内外部双组分发
+- 2026-09-28 · 云构建改为按需手动启动
+- 2026-09-28 · Xcode Cloud 自动构建与 TestFlight 内部分发
+- 2026-09-28 · 页面上下文对话、设置工具、分阶段任务与输入框
+- 2026-09-28 · 功能与 Jev 原理说明归档
+- 2026-09-26 · 手机内文字管家与订阅直连
+- 2026-09-26 · 纠正路线：手机内轻量执行与本地记忆
+- 2026-09-26 · SwiftUI Agent 测试入口与有限手机接口
+- 2026-09-26 · 习惯更正、歧义对话与权限边界检查
+- 2026-09-26 · Agent 测试记忆持久化与确认写入
+- 2026-09-26 · Codex Agent 隔离接入原型（阶段 A，部分完成）
+- 2026-09-26 · Agent 管家新构想与实施路线
+- 2026-09-26 · 基础纠错与可信库存维护
+- 2026-09-23 · 听懂日常说法：本地中文解析器重写
+- 2026-09-22 · V2 直接接入与“青花”界面
+- 2026-07-26 · Butler 2.0 M0–M2 source handoff
+- 2026-01-06 · 📌 Project Status: Phase 1 & 2 Complete (MVP Ready)
+
+## 文档结构整理：日志统一排序、功能说明按现状重写、过时状态标注
+**Date:** 2026-10-06 · 只改文档，未改代码，未构建或发布
+
+- 开发日志：原先“新的在前 / 早期英文记录 / 按时间追加”三段合一，统一为按日期新的在前；同一天内用 `git log -S` 查每条标题首次写入的提交时间排序。原“## 日期 标题”“### 日期 标题”统一为标题加 `**Date:**` 行，英文 MVP 记录的小节降一级。脚本核对 68 条记录的全部正文行无增删。
+- 功能说明：重写为当前代码的分功能说明，首页刷新规则、对话限制、任务预算、设置项等对照代码核实；原 Jev 第 2–9 节原文作为第 10 节保留（数值核实未变），按日期的补充说明与 9-28 版功能总表移到附录。旧内容行全部保留。
+- 系统能力清单每项、上下文管家文档各阶段章节下加“2026-10-06 状态”。标出 `bae603e` 已取代的首页刷新边界、`e999875` 已简化的回复过程标签，以及已被后续方案取代的水晶球旧方案；原文保留。
 
 ## 核心测试脚本可在 macOS 运行、修复 alarm 脚本编译失败、文档整理
 **Date:** 2026-10-06 · 本地检查，未改生产代码，未构建或发布
@@ -29,6 +103,19 @@
 - `e999875` 对话回复进度改为一行状态，统一等待、流式生成、工具轮次和重试；去掉多余占位与耗时提示，保留未完成回复警告。新增状态与原生布局回归测试。
 - `5b9c3da` 日程总览改为方案 B 连续清单：默认定位今天，双向滚动分段加载；右上角只留“日期”打开月历面板；只有主动选择时间段才限定结果；首页“本周”改为今天至周日。新增 `AgendaOverview` 与 `scripts/test-agenda-core.sh`。
 - 这五个提交都在 Build 35 之后，下次具备 Xcode 与 iOS 平台时需先跑完整编译与全量测试。
+
+## Build 35 发布阻塞修复
+**Date:** 2026-10-04
+
+- 用户提供 build-for-testing 与 archive 日志，两阶段均被 ChatMarkdownText.swift:24 的同一编译错误阻塞：Theme.basic 被解析为 Butler 自有 Theme。显式使用 MarkdownUI.Theme.basic，保留 MarkdownUI 2.4.1 锁定版本及现有排版。
+- 图片 provider 的非隔离方法不直接构建 MainActor Link；返回只携带URL的视图值，由 body 创建链接，消除 swift concurrency 警告。图片不自动加载、外链scheme限制保持。
+- 首次本机完整编译额外暴露观察通知测试计数器的8处线程隔离诊断：仅将已受NSLock保护的测试计数器明确为非隔离，所有可变读写仍经过同一锁。
+- 首次全量回归捕获 ChatSyncData 和 FakeCalendarDevice 的释放崩溃，崩溃栈均经 swift_task_deinitOnExecutorImpl / TaskLocal::StopLookupScope；沿用工程已有 nonisolated deinit 处理，不删同步功能或跳过测试。保留同步导入、回执与部分回复测试。
+- 中文系统字体不一定有斜体字形，原斜体图片差异断言在Apple环境失败；改为包含中文与Latin的混合样本，继续校验等价Markdown语法与普通文本的实际图像差异。没有关闭断言。
+- 通讯录拒绝授权测试仍按旧“✗”字符判断，新回执使用结构化状态；改为检查 needsVerification 的保守非成功状态、明确权限拒绝原因及授权尝试一次，原笔记继续可写和联系人读写次数断言保留。未修改生产系统错误状态或自动重试行为。
+- 最终本机 Xcode26.3(17C519)、iOS26.2 iPhone17Pro模拟器、英文美国区域全量661项、1项既有跳过、0失败。测试日志 /private/tmp/butler-build35-verified.log，结果 /private/tmp/butler-build35-verified.xcresult。
+- 云端Xcode26.3(17C529)仍须在新提交构建验证。原分享扩展无AppIntents的元数据工具提示保留；不改变工作流、测试门槛或签名能力，不因每次提交自动构建。
+- 最终 generic/platform=iOS 的 Release 编译通过（CODE_SIGNING_ALLOWED=NO）；日志 /private/tmp/butler-build35-release.log，仅剩分享扩展无AppIntents元数据提示。此检查覆盖真机Release编译，不代替云端签名导出或TestFlight分发。
 
 ## 六批对话改进汇总提交
 **Date:** 2026-10-02 · 用户要求提交推送；不启动云构建或发布
@@ -99,6 +186,30 @@
 - 输入区显示没有对应失败气泡的存储/确认错误；移除按回执数量变化触发的“成功”震动，语音按压与连续触感不变。消息状态、真实执行结果反馈、滚动和动效的后续批次尚未实施。
 - 已执行：`scripts/test-chat-core.sh` 8 项、`scripts/test-alarm-core.sh` 157 项、`scripts/test-warning-core.sh` 5 项，全部通过；修改的 Swift 文件语法解析、项目元数据检查、`git diff --check` 通过。Linux 聊天脚本编译实际文件保存/恢复代码，但不覆盖 SwiftUI、SwiftData 和首页提醒标识的 CryptoKit 哈希。
 - 新增 5 个应用层测试方法（包含多个失败/编辑场景），尚未执行。当前环境没有 Xcode 或连接的 Mac；完整 iOS 构建、应用层测试、备份/同步整体验证，以及错误提示在键盘、长文字、大字号下的原生界面检查仍是继续下一批前的验收门槛。
+
+## Build 33 测试失败修复
+**Date:** 2026-10-02
+
+- 用户提供 Build 33 build-for-testing / test-without-building 日志；测试编译与归档通过，测试执行579项、1项跳过、3条失败断言。三个失败均属于 ChatDiagnosticsTests.testConcurrentAppendsKeepEveryCompleteLineExactlyOnce，并非三个独立缺陷。
+- 原测试最多轮询约2秒就读取文件，云端当时仅完成370/401条。生产写入是utility串行异步队列，测试未与队列完成建立同步关系；不能把尚未写完直接解释成日志丢失，也不能靠无限增加固定延时验证完整性。
+- 新增异步ChatDiagnostics.flush：在同一串行队列排入continuation，等待此前已提交的写入/轮转结束，不阻塞调用actor、不改变生产追加行为；三个日志测试读取前等待该屏障，保留完整行、数量、唯一性、中文轮转及错误保护断言。屏障不保证调用后新提交的写入已完成。
+- SubscriptionModelTests的动态instructions/tools改由MainActor测试对象持有，稳定捕获引用，保留后续请求读取更新工具的断言；消除toolContext mutated after capture警告。
+- Build 33日志确认AppIntents metadata skipped来自ButlerShareExtension，该扩展没有AppIntent，保留提示；模拟器多目的地提示属于环境，本机使用UDID消除歧义。
+- 首次定向测试关闭签名，日志3项通过，但Keychain网络测试受签名环境阻塞。恢复正常签名后，本机Xcode26.3(17C519)、iOS26.2 iPhone17Pro模拟器、英文美国区域全量579项、1项既有跳过、0失败；动态上下文与全部日志测试通过，编译仅剩分享扩展元数据工具提示。结果/private/tmp/butler-build33-full.xcresult，日志/private/tmp/butler-build33-full.log。未执行真机交互验收，未启动云构建，本机结果不代替下次云端分发结果。
+
+## Build 32 验证与警告计划
+**Date:** 2026-10-02
+- 用户提供四份云端日志；Test Build、Test Execute、Archive、Export 成功，571项测试、1项跳过、0失败。此前分享扩展的App Groups签名阻塞本次消失。日志不证明内外部测试分发的最终状态。
+- 已按文件位置整理全部警告及阶段重复项，保存明确优先级、修复方法、回归与真机验收标准：docs/BUILD_32_WARNING_FIX_PLAN.md。当前仅制定计划，尚未实施警告修复。
+- 核对工作区无未提交代码，既有代码已在main；本次补交计划和构建记录，不触发新构建。
+
+## 最新远端版本的 TestFlight 发布修复
+**Date:** 2026-10-01
+- 已拉取 main 的 ba7b81a；手动构建27在 Test/Archive编译阶段失败，未分发。ChatSessionsTests遗漏try，ContentView视图表达式超过编译器类型检查能力。
+- 修复抛错调用，拆分ContentView表达式，保持原有视图、修饰器顺序与回调。没有删减系统能力功能或调整界面设计。
+- 新增iCloud entitlement使旧测试容器自动启用SwiftData CloudKit；测试容器明确cloudKitDatabase: .none，与生产数据库一致。记录同步仍使用现有自定义CloudKit传输。
+- 本机完整测试另暴露PhotoSource、ConfirmationJournal及健康测试替身的isolated deinit运行时崩溃；采用工程已有的nonisolated deinit做法。分享附件读取前清空URL缓存，避免来源文件变化后仍按旧大小校验，原有单文件/总量/数量边界测试保留。
+- 英文、美国区域全量571项测试，1项既有跳过，0失败（/private/tmp/butler-oct-release-confirmed-tests.log）。最终Release编译通过（/private/tmp/butler-oct-release-final-build.log），云端重试结果在本轮发布完成后补记。保持仅手动触发工作流。
 
 ## 管家卡片指令改为“贴身秘书的综合提醒”
 **Date:** 2026-09-30 · 用户要求（提示词层面）
@@ -192,8 +303,6 @@
 
 - 半高显示的对话内容太少：按住水晶球说话后，面板改为停在屏幕约 3/4 高度，顶部仍露出原页面（可看到方块数字变化，也可滑动）；打字仍为全高，往上拉全高、往下拉收起不变。
 
-# Butler Project Development Log & Handover Notes
-
 ## 物品页改版与统一的对话面板
 **Date:** 2026-09-29 · 本地开发，按 Paper「v13 物品页」实现
 
@@ -204,6 +313,161 @@
 - **手机上直接回答**：“我有什么衣服”“冷藏里有什么”“螺丝刀放哪了”“什么快过期了”这类单一对象的问题在手机上立刻列出，不等模型，未登录也能用；“修自行车要用什么”“野餐带什么”等需要判断的仍交给模型。清单显示时说“去掉某样”也在手机上直接处理；说不清是哪一行时交给模型。
 - **模型新工具**：`update_shown_list`（就地改最近显示的清单）、`propose_regroup`（一次把多件东西改位置和/或分类，每件一条待确认）。当前显示的清单会作为上下文发给模型；以前对话里显示过的清单名称也写进历史。
 - 测试：新增 `ItemsPageTests` 10 项（方块分组与角标、各切换覆盖全部东西、手机直答与交给模型的边界、去掉清单行、清单就地修改、批量调整需确认）。全量 358 项通过、1 项原有跳过。模拟器核对了物品页三种切换、进入分组、打字全高、手机直答和 ×、面板拉到半高后上方页面可见；按住说话后自动停在半高需真机确认。
+
+## TestFlight 1.0（26）
+**Date:** 2026-09-29
+- 构建26使用 main 的85f14df，云端Test/Archive成功，内部测试分发成功。外部短暂进入Pending Beta Review后自动通过，版本详情已核对内外部两个test组；中文测试说明保留。
+- 发布记录见docs/XCODE_CLOUD.md；全部分发步骤成功，最终时长10分钟、计算用量7分钟。不宣称通知已送达或测试者已安装。结果文档另提交推送，不额外构建。
+
+## 云端区域差异修复
+**Date:** 2026-09-29
+- 构建25使用 f58fd47，归档编译/签名导出通过，测试被同一用例的两条时间断言拦截，未运行内外部测试分发。
+- 根因：clockTime 跟随区域的12小时制却省略AM/PM，美国环境把15:00/21:00显示为03:00/09:00。本机指定英文、美国区域精确复现；改为 en_US_POSIX + HH:mm，继续使用当前本地时区。
+- 同时修正提醒工具测试的输入时间格式，直接生成未来完整日期，移除跨午夜跳过断言。美国区域全量348项，1项既有跳过，0失败（/private/tmp/butler-release-us-final-tests.log）。测试门槛保留，修复后重新手动构建。
+
+## 本轮 TestFlight 发布准备
+**Date:** 2026-09-29
+- 用户明确要求提交推送并通过 TestFlight 发布。本机与远端 main 基线一致；保留单 main 分支，手动触发 Xcode Cloud，不恢复提交自动构建。
+- 汇总本轮日程/通用物品、天气、整张提醒上下文、输入与连续触觉、自定义及实时语音改动；更新 TestFlight 测试说明和 README。
+- 发布前全量测试：348项，1项既有 SwiftData 旧磁盘结构升级测试仍显式跳过，0失败（/private/tmp/butler-release-all-tests.log）。最新 Release 构建已通过；git diff --check及凭据扫描通过。
+- 已核对 Main · TestFlight 的 Test 必须通过、Archive上传，以及内部和外部两个 test 组的自动分发配置。实际云端结果与测试可用状态以本次构建页面为准。
+
+## “其他安排”属于整张管家提醒
+**Date:** 2026-09-29
+- 用户指出提醒可能包含多件事情，入口不能绑定某个物品。定位到原回调把 brief.target.scope 直接作为会话归属，误将快捷操作目标等同提醒主题。
+- 新增 brief 会话作用域，保存点击时完整提醒正文、日期及快捷操作信息；同日相同内容复用独立历史，提醒更新不篡改已有会话。稳定SHA256路径和scope.json沿用会话持久化/备份，既有物品与任务历史不猜测迁移。
+- “其他安排”传递整张可见卡片而非target；没有主要对象时也可打开。聊天标题为“关于这条管家提醒”，顶部保留提醒原文，引导讨论其中任意一件或整体安排。
+- 模型上下文明确整张卡片是讨论对象，快捷按钮目标不作为默认指代；修改前查最新数据，多对象歧义先确认。关闭此会话的离线自动新建提醒兜底，防止把调整已有多件安排误解析为新任务。
+- 55项相关测试通过（/private/tmp/butler-brief-scope-tests.log），覆盖多主题上下文、旧会话隔离、相同提醒复用、新提醒不覆盖、重启恢复及无对象提醒。模拟器实际点击核对标题、原文及入口提示。
+- 最终Release构建通过（/private/tmp/butler-brief-scope-final-release.log），已安装iPhone 14 Pro，安装序列2652。未提交推送或触发云端构建；真实模型对多件安排的回答效果仍待用户对话体验。
+
+## AiHubMix 鉴权排查与实时语音
+**Date:** 2026-09-29
+- 手机配置为备用域名 https://api.inferera.com（缺少 /v1）及 gpt-live-transcribe。旧实现错误地请求文件转写路径，又将401/403统一显示为密钥错误。用户明确选择接通实时模型。
+- 接入 WebSocket：握手包含 intent/model/Bearer，PCM16/24k/mono、languages zh/en、turn_detection null；会话确认后顺序发送，增量显示，松手commit后最终文字替换并仅发送一次。取消、后台和错误隔离会话。设置明确实时音频已上传部分不可撤回。
+- 已知AiHubMix主机自动补 /v1，原主机兼容旧凭据绑定，不跨主机复用。新增安全错误分类与无音频连接检查，不回显服务原文或密钥后缀。
+- 首次PCM转换测试发现对象释放崩溃；转换器和网络对象明确nonisolated deinit后36项测试通过（/private/tmp/butler-realtime-tests-fixed.log）。Release构建通过（/private/tmp/butler-realtime-release.log）；仍有工程既存及AVFoundation同步回调的Swift并发警告。
+- 手机使用原有钥匙串密钥，实时鉴权及会话配置成功；发送2.09秒本地合成测试句，收到10次文字更新，最终匹配测试句（/private/tmp/butler-speech-sample-result.log）。不导出密钥、不采集用户录音、不发送管家消息。诊断入口仅DEBUG显式启动参数有效。
+- 模拟器确认实时模型说明与连接检查入口。已装回Release版至iPhone 14 Pro，安装序列2644；原配置无需重填。实际麦克风与长按/取消体感仍需用户实测。未提交推送或云端构建。
+
+## 语音提示与自定义转写服务
+**Date:** 2026-09-29
+- 水晶球空录音提示改为“松开发送，上滑取消”。保留已恢复的液态玻璃、连续触觉、短按文字/长按语音及取消隔离。
+- 管家设置新增语音识别页，默认苹果框架；自定义 HTTPS Base URL、模型名、API Key 接入 OpenAI 兼容音频转写。凭据绑定地址并保存系统钥匙串，不参与备份或模型上下文。更换地址需重新输入密钥。
+- 自定义模式本机录制 m4a，正常结束才上传，取消不上传；等待转写可取消。限制2分钟，网络40秒/整体收尾45秒保护；苹果仍3秒。旧请求取消/迟到不影响下一轮，失败不发空或部分文本，不静默回退服务。
+- 用户指定 AiHubMix。核对官方快速开始、STT与Create Transcription文档：支持 https://aihubmix.com/v1/audio/transcriptions、multipart m4a和JSON text；配置示例记录于 docs/SPEECH_RECOGNITION.md。未使用真实Key，实际账户可用性、识别效果及时延待用户配置验证；当前非实时WebSocket转写。
+- 57项相关测试通过（/private/tmp/butler-custom-speech-final-tests.log），覆盖凭据/请求/取消/错误/重定向及交互回归；模拟器确认默认苹果和自定义配置界面。Release构建通过（/private/tmp/butler-custom-speech-device.log），现有工程并发警告未在本次扩大处理。
+- 已安装到iPhone 14 Pro，安装序列2620；未提交推送，未触发Xcode Cloud/TestFlight。
+
+## 恢复被误删的液态玻璃视觉
+**Date:** 2026-09-29
+- 用户指出此前授权修复的是震动，未要求移除液态玻璃和流动感。此前将触感集成与视觉简化捆绑属于范围错误，本轮撤回视觉简化。
+- 从原OrbDock绘制实现恢复液态玻璃表面、内部流光/折射、按压展开、真实声条和与主玻璃连成一体的红色取消区；恢复松手收回。球的位置保持稳定，不恢复先前取消的滚动掉落摊开，也不引入圆形进度。
+- 绘制层不接触摸且不触发额外震动，继续使用用户已确认的标准UIControl与预热连续触感；短按文字/长按语音及会话隔离不改。回弹完成以视觉会话ID隔离，防止旧回弹影响新按压。聊天输入区透明悬浮修正保留。
+- 60项相关回归通过（/private/tmp/butler-liquid-restore-tests.log），覆盖玻璃轮廓、语音控制器、输入和滚动；马达与恢复动画组合的实际体感仍以手机为准。
+- Release构建成功（/private/tmp/butler-liquid-restore-device.log），模拟器检查了恢复后的静止玻璃水晶球与独立可访问入口。已更新iPhone 14 Pro，安装序列2612；未提交推送或触发云端构建。
+
+## 等待回复时保持悬浮输入区
+**Date:** 2026-09-29
+- 根据用户截图，移除输入区系统safeAreaBar的整块背景与分隔，改透明safeAreaInset保留内容避让，并关闭底部scroll edge遮罩。输入框与两侧按钮继续各自悬浮，页面背景连续。
+- 去除“管家正在回答，你可以先写下一条。”，空输入统一为“和管家说…”，不再等待时改成“可以先写下一条…”。保留对话流中的处理状态、停止按钮与必要的语音/错误提示。
+- 现有输入与滚动回归19项通过（/private/tmp/butler-floating-composer-tests.log），Release构建成功（/private/tmp/butler-floating-composer-device.log）。模拟器检查了普通状态的背景连续性；未登录真实模型，因此未宣称模拟器复现了真实生成中的截图状态。
+- 已更新iPhone 14 Pro，安装序列2604。未提交推送或触发云端构建。
+
+## 已确认触感接入正式水晶球，短按文字/长按语音
+**Date:** 2026-09-29
+- 用户确认安装序列2588的触感可接受，并要求保证短按输入和长按语音。将验证后的标准UIControl与连续触觉推广至OrbDock，与试用页复用VoicePressInteraction；旧的正式入口双次系统震动不再调用。
+- 即时触觉独立于0.3秒长按判断。短按松手只调用当前上下文openChat(.typing)，不启用麦克风；达到阈值后只走语音，空语音、超时、取消不转为文字。明显移动不误作短按，语音整理成功只交付一次。
+- 正式水晶球稳定轻压、两侧真实音量，移除旧多段球/条/展开绘制和回调；上滑取消、滑回继续、后台清理、5秒准备与3秒收尾保护复用已测控制器。保留独立试用入口。
+- 53项相关回归通过（/private/tmp/butler-orb-dual-input-tests.log），含新增7项短按/长按互斥、发送一次和取消路径测试。Release构建成功（/private/tmp/butler-orb-dual-input-device.log）。模拟器通过无障碍入口打开文字对话，截图可见输入框插入光标；模拟器连接硬件键盘，不据此宣称软键盘或真实手指长按已验收。
+- 已直接更新iPhone 14 Pro，安装序列2596，bundle com.anvalar.Butler。正式入口待用户真机双操作确认；未提交推送，未触发云端构建。
+
+## 试用页首次起振延迟
+**Date:** 2026-09-29
+- 用户报告试用页按压后仍等太久才震。读取/private/tmp/butler-voice-trial-latency.log，可见4次试用按压至麦克风就绪约0.6秒；旧日志不足以判断触摸至起振真实时延。
+- 新试用页使用标准UIControl tracking回调直接接触，不使用自定义手势识别器。控制器首先交付触觉；pattern/player提前在引擎就绪与松手后准备，移除按下时创建开销。
+- 单段continuous事件起始强度从0.32改0.60，40ms内柔和过渡到0.40，后续平滑保持；真正收音时淡出，仍无第二下ready/成功震动。增加触摸事件送达与播放器start调用耗时日志，不记录语音正文。
+- 新增同步反馈先于录音启动和连续触觉包络无空档测试；正式水晶球未改。真机手感仍待实测，不能把调用耗时解释为马达物理启动时间。
+- 46项相关测试通过（/private/tmp/butler-voice-contact-tests.log），Release构建成功（/private/tmp/butler-voice-contact-device.log）。模拟器确认新UIControl试用入口存在；未将无障碍操作当成实际触摸验证。已更新iPhone 14 Pro，安装序列2588，未提交推送或云端构建。
+
+## 连续触感独立试用页
+**Date:** 2026-09-29
+- 用户否定“触碰轻震→停顿→就绪再震”，同意先在独立界面验证新交互，再决定接入正式水晶球。
+- 设置新增“交互试用 → 按住说话 · 连续触感”，全屏覆盖正式入口；独立 LiveDictation，仅显示文字，不发送消息或改库存。正式 OrbDock/VoiceHaptics 本轮未改。
+- ContinuousPressFeedback 使用一段连续事件，触碰起振、真实录音开始回调淡出，无就绪/松手第二次冲击。球本体轻微受压与两侧真实声条；取消区边界选择反馈，取消即时清理。触觉最长0.8秒，权限等待不持续震。
+- VoicePressTrial 控制器每次会话隔离，旧启动和收尾回调不能污染新按压；准备5秒、收尾3秒保护，超时保留已识别文字。试用页退出、后台清理麦克风和独立触觉引擎。
+- 44项回归通过，包含8项控制器/模拟录音器生命周期测试；/private/tmp/butler-voice-trial-tests.log。Release真机构建成功：/private/tmp/butler-voice-trial-device.log。现有工程并发隔离警告仍存在。
+- 模拟器检查设置入口、页面布局、关闭后返回设置；原生工具坐标拖动未产生按压事件，因此不算触摸验证。马达体感、连续三次取消重按及初始收音仍待手机实测，不提前宣称解决体验问题。
+- 已直接安装到iPhone 14 Pro，安装序列2580，bundle com.anvalar.Butler。未提交推送、未触发Xcode Cloud/TestFlight，等待独立试用页的真机反馈。
+
+## 紧急撤回失效的原生长按入口
+**Date:** 2026-09-29
+- 用户实测安装序列2564后按压完全无响应。本轮手机日志/private/tmp/butler-voice-unresponsive.log仅有interaction reset，没有本版touch began；未进入按压处理链路。不能把上一版37项状态测试解释为实际触摸成功。
+- 撤回OrbTouchGesture，恢复曾可用的SwiftUI DragGesture(minimumDistance:0)和GestureState结束/取消检测。撤回Core Haptics脉冲引擎，恢复UIKit触碰/就绪/取消等轻震，与麦克风音频生命周期分离。
+- 失败实现只存档/private/tmp/butler-withdrawn-voice-20260929，不参与应用编译。保留固定球、会话隔离和超时保护，其他首页/任务/天气/对话改动不回退。
+- 用户要求的连续/渐快触觉暂未完成，优先恢复语音入口。最终实际长按、取消后重按仍需真机复验，不提前宣称修复成功。
+- 恢复版本36项相关测试通过（/private/tmp/butler-voice-restore-tests.log）；Release构建成功（/private/tmp/butler-voice-restore-device.log），已安装iPhone 14 Pro，安装序列2572。已请求同页面取消后再次收音复验，结果待确认；未提交推送。
+
+## 取消后第二次按压无响应
+**Date:** 2026-09-29
+- 用户报告上一版第一次正常，取消后再次按压失效，切换页面暂时恢复。上一版34项状态/几何测试及无障碍入口验证不足以证明连续真机手势正常，撤回“已完全验证”的任何推断。
+- 读取手机Butler诊断到/private/tmp/butler-voice-repeat-before.log。日志可见录音启动及触觉pattern不可用，但旧日志缺少取消/结束路径，不能仅据此确定唯一运行时根因。
+- 替换裸UIGestureRecognizer手工状态转换，使用系统UILongPressGestureRecognizer零时长识别与原生super生命周期；保留touchesBegan即时反馈。
+- 新增VoiceInteractionSession隔离每次按压与收尾。取消清理收尾任务/期限/finishingVoice，旧准备与动画回调不影响新按压；识别收尾3秒超时后释放入口并提示保留的未发送文本，错误提示不再把入口永久禁用。
+- 触觉引擎停止/reset时作废播放器并标记需重启，下次触碰先即时轻震再重新准备；不对已停止的播放器重复发stop。新增触摸开始/结束/取消/收尾超时日志，仅状态不记录语音内容。
+- 37项相关测试通过（/private/tmp/butler-voice-repeat-tests.log），含50轮会话取消隔离和20轮触觉取消重试状态测试。UIKit真实触摸复位与马达重启仍需本轮真机验证，不把纯状态测试等同真机成功。
+- 本轮Release构建成功（/private/tmp/butler-voice-repeat-device.log），已更新iPhone 14 Pro，安装序列2564。已向用户请求同一页面连续3次按住/上滑取消/再按的真机复验，尚未收到结果。未提交推送。
+
+## 原生触碰与语音准备脉冲
+**Date:** 2026-09-29
+- 用户反馈上一版按住仍有停顿，明确要求触碰瞬间震动及收音前持续/加速反馈。本轮覆盖此前“仅离散事件”的准备阶段取舍。
+- OrbTouchGesture 在 UIKit touchesBegan 直接交付初始事件，替代 SwiftUI DragGesture 首次回调；保留轻点、拖动、松手和取消，位移在窗口坐标计算。
+- VoiceHaptics 预备 Core Haptics pattern，先系统即时轻震，再从220ms间隔加速至120ms的温和脉冲；共享音频会话并启用haptics-only。失败或引擎中断降级系统反馈，跳过延迟期间错过的脉冲，避免补播连震。
+- LiveDictation 在 engine.start 成功后直接通知收音就绪，停止脉冲并确认，不再等 SwiftUI onChange。松手/拖离/取消/失败/后台均停止，5秒超时中止准备并提示重试；失败后的松手不会误打开对话。
+- 34项相关测试通过：/private/tmp/butler-voice-immediate-final-tests.log；模拟器无障碍点击可打开对话。模拟器未验证实际触摸延迟与马达体感，需最终手机复验。
+- 真机Release构建成功并已安装iPhone 14 Pro（安装序列2556），日志/private/tmp/butler-voice-immediate-device.log。已请求用户验证接触瞬间/准备脉冲/收音停止三段手感，等待反馈；未提交推送、未触发云构建。
+
+## 提醒卡片、稳定水晶球、删除与等待优化
+**Date:** 2026-09-29
+- “聊聊这件事”改“其他安排”。首页天气最终按用户选择保留中文天气描述，温度和Apple来源移至天气详情，移除首页来源页脚。
+- 删除随滚动切换水晶球/摊开状态的入口行为；触碰直接触发UIKit触觉，录音时允许haptics，按真实状态区分录音就绪/取消边界/交付/失败。
+- 任务新增真正删除：管理列表左滑/长按、详情按钮和propose_task_action.delete，共用持久化与停止通知逻辑，预览确认和revision校验；取消仍保留历史。
+- 从手机提取仅Butler诊断日志到/private/tmp/butler-latency-20260929.log，发现12秒/17秒样本主要是多轮模型请求，另有1–1.5秒Jev前置和1.4–2.2秒HEAD探测。本地任务工具0.0秒。
+- 去除正常请求前HEAD，流式呈现正文与实际步骤，新增首字/凭据耗时诊断；未改变模型或绕过写操作确认。
+- 90项相关回归通过，日志/private/tmp/butler-interaction-latency-tests.log；模拟器原生界面验证删除确认弹窗及稳定入口，未执行数据删除。真机触觉与线上提速尚待体验验证。
+- 真机Release构建成功（/private/tmp/butler-interaction-latency-device.log），已安装到iPhone 14 Pro，bundle com.anvalar.Butler，安装序列2548。尚未提交推送，未触发Xcode Cloud/TestFlight。
+
+## 真机反馈后的首页交互纠正
+**Date:** 2026-09-29
+
+- 根因：把清单局部浏览日期用作整个首页的显示条件，使滑动隐藏今日建议和底部摘要；又将天气派生提示与署名机械地插入卡片，混淆正文层级。此节与更新后的首页 AGENTS / 设计文档取代本日早期“非今天隐藏实时卡片”的方案。
+- 日期状态明确命名为 `listDay`。左右手势只绑定清单，清单标题同步日期并就地提供“回到今天”；顶部日期锚定今天，今日管家卡片、天气、入口和底部摘要持续保留。完整日期面板仍可选任意日期，只更新清单；所有清单记录完整展示。
+- 删除卡片内天气小字提示和来源区，署名保留在卡片外页脚和天气详情。普通天气不进入主动摘要上下文、不触发额外模型更新；删除仅依据昼夜温差提醒穿衣的规则。值得留意的新鲜天气作为可选线索，由主模型判断相关性并融入同一正文，无关就不提。中文条件名称覆盖 WeatherKit 全部现有枚举及旧英文缓存。
+- 相关回归 39 项全部通过（Brief / HomeAgenda / WeatherStore），包含普通天气与正常昼夜温差不提醒、异常天气可用但旧天气不可用、旧英文缓存中文显示；日志 `/private/tmp/butler-home-local-browse-tests.log`。模拟器通过与滑动共用的无障碍前后一天动作验证昨天/明天切换、回到今天和稳定首页结构，截图 `/private/tmp/butler-home-browsing-tomorrow.png`；电脑自动拖动未能可靠触发模拟器手势，因此不将它作为触控手势验收通过的证据。
+- Release 真机构建通过（`/private/tmp/butler-home-local-browse-device.log`），已更新安装用户的 iPhone 14 Pro；自动启动被手机锁屏阻止，已告知用户解锁后打开，真实左右滑动手感待用户确认。未提交推送、未触发云构建或 TestFlight 分发。
+- 用户随后反馈“仍有整页变化或滑动不正常”，因此本轮真机交互验收未通过，不能把上述模拟器状态切换等同于修复完成。已追问具体是能翻日但其他区域移动/消失、滑动无法翻日或误触竖向滚动、还是两者都有；待明确表现后继续修复。
+
+- 用户进一步定位：往过去正常，往未来误进任务详情，返回后又跳到更早日期。针对原 `simultaneousGesture` 与行 Button 可同时响应的冲突，新增 `HomeDaySwipe` 原生方向识别与 `HomeDayInteraction` 单次触摸状态：拖动取消本次点击，结束后仍阻止延迟 Button 回调，下一次实际按下立即恢复点击；拖动按固定窗口坐标计算，最多提交一次翻日。首页仅在导航根页且场景活跃时接受翻日，离开时取消未完成手势，避免返回手势污染日期。
+- 新增 6 项手势回归；首轮发现状态对象释放时崩溃，修复释放隔离后最终 45 项相关测试全部通过（`/private/tmp/butler-day-gesture-tests-final.log`），Release 构建通过（`/private/tmp/butler-day-gesture-device-final.log`）。模拟器经无障碍动作选择明天、正常点击任务再点返回，日期保持明天。实际双向触控与详情侧滑返回尚待手机确认，不能用无障碍动作代替手势验收。
+- 最终手势修正版已成功更新安装到 iPhone 14 Pro（安装记录 `7D96031C-35FF-4DA4-9CDC-E1EDA20639CA`）；自动启动因手机锁屏被拒绝，已请用户解锁打开并复验。新增本地事件日志只记翻页方向、点击是否被抑制，不记录任务名称或内容。尚未提交推送或启动云构建。
+- 真机复验通过：用户在安装最终手势修正版后明确确认“两项都正常了”——从任务行向未来滑动不再误进详情；正常轻点进入任务详情后侧滑返回，清单日期保持不变。本次通过依据为用户实际触控反馈，区别于前述仅使用无障碍动作的模拟器验证。
+
+## 通用物品与混合交互能力
+**Date:** 2026-09-29
+
+- 对话待确认队列跨轮/重启保留；本机明确确认、取消与按序号选择；主模型可修改提案但无提交工具。执行前检查库存版本，已有任务/设置保持版本校验。按钮与语音共用业务服务。
+- 补齐任务 reopen、库存历史/撤销工具。库存增加每批次的分类、属性、用途、可用状态和照片，资料修改经过 InventoryPolicy/Repository，保留事件和备份。家里分类浏览、属性搜索、资料编辑、对话图形结果清单贯通。
+- 新增 WeatherKit 天气服务、前台大致定位、手动选城市、缓存、过期/失败/来源显示与工具。首页提示及后台摘要消费新鲜天气；天气城市改变后旧响应不能覆盖新选择。备份 v3 兼容旧数据。
+- 回归测试首轮 293 项：292 通过、1 项旧迁移测试跳过、0 失败。后续界面检查发现的分类与视觉细节继续修正；最终验证见下条。
+- 未提交推送、未触发云端构建。WeatherKit 开发者账户配置最初受浏览器访问授权阻挡；用户随后明确授权并完成登录，账户配置结果见下条。真机天气联网验证尚未完成。
+
+- 最终相关回归：52 项全部通过，日志 `/private/tmp/butler-unified-final-tests.log`；前述全量 293 项无失败。`git diff --check` 通过。模拟器实际检查了升级后的原库存列表、物品资料分类选项、天气入口/首次定位提示、天气失败状态；手动搜索“上海”返回“中国上海市”。没有完成真实天气、真实主模型穿搭或真机验证。
+
+- WeatherKit 账户配置（2026-09-29）：通过内置浏览器为 `com.anvalar.Butler`（团队 `H4982D35ZR`，App ID 记录 `G8X4DJNT2C`）分别启用 Capabilities / App Services 中的 WeatherKit，保存后重新打开确认两处均保持勾选。Apple 提示须重新生成关联的 provisioning profiles；项目 Debug/Release 已配置自动签名及 WeatherKit entitlement。未启动构建、安装或分发，实际天气请求留待新签名版本真机验证。确认截图：`/private/tmp/butler-weatherkit-enabled.png`。
+
+- 随后按用户要求直接安装真机（2026-09-29）：当前 `main` 工作区的 Release 构建成功，通过自动签名取得包含 WeatherKit 的新描述文件，已核对安装包签名和描述文件中 `com.apple.developer.weatherkit = true`，且包含目标 iPhone。已更新安装并启动连接的 iPhone 14 Pro 上的 `com.anvalar.Butler`；本地版本号仍为 `1.0 (1)`，不对应 TestFlight 云构建号。安装前已备份 Documents、Application Support 和 Preferences 到 `/private/tmp/butler-iphone-before-weather-20260929`，包含原数据库及其 WAL/SHM。构建日志 `/private/tmp/butler-weather-device-build.log`。未提交推送或触发 TestFlight / Xcode Cloud。
+
+- 真机天气验证通过：用户在手机打开天气、允许定位后确认显示城市、温度与未来天气；随后从应用自己的 Preferences 核实 `weatherSnapshot` 为手机定位模式，2026-09-29 14:02:21（Asia/Shanghai）取得新数据，观测时间 14:02:17，包含 7 天预报、Apple Weather 法律来源链接和明暗来源标识。检查仅输出天气元数据，不输出坐标或其他偏好。核验文件 `/private/tmp/butler-weather-device-verified.plist`。本次覆盖本地签名安装→手机定位→WeatherKit 实际请求→页面显示→缓存保存；手动城市切换的真机流程、TestFlight 分发及真实模型穿搭仍未在本轮验证。
 
 ## 首页日期浏览、后台建议与完整清单
 **Date:** 2026-09-29 · 基于 `dabdbd3` 的本地交互修订，尚未发布
@@ -277,7 +541,6 @@
 - 验证：全量串行测试 242 项，241 通过、1 项原有迁移跳过、0 失败。新增到时/跨日/有限阶段任务保留、完成状态、重复提醒去重、接触速度连续回归（本段测试为 9 月 28 日结果，后续验证见最新条目）。最后仅补待完成行原提醒时间，Debug 模拟器构建通过。日志 /private/tmp/butler-feedback-full-tests.log、/private/tmp/butler-feedback-ui-build.log。
 - iPhone 17 Pro / iOS 26.2 模拟器实际复现原深色开关异常，并确认修复后白色滑块与灰色轨道分离，开关状态正常。未做真人麦克风输入、真机帧率或动画手感验收；动画连续性通过几何回归测试验证，仍需手机体验。未提交推送、未启动 Xcode Cloud、未更新 TestFlight。
 
-
 ## Xcode Cloud 内外部双组分发
 **Date:** 2026-09-28 · Main · TestFlight
 
@@ -286,14 +549,12 @@
 - 已有 1.0 (24) 补加入外部 test 组并开启自动通知，后台已显示 Testing，关联内部及外部两组。未验证手机通知送达或安装。
 - 本次未运行新构建；自动外部分发动作将在下次用户要求的构建中验证执行结果。操作和排查更新至 docs/XCODE_CLOUD.md。
 
-
 ## 云构建改为按需手动启动
 **Date:** 2026-09-28 · 用户要求节省构建额度
 
 - Main · TestFlight 已移除 Branch Changes，只保留 Manual Start，分支限定 main；没有自动推送、PR、标签或定时触发。
 - 保留已验证的测试、Release 归档、签名和内部 test 组分发。本次未启动新构建，最新已分发版本仍为 1.0 (24)。
 - 用户要求“提交推送”时只提交推送；明确要求构建或更新测试版时才手动启动。操作步骤、构建号和失败排查已写入 docs/XCODE_CLOUD.md。
-
 
 ## Xcode Cloud 自动构建与 TestFlight 内部分发
 **Date:** 2026-09-28 · main · Xcode 26.3 / 云端 iOS 26.3
@@ -303,7 +564,6 @@
 - 初始化构建 1 在上传阶段因旧构建号失败，已将后续起始号改为 23。构建 23 完整验证成功；提交 d11f06f 自动触发构建 24，来源 Code push，Test、Archive、TestFlight Internal Testing 全部成功，1.0 (24) 已出现于 TestFlight 并关联内部 test 组。
 - 加入 TestFlight/WhatToTest.zh-Hans.txt，云端确认保存中文测试说明。使用和排查方法见 docs/XCODE_CLOUD.md。
 - 当前所有者内部测试邀请仍为 Invited，需本人在手机接受邀请。未声称已完成真机安装验收，也未自动分发给外部组或提交正式商店审核。
-
 
 ## 页面上下文对话、设置工具、分阶段任务与输入框
 **Date:** 2026-09-28 · 基于 `8f1c3b9` 的本地开发 · Xcode 26.3 / iOS 26.2 Simulator
@@ -483,9 +743,9 @@ Detailed fixtures, expected outcomes, and release gates are normative in [`docs/
 
 ---
 
-## 🏗 System Architecture Summary
+### 🏗 System Architecture Summary
 
-### 1. Data Layer (SwiftData)
+#### 1. Data Layer (SwiftData)
 - **Model**: `Item.swift`.
 - **Logic Engine**: `DataManager.swift` (Singleton-like via Environment).
 - **Butler Engine Rules**:
@@ -493,41 +753,41 @@ Detailed fixtures, expected outcomes, and release gates are normative in [`docs/
     - **R2**: General items without dates -> Auto-duration.
 - **Undo System**: 5-second window for Consume/Discard/Decrement.
 
-### 2. Voice Input (The "Brain")
+#### 2. Voice Input (The "Brain")
 - **Tech**: `SFSpeechRecognizer` (Forced On-Device) + `NLTagger` (Local NLP).
 - **Location**: `Services/VoiceManager.swift` & `Services/NLPParser.swift`.
 - **Parsing**: Handles `[Quantity] + [Item Name]` patterns.
 
-### 3. Vision Correction (The "Eyes")
+#### 3. Vision Correction (The "Eyes")
 - **Tech**: `VisionKit` (`DataScannerViewController`).
 - **Flow**: Highlighting dates on packaging -> Tap to populate -> Confirm.
 - **Date Parsing**: `Services/DateParser.swift` handles multiple packaging date formats.
 
-### 4. Search & Extension
+#### 4. Search & Extension
 - **In-App**: Semantic fuzzy search in `DashboardView` (e.g., searching "吃的").
 - **Core Spotlight**: Full system search synchronization.
 - **Widgets**: `ButlerWidget` with Small/Medium sizes.
 
 ---
 
-## ⚠️ Known Issues & Technical Debts
+### ⚠️ Known Issues & Technical Debts
 
-### 1. Widget Data Sharing (App Group)
+#### 1. Widget Data Sharing (App Group)
 - **Problem**: Currently, the Widget uses `PreviewData` because real SwiftData sharing requires an **App Group Identifier**.
 - **Fix Needed**: In a real provisioning environment, need to:
     1. Enable App Groups in "Signing & Capabilities".
     2. Update `ModelContainer` to use a shared App Group URL.
     3. Update `WidgetCenter` to fetch from that shared store.
 
-### 2. On-Device Speech Recognition
+#### 2. On-Device Speech Recognition
 - **Note**: `requiresOnDeviceRecognition = true` is set. It may fail on old devices or if the specific language pack (zh-CN) isn't downloaded. Fallback logic is in place but needs real-world testing.
 
-### 3. OCR Performance
+#### 3. OCR Performance
 - **Note**: Packaging can be busy. The `DateParser` is currently rule-based. If parsing fails frequently, consider a more robust regex or a micro ML model for date detection.
 
 ---
 
-## 🚀 Next Steps (Priority List)
+### 🚀 Next Steps (Priority List)
 
 1.  **UI Polish**:
     - Add transition animations when an item moves from "Inbox" to "Urgency Grid".
@@ -540,182 +800,7 @@ Detailed fixtures, expected outcomes, and release gates are normative in [`docs/
 
 ---
 
-## 🛠 Troubleshooting for "Future Me"
+### 🛠 Troubleshooting for "Future Me"
 - **Build Errors?** Check `Info.plist`. It's managed via `PlistBuddy` and contains Camera/Speech/Microphone permissions.
 - **Data Not Refreshing?** `DataManager.saveChanges()` is the central point for `WidgetCenter` reloads and Spotlight sync. Always use this instead of `modelContext.save()`.
 - **Scanner Not Working?** Ensure you are testing on a **Real Device**. Simulators do not support `DataScannerViewController`.
-
-## 2026-09-29 通用物品与混合交互能力
-
-- 对话待确认队列跨轮/重启保留；本机明确确认、取消与按序号选择；主模型可修改提案但无提交工具。执行前检查库存版本，已有任务/设置保持版本校验。按钮与语音共用业务服务。
-- 补齐任务 reopen、库存历史/撤销工具。库存增加每批次的分类、属性、用途、可用状态和照片，资料修改经过 InventoryPolicy/Repository，保留事件和备份。家里分类浏览、属性搜索、资料编辑、对话图形结果清单贯通。
-- 新增 WeatherKit 天气服务、前台大致定位、手动选城市、缓存、过期/失败/来源显示与工具。首页提示及后台摘要消费新鲜天气；天气城市改变后旧响应不能覆盖新选择。备份 v3 兼容旧数据。
-- 回归测试首轮 293 项：292 通过、1 项旧迁移测试跳过、0 失败。后续界面检查发现的分类与视觉细节继续修正；最终验证见下条。
-- 未提交推送、未触发云端构建。WeatherKit 开发者账户配置最初受浏览器访问授权阻挡；用户随后明确授权并完成登录，账户配置结果见下条。真机天气联网验证尚未完成。
-
-- 最终相关回归：52 项全部通过，日志 `/private/tmp/butler-unified-final-tests.log`；前述全量 293 项无失败。`git diff --check` 通过。模拟器实际检查了升级后的原库存列表、物品资料分类选项、天气入口/首次定位提示、天气失败状态；手动搜索“上海”返回“中国上海市”。没有完成真实天气、真实主模型穿搭或真机验证。
-
-- WeatherKit 账户配置（2026-09-29）：通过内置浏览器为 `com.anvalar.Butler`（团队 `H4982D35ZR`，App ID 记录 `G8X4DJNT2C`）分别启用 Capabilities / App Services 中的 WeatherKit，保存后重新打开确认两处均保持勾选。Apple 提示须重新生成关联的 provisioning profiles；项目 Debug/Release 已配置自动签名及 WeatherKit entitlement。未启动构建、安装或分发，实际天气请求留待新签名版本真机验证。确认截图：`/private/tmp/butler-weatherkit-enabled.png`。
-
-- 随后按用户要求直接安装真机（2026-09-29）：当前 `main` 工作区的 Release 构建成功，通过自动签名取得包含 WeatherKit 的新描述文件，已核对安装包签名和描述文件中 `com.apple.developer.weatherkit = true`，且包含目标 iPhone。已更新安装并启动连接的 iPhone 14 Pro 上的 `com.anvalar.Butler`；本地版本号仍为 `1.0 (1)`，不对应 TestFlight 云构建号。安装前已备份 Documents、Application Support 和 Preferences 到 `/private/tmp/butler-iphone-before-weather-20260929`，包含原数据库及其 WAL/SHM。构建日志 `/private/tmp/butler-weather-device-build.log`。未提交推送或触发 TestFlight / Xcode Cloud。
-
-- 真机天气验证通过：用户在手机打开天气、允许定位后确认显示城市、温度与未来天气；随后从应用自己的 Preferences 核实 `weatherSnapshot` 为手机定位模式，2026-09-29 14:02:21（Asia/Shanghai）取得新数据，观测时间 14:02:17，包含 7 天预报、Apple Weather 法律来源链接和明暗来源标识。检查仅输出天气元数据，不输出坐标或其他偏好。核验文件 `/private/tmp/butler-weather-device-verified.plist`。本次覆盖本地签名安装→手机定位→WeatherKit 实际请求→页面显示→缓存保存；手动城市切换的真机流程、TestFlight 分发及真实模型穿搭仍未在本轮验证。
-
-## 2026-09-29 真机反馈后的首页交互纠正
-
-- 根因：把清单局部浏览日期用作整个首页的显示条件，使滑动隐藏今日建议和底部摘要；又将天气派生提示与署名机械地插入卡片，混淆正文层级。此节与更新后的首页 AGENTS / 设计文档取代本日早期“非今天隐藏实时卡片”的方案。
-- 日期状态明确命名为 `listDay`。左右手势只绑定清单，清单标题同步日期并就地提供“回到今天”；顶部日期锚定今天，今日管家卡片、天气、入口和底部摘要持续保留。完整日期面板仍可选任意日期，只更新清单；所有清单记录完整展示。
-- 删除卡片内天气小字提示和来源区，署名保留在卡片外页脚和天气详情。普通天气不进入主动摘要上下文、不触发额外模型更新；删除仅依据昼夜温差提醒穿衣的规则。值得留意的新鲜天气作为可选线索，由主模型判断相关性并融入同一正文，无关就不提。中文条件名称覆盖 WeatherKit 全部现有枚举及旧英文缓存。
-- 相关回归 39 项全部通过（Brief / HomeAgenda / WeatherStore），包含普通天气与正常昼夜温差不提醒、异常天气可用但旧天气不可用、旧英文缓存中文显示；日志 `/private/tmp/butler-home-local-browse-tests.log`。模拟器通过与滑动共用的无障碍前后一天动作验证昨天/明天切换、回到今天和稳定首页结构，截图 `/private/tmp/butler-home-browsing-tomorrow.png`；电脑自动拖动未能可靠触发模拟器手势，因此不将它作为触控手势验收通过的证据。
-- Release 真机构建通过（`/private/tmp/butler-home-local-browse-device.log`），已更新安装用户的 iPhone 14 Pro；自动启动被手机锁屏阻止，已告知用户解锁后打开，真实左右滑动手感待用户确认。未提交推送、未触发云构建或 TestFlight 分发。
-- 用户随后反馈“仍有整页变化或滑动不正常”，因此本轮真机交互验收未通过，不能把上述模拟器状态切换等同于修复完成。已追问具体是能翻日但其他区域移动/消失、滑动无法翻日或误触竖向滚动、还是两者都有；待明确表现后继续修复。
-
-- 用户进一步定位：往过去正常，往未来误进任务详情，返回后又跳到更早日期。针对原 `simultaneousGesture` 与行 Button 可同时响应的冲突，新增 `HomeDaySwipe` 原生方向识别与 `HomeDayInteraction` 单次触摸状态：拖动取消本次点击，结束后仍阻止延迟 Button 回调，下一次实际按下立即恢复点击；拖动按固定窗口坐标计算，最多提交一次翻日。首页仅在导航根页且场景活跃时接受翻日，离开时取消未完成手势，避免返回手势污染日期。
-- 新增 6 项手势回归；首轮发现状态对象释放时崩溃，修复释放隔离后最终 45 项相关测试全部通过（`/private/tmp/butler-day-gesture-tests-final.log`），Release 构建通过（`/private/tmp/butler-day-gesture-device-final.log`）。模拟器经无障碍动作选择明天、正常点击任务再点返回，日期保持明天。实际双向触控与详情侧滑返回尚待手机确认，不能用无障碍动作代替手势验收。
-- 最终手势修正版已成功更新安装到 iPhone 14 Pro（安装记录 `7D96031C-35FF-4DA4-9CDC-E1EDA20639CA`）；自动启动因手机锁屏被拒绝，已请用户解锁打开并复验。新增本地事件日志只记翻页方向、点击是否被抑制，不记录任务名称或内容。尚未提交推送或启动云构建。
-- 真机复验通过：用户在安装最终手势修正版后明确确认“两项都正常了”——从任务行向未来滑动不再误进详情；正常轻点进入任务详情后侧滑返回，清单日期保持不变。本次通过依据为用户实际触控反馈，区别于前述仅使用无障碍动作的模拟器验证。
-
-
-### 2026-09-29 提醒卡片、稳定水晶球、删除与等待优化
-- “聊聊这件事”改“其他安排”。首页天气最终按用户选择保留中文天气描述，温度和Apple来源移至天气详情，移除首页来源页脚。
-- 删除随滚动切换水晶球/摊开状态的入口行为；触碰直接触发UIKit触觉，录音时允许haptics，按真实状态区分录音就绪/取消边界/交付/失败。
-- 任务新增真正删除：管理列表左滑/长按、详情按钮和propose_task_action.delete，共用持久化与停止通知逻辑，预览确认和revision校验；取消仍保留历史。
-- 从手机提取仅Butler诊断日志到/private/tmp/butler-latency-20260929.log，发现12秒/17秒样本主要是多轮模型请求，另有1–1.5秒Jev前置和1.4–2.2秒HEAD探测。本地任务工具0.0秒。
-- 去除正常请求前HEAD，流式呈现正文与实际步骤，新增首字/凭据耗时诊断；未改变模型或绕过写操作确认。
-- 90项相关回归通过，日志/private/tmp/butler-interaction-latency-tests.log；模拟器原生界面验证删除确认弹窗及稳定入口，未执行数据删除。真机触觉与线上提速尚待体验验证。
-- 真机Release构建成功（/private/tmp/butler-interaction-latency-device.log），已安装到iPhone 14 Pro，bundle com.anvalar.Butler，安装序列2548。尚未提交推送，未触发Xcode Cloud/TestFlight。
-
-
-### 2026-09-29 原生触碰与语音准备脉冲
-- 用户反馈上一版按住仍有停顿，明确要求触碰瞬间震动及收音前持续/加速反馈。本轮覆盖此前“仅离散事件”的准备阶段取舍。
-- OrbTouchGesture 在 UIKit touchesBegan 直接交付初始事件，替代 SwiftUI DragGesture 首次回调；保留轻点、拖动、松手和取消，位移在窗口坐标计算。
-- VoiceHaptics 预备 Core Haptics pattern，先系统即时轻震，再从220ms间隔加速至120ms的温和脉冲；共享音频会话并启用haptics-only。失败或引擎中断降级系统反馈，跳过延迟期间错过的脉冲，避免补播连震。
-- LiveDictation 在 engine.start 成功后直接通知收音就绪，停止脉冲并确认，不再等 SwiftUI onChange。松手/拖离/取消/失败/后台均停止，5秒超时中止准备并提示重试；失败后的松手不会误打开对话。
-- 34项相关测试通过：/private/tmp/butler-voice-immediate-final-tests.log；模拟器无障碍点击可打开对话。模拟器未验证实际触摸延迟与马达体感，需最终手机复验。
-- 真机Release构建成功并已安装iPhone 14 Pro（安装序列2556），日志/private/tmp/butler-voice-immediate-device.log。已请求用户验证接触瞬间/准备脉冲/收音停止三段手感，等待反馈；未提交推送、未触发云构建。
-
-
-### 2026-09-29 取消后第二次按压无响应
-- 用户报告上一版第一次正常，取消后再次按压失效，切换页面暂时恢复。上一版34项状态/几何测试及无障碍入口验证不足以证明连续真机手势正常，撤回“已完全验证”的任何推断。
-- 读取手机Butler诊断到/private/tmp/butler-voice-repeat-before.log。日志可见录音启动及触觉pattern不可用，但旧日志缺少取消/结束路径，不能仅据此确定唯一运行时根因。
-- 替换裸UIGestureRecognizer手工状态转换，使用系统UILongPressGestureRecognizer零时长识别与原生super生命周期；保留touchesBegan即时反馈。
-- 新增VoiceInteractionSession隔离每次按压与收尾。取消清理收尾任务/期限/finishingVoice，旧准备与动画回调不影响新按压；识别收尾3秒超时后释放入口并提示保留的未发送文本，错误提示不再把入口永久禁用。
-- 触觉引擎停止/reset时作废播放器并标记需重启，下次触碰先即时轻震再重新准备；不对已停止的播放器重复发stop。新增触摸开始/结束/取消/收尾超时日志，仅状态不记录语音内容。
-- 37项相关测试通过（/private/tmp/butler-voice-repeat-tests.log），含50轮会话取消隔离和20轮触觉取消重试状态测试。UIKit真实触摸复位与马达重启仍需本轮真机验证，不把纯状态测试等同真机成功。
-- 本轮Release构建成功（/private/tmp/butler-voice-repeat-device.log），已更新iPhone 14 Pro，安装序列2564。已向用户请求同一页面连续3次按住/上滑取消/再按的真机复验，尚未收到结果。未提交推送。
-
-
-### 2026-09-29 紧急撤回失效的原生长按入口
-- 用户实测安装序列2564后按压完全无响应。本轮手机日志/private/tmp/butler-voice-unresponsive.log仅有interaction reset，没有本版touch began；未进入按压处理链路。不能把上一版37项状态测试解释为实际触摸成功。
-- 撤回OrbTouchGesture，恢复曾可用的SwiftUI DragGesture(minimumDistance:0)和GestureState结束/取消检测。撤回Core Haptics脉冲引擎，恢复UIKit触碰/就绪/取消等轻震，与麦克风音频生命周期分离。
-- 失败实现只存档/private/tmp/butler-withdrawn-voice-20260929，不参与应用编译。保留固定球、会话隔离和超时保护，其他首页/任务/天气/对话改动不回退。
-- 用户要求的连续/渐快触觉暂未完成，优先恢复语音入口。最终实际长按、取消后重按仍需真机复验，不提前宣称修复成功。
-- 恢复版本36项相关测试通过（/private/tmp/butler-voice-restore-tests.log）；Release构建成功（/private/tmp/butler-voice-restore-device.log），已安装iPhone 14 Pro，安装序列2572。已请求同页面取消后再次收音复验，结果待确认；未提交推送。
-
-### 2026-09-29 连续触感独立试用页
-- 用户否定“触碰轻震→停顿→就绪再震”，同意先在独立界面验证新交互，再决定接入正式水晶球。
-- 设置新增“交互试用 → 按住说话 · 连续触感”，全屏覆盖正式入口；独立 LiveDictation，仅显示文字，不发送消息或改库存。正式 OrbDock/VoiceHaptics 本轮未改。
-- ContinuousPressFeedback 使用一段连续事件，触碰起振、真实录音开始回调淡出，无就绪/松手第二次冲击。球本体轻微受压与两侧真实声条；取消区边界选择反馈，取消即时清理。触觉最长0.8秒，权限等待不持续震。
-- VoicePressTrial 控制器每次会话隔离，旧启动和收尾回调不能污染新按压；准备5秒、收尾3秒保护，超时保留已识别文字。试用页退出、后台清理麦克风和独立触觉引擎。
-- 44项回归通过，包含8项控制器/模拟录音器生命周期测试；/private/tmp/butler-voice-trial-tests.log。Release真机构建成功：/private/tmp/butler-voice-trial-device.log。现有工程并发隔离警告仍存在。
-- 模拟器检查设置入口、页面布局、关闭后返回设置；原生工具坐标拖动未产生按压事件，因此不算触摸验证。马达体感、连续三次取消重按及初始收音仍待手机实测，不提前宣称解决体验问题。
-- 已直接安装到iPhone 14 Pro，安装序列2580，bundle com.anvalar.Butler。未提交推送、未触发Xcode Cloud/TestFlight，等待独立试用页的真机反馈。
-
-### 2026-09-29 试用页首次起振延迟
-- 用户报告试用页按压后仍等太久才震。读取/private/tmp/butler-voice-trial-latency.log，可见4次试用按压至麦克风就绪约0.6秒；旧日志不足以判断触摸至起振真实时延。
-- 新试用页使用标准UIControl tracking回调直接接触，不使用自定义手势识别器。控制器首先交付触觉；pattern/player提前在引擎就绪与松手后准备，移除按下时创建开销。
-- 单段continuous事件起始强度从0.32改0.60，40ms内柔和过渡到0.40，后续平滑保持；真正收音时淡出，仍无第二下ready/成功震动。增加触摸事件送达与播放器start调用耗时日志，不记录语音正文。
-- 新增同步反馈先于录音启动和连续触觉包络无空档测试；正式水晶球未改。真机手感仍待实测，不能把调用耗时解释为马达物理启动时间。
-- 46项相关测试通过（/private/tmp/butler-voice-contact-tests.log），Release构建成功（/private/tmp/butler-voice-contact-device.log）。模拟器确认新UIControl试用入口存在；未将无障碍操作当成实际触摸验证。已更新iPhone 14 Pro，安装序列2588，未提交推送或云端构建。
-
-### 2026-09-29 已确认触感接入正式水晶球，短按文字/长按语音
-- 用户确认安装序列2588的触感可接受，并要求保证短按输入和长按语音。将验证后的标准UIControl与连续触觉推广至OrbDock，与试用页复用VoicePressInteraction；旧的正式入口双次系统震动不再调用。
-- 即时触觉独立于0.3秒长按判断。短按松手只调用当前上下文openChat(.typing)，不启用麦克风；达到阈值后只走语音，空语音、超时、取消不转为文字。明显移动不误作短按，语音整理成功只交付一次。
-- 正式水晶球稳定轻压、两侧真实音量，移除旧多段球/条/展开绘制和回调；上滑取消、滑回继续、后台清理、5秒准备与3秒收尾保护复用已测控制器。保留独立试用入口。
-- 53项相关回归通过（/private/tmp/butler-orb-dual-input-tests.log），含新增7项短按/长按互斥、发送一次和取消路径测试。Release构建成功（/private/tmp/butler-orb-dual-input-device.log）。模拟器通过无障碍入口打开文字对话，截图可见输入框插入光标；模拟器连接硬件键盘，不据此宣称软键盘或真实手指长按已验收。
-- 已直接更新iPhone 14 Pro，安装序列2596，bundle com.anvalar.Butler。正式入口待用户真机双操作确认；未提交推送，未触发云端构建。
-
-### 2026-09-29 等待回复时保持悬浮输入区
-- 根据用户截图，移除输入区系统safeAreaBar的整块背景与分隔，改透明safeAreaInset保留内容避让，并关闭底部scroll edge遮罩。输入框与两侧按钮继续各自悬浮，页面背景连续。
-- 去除“管家正在回答，你可以先写下一条。”，空输入统一为“和管家说…”，不再等待时改成“可以先写下一条…”。保留对话流中的处理状态、停止按钮与必要的语音/错误提示。
-- 现有输入与滚动回归19项通过（/private/tmp/butler-floating-composer-tests.log），Release构建成功（/private/tmp/butler-floating-composer-device.log）。模拟器检查了普通状态的背景连续性；未登录真实模型，因此未宣称模拟器复现了真实生成中的截图状态。
-- 已更新iPhone 14 Pro，安装序列2604。未提交推送或触发云端构建。
-
-### 2026-09-29 恢复被误删的液态玻璃视觉
-- 用户指出此前授权修复的是震动，未要求移除液态玻璃和流动感。此前将触感集成与视觉简化捆绑属于范围错误，本轮撤回视觉简化。
-- 从原OrbDock绘制实现恢复液态玻璃表面、内部流光/折射、按压展开、真实声条和与主玻璃连成一体的红色取消区；恢复松手收回。球的位置保持稳定，不恢复先前取消的滚动掉落摊开，也不引入圆形进度。
-- 绘制层不接触摸且不触发额外震动，继续使用用户已确认的标准UIControl与预热连续触感；短按文字/长按语音及会话隔离不改。回弹完成以视觉会话ID隔离，防止旧回弹影响新按压。聊天输入区透明悬浮修正保留。
-- 60项相关回归通过（/private/tmp/butler-liquid-restore-tests.log），覆盖玻璃轮廓、语音控制器、输入和滚动；马达与恢复动画组合的实际体感仍以手机为准。
-- Release构建成功（/private/tmp/butler-liquid-restore-device.log），模拟器检查了恢复后的静止玻璃水晶球与独立可访问入口。已更新iPhone 14 Pro，安装序列2612；未提交推送或触发云端构建。
-
-### 2026-09-29 语音提示与自定义转写服务
-- 水晶球空录音提示改为“松开发送，上滑取消”。保留已恢复的液态玻璃、连续触觉、短按文字/长按语音及取消隔离。
-- 管家设置新增语音识别页，默认苹果框架；自定义 HTTPS Base URL、模型名、API Key 接入 OpenAI 兼容音频转写。凭据绑定地址并保存系统钥匙串，不参与备份或模型上下文。更换地址需重新输入密钥。
-- 自定义模式本机录制 m4a，正常结束才上传，取消不上传；等待转写可取消。限制2分钟，网络40秒/整体收尾45秒保护；苹果仍3秒。旧请求取消/迟到不影响下一轮，失败不发空或部分文本，不静默回退服务。
-- 用户指定 AiHubMix。核对官方快速开始、STT与Create Transcription文档：支持 https://aihubmix.com/v1/audio/transcriptions、multipart m4a和JSON text；配置示例记录于 docs/SPEECH_RECOGNITION.md。未使用真实Key，实际账户可用性、识别效果及时延待用户配置验证；当前非实时WebSocket转写。
-- 57项相关测试通过（/private/tmp/butler-custom-speech-final-tests.log），覆盖凭据/请求/取消/错误/重定向及交互回归；模拟器确认默认苹果和自定义配置界面。Release构建通过（/private/tmp/butler-custom-speech-device.log），现有工程并发警告未在本次扩大处理。
-- 已安装到iPhone 14 Pro，安装序列2620；未提交推送，未触发Xcode Cloud/TestFlight。
-
-### 2026-09-29 AiHubMix 鉴权排查与实时语音
-- 手机配置为备用域名 https://api.inferera.com（缺少 /v1）及 gpt-live-transcribe。旧实现错误地请求文件转写路径，又将401/403统一显示为密钥错误。用户明确选择接通实时模型。
-- 接入 WebSocket：握手包含 intent/model/Bearer，PCM16/24k/mono、languages zh/en、turn_detection null；会话确认后顺序发送，增量显示，松手commit后最终文字替换并仅发送一次。取消、后台和错误隔离会话。设置明确实时音频已上传部分不可撤回。
-- 已知AiHubMix主机自动补 /v1，原主机兼容旧凭据绑定，不跨主机复用。新增安全错误分类与无音频连接检查，不回显服务原文或密钥后缀。
-- 首次PCM转换测试发现对象释放崩溃；转换器和网络对象明确nonisolated deinit后36项测试通过（/private/tmp/butler-realtime-tests-fixed.log）。Release构建通过（/private/tmp/butler-realtime-release.log）；仍有工程既存及AVFoundation同步回调的Swift并发警告。
-- 手机使用原有钥匙串密钥，实时鉴权及会话配置成功；发送2.09秒本地合成测试句，收到10次文字更新，最终匹配测试句（/private/tmp/butler-speech-sample-result.log）。不导出密钥、不采集用户录音、不发送管家消息。诊断入口仅DEBUG显式启动参数有效。
-- 模拟器确认实时模型说明与连接检查入口。已装回Release版至iPhone 14 Pro，安装序列2644；原配置无需重填。实际麦克风与长按/取消体感仍需用户实测。未提交推送或云端构建。
-
-### 2026-09-29 “其他安排”属于整张管家提醒
-- 用户指出提醒可能包含多件事情，入口不能绑定某个物品。定位到原回调把 brief.target.scope 直接作为会话归属，误将快捷操作目标等同提醒主题。
-- 新增 brief 会话作用域，保存点击时完整提醒正文、日期及快捷操作信息；同日相同内容复用独立历史，提醒更新不篡改已有会话。稳定SHA256路径和scope.json沿用会话持久化/备份，既有物品与任务历史不猜测迁移。
-- “其他安排”传递整张可见卡片而非target；没有主要对象时也可打开。聊天标题为“关于这条管家提醒”，顶部保留提醒原文，引导讨论其中任意一件或整体安排。
-- 模型上下文明确整张卡片是讨论对象，快捷按钮目标不作为默认指代；修改前查最新数据，多对象歧义先确认。关闭此会话的离线自动新建提醒兜底，防止把调整已有多件安排误解析为新任务。
-- 55项相关测试通过（/private/tmp/butler-brief-scope-tests.log），覆盖多主题上下文、旧会话隔离、相同提醒复用、新提醒不覆盖、重启恢复及无对象提醒。模拟器实际点击核对标题、原文及入口提示。
-- 最终Release构建通过（/private/tmp/butler-brief-scope-final-release.log），已安装iPhone 14 Pro，安装序列2652。未提交推送或触发云端构建；真实模型对多件安排的回答效果仍待用户对话体验。
-
-### 2026-09-29 本轮 TestFlight 发布准备
-- 用户明确要求提交推送并通过 TestFlight 发布。本机与远端 main 基线一致；保留单 main 分支，手动触发 Xcode Cloud，不恢复提交自动构建。
-- 汇总本轮日程/通用物品、天气、整张提醒上下文、输入与连续触觉、自定义及实时语音改动；更新 TestFlight 测试说明和 README。
-- 发布前全量测试：348项，1项既有 SwiftData 旧磁盘结构升级测试仍显式跳过，0失败（/private/tmp/butler-release-all-tests.log）。最新 Release 构建已通过；git diff --check及凭据扫描通过。
-- 已核对 Main · TestFlight 的 Test 必须通过、Archive上传，以及内部和外部两个 test 组的自动分发配置。实际云端结果与测试可用状态以本次构建页面为准。
-
-### 2026-09-29 云端区域差异修复
-- 构建25使用 f58fd47，归档编译/签名导出通过，测试被同一用例的两条时间断言拦截，未运行内外部测试分发。
-- 根因：clockTime 跟随区域的12小时制却省略AM/PM，美国环境把15:00/21:00显示为03:00/09:00。本机指定英文、美国区域精确复现；改为 en_US_POSIX + HH:mm，继续使用当前本地时区。
-- 同时修正提醒工具测试的输入时间格式，直接生成未来完整日期，移除跨午夜跳过断言。美国区域全量348项，1项既有跳过，0失败（/private/tmp/butler-release-us-final-tests.log）。测试门槛保留，修复后重新手动构建。
-
-### 2026-09-29 TestFlight 1.0（26）
-- 构建26使用 main 的85f14df，云端Test/Archive成功，内部测试分发成功。外部短暂进入Pending Beta Review后自动通过，版本详情已核对内外部两个test组；中文测试说明保留。
-- 发布记录见docs/XCODE_CLOUD.md；全部分发步骤成功，最终时长10分钟、计算用量7分钟。不宣称通知已送达或测试者已安装。结果文档另提交推送，不额外构建。
-
-### 2026-10-01 最新远端版本的 TestFlight 发布修复
-- 已拉取 main 的 ba7b81a；手动构建27在 Test/Archive编译阶段失败，未分发。ChatSessionsTests遗漏try，ContentView视图表达式超过编译器类型检查能力。
-- 修复抛错调用，拆分ContentView表达式，保持原有视图、修饰器顺序与回调。没有删减系统能力功能或调整界面设计。
-- 新增iCloud entitlement使旧测试容器自动启用SwiftData CloudKit；测试容器明确cloudKitDatabase: .none，与生产数据库一致。记录同步仍使用现有自定义CloudKit传输。
-- 本机完整测试另暴露PhotoSource、ConfirmationJournal及健康测试替身的isolated deinit运行时崩溃；采用工程已有的nonisolated deinit做法。分享附件读取前清空URL缓存，避免来源文件变化后仍按旧大小校验，原有单文件/总量/数量边界测试保留。
-- 英文、美国区域全量571项测试，1项既有跳过，0失败（/private/tmp/butler-oct-release-confirmed-tests.log）。最终Release编译通过（/private/tmp/butler-oct-release-final-build.log），云端重试结果在本轮发布完成后补记。保持仅手动触发工作流。
-
-### 2026-10-02 Build 32 验证与警告计划
-- 用户提供四份云端日志；Test Build、Test Execute、Archive、Export 成功，571项测试、1项跳过、0失败。此前分享扩展的App Groups签名阻塞本次消失。日志不证明内外部测试分发的最终状态。
-- 已按文件位置整理全部警告及阶段重复项，保存明确优先级、修复方法、回归与真机验收标准：docs/BUILD_32_WARNING_FIX_PLAN.md。当前仅制定计划，尚未实施警告修复。
-- 核对工作区无未提交代码，既有代码已在main；本次补交计划和构建记录，不触发新构建。
-
-### 2026-10-02 Build 33 测试失败修复
-
-- 用户提供 Build 33 build-for-testing / test-without-building 日志；测试编译与归档通过，测试执行579项、1项跳过、3条失败断言。三个失败均属于 ChatDiagnosticsTests.testConcurrentAppendsKeepEveryCompleteLineExactlyOnce，并非三个独立缺陷。
-- 原测试最多轮询约2秒就读取文件，云端当时仅完成370/401条。生产写入是utility串行异步队列，测试未与队列完成建立同步关系；不能把尚未写完直接解释成日志丢失，也不能靠无限增加固定延时验证完整性。
-- 新增异步ChatDiagnostics.flush：在同一串行队列排入continuation，等待此前已提交的写入/轮转结束，不阻塞调用actor、不改变生产追加行为；三个日志测试读取前等待该屏障，保留完整行、数量、唯一性、中文轮转及错误保护断言。屏障不保证调用后新提交的写入已完成。
-- SubscriptionModelTests的动态instructions/tools改由MainActor测试对象持有，稳定捕获引用，保留后续请求读取更新工具的断言；消除toolContext mutated after capture警告。
-- Build 33日志确认AppIntents metadata skipped来自ButlerShareExtension，该扩展没有AppIntent，保留提示；模拟器多目的地提示属于环境，本机使用UDID消除歧义。
-- 首次定向测试关闭签名，日志3项通过，但Keychain网络测试受签名环境阻塞。恢复正常签名后，本机Xcode26.3(17C519)、iOS26.2 iPhone17Pro模拟器、英文美国区域全量579项、1项既有跳过、0失败；动态上下文与全部日志测试通过，编译仅剩分享扩展元数据工具提示。结果/private/tmp/butler-build33-full.xcresult，日志/private/tmp/butler-build33-full.log。未执行真机交互验收，未启动云构建，本机结果不代替下次云端分发结果。
-
-### 2026-10-04 Build 35 发布阻塞修复
-
-- 用户提供 build-for-testing 与 archive 日志，两阶段均被 ChatMarkdownText.swift:24 的同一编译错误阻塞：Theme.basic 被解析为 Butler 自有 Theme。显式使用 MarkdownUI.Theme.basic，保留 MarkdownUI 2.4.1 锁定版本及现有排版。
-- 图片 provider 的非隔离方法不直接构建 MainActor Link；返回只携带URL的视图值，由 body 创建链接，消除 swift concurrency 警告。图片不自动加载、外链scheme限制保持。
-- 首次本机完整编译额外暴露观察通知测试计数器的8处线程隔离诊断：仅将已受NSLock保护的测试计数器明确为非隔离，所有可变读写仍经过同一锁。
-- 首次全量回归捕获 ChatSyncData 和 FakeCalendarDevice 的释放崩溃，崩溃栈均经 swift_task_deinitOnExecutorImpl / TaskLocal::StopLookupScope；沿用工程已有 nonisolated deinit 处理，不删同步功能或跳过测试。保留同步导入、回执与部分回复测试。
-- 中文系统字体不一定有斜体字形，原斜体图片差异断言在Apple环境失败；改为包含中文与Latin的混合样本，继续校验等价Markdown语法与普通文本的实际图像差异。没有关闭断言。
-- 通讯录拒绝授权测试仍按旧“✗”字符判断，新回执使用结构化状态；改为检查 needsVerification 的保守非成功状态、明确权限拒绝原因及授权尝试一次，原笔记继续可写和联系人读写次数断言保留。未修改生产系统错误状态或自动重试行为。
-- 最终本机 Xcode26.3(17C519)、iOS26.2 iPhone17Pro模拟器、英文美国区域全量661项、1项既有跳过、0失败。测试日志 /private/tmp/butler-build35-verified.log，结果 /private/tmp/butler-build35-verified.xcresult。
-- 云端Xcode26.3(17C529)仍须在新提交构建验证。原分享扩展无AppIntents的元数据工具提示保留；不改变工作流、测试门槛或签名能力，不因每次提交自动构建。
-- 最终 generic/platform=iOS 的 Release 编译通过（CODE_SIGNING_ALLOWED=NO）；日志 /private/tmp/butler-build35-release.log，仅剩分享扩展无AppIntents元数据提示。此检查覆盖真机Release编译，不代替云端签名导出或TestFlight分发。

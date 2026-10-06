@@ -12,7 +12,7 @@
 | 云端构建、TestFlight 更新与配置进度 | [Xcode Cloud](docs/XCODE_CLOUD.md) |
 | 苹果识别、自定义语音模型与 AiHubMix 实时语音配置 | [语音识别](docs/SPEECH_RECOGNITION.md) |
 | 产品方向、库存数据结构和技术约束 | [产品与技术规格](docs/BUTLER_2_SPEC.md) |
-| 各阶段做过什么、当时如何验证 | [开发日志](DEVELOPMENT_LOG.md)（开头有分段阅读说明） |
+| 各阶段做过什么、当时如何验证 | [开发日志](DEVELOPMENT_LOG.md)（按日期新的在前，开头有目录） |
 | 验证现状、大文件拆分、崩溃点审查与 Swift 并发建议 | [代码结构与健壮性整理方案](docs/CODE_HEALTH_PLAN.md) |
 | 最初的产品构想 | [历史 MVP 说明](bulter产品说明文档.md) |
 | 早期架构研究和宿主实验 | [OpenMinis 参考计划](docs/OPENMINIS_REFERENCE_PLAN.md)、[agent-host 历史实验](agent-host/README.md) |

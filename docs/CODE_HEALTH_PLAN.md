@@ -74,6 +74,7 @@
 
 ## 5. 文档
 
-- `DEVELOPMENT_LOG.md` 由三段不同排序的内容组成，已在文件开头加阅读说明，并补记 10-05 的提交和本次检查。
-- `docs/FEATURES_AND_JEV_GUIDE.md` 开头已加“当前状态一览”，原有按日期的补充说明原文保留在其后。
+- `DEVELOPMENT_LOG.md` 原由三段排序不同的内容组成，已统一为按日期新的在前（同日按写入日志的先后），加目录，正文不改；补记 10-05 的提交。
+- `docs/FEATURES_AND_JEV_GUIDE.md` 重写为按功能分节的现状说明（首页、对话、物品、任务、天气、系统能力、资料输入、设置），数值对照代码核实；Jev 说明保留为第 10 节，原按日期的补充说明移到附录。
+- `docs/SYSTEM_CAPABILITIES_PLAN.md` 每项、`docs/CONTEXTUAL_AGENT_DESIGN.md` 各阶段章节下加“2026-10-06 状态”，标出已推送并经 Build 35 验证、以及被 10-05 提交取代的描述；原文保留。
 - 历史文档（`agent-host/`、`docs/OPENMINIS_REFERENCE_PLAN.md`、`docs/BUTLER_2_SPEC.md`、`bulter产品说明文档.md`）开头都已标注历史性质，不搬移，避免破坏既有链接。
