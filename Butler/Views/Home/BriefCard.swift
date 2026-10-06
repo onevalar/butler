@@ -1,11 +1,10 @@
 import SwiftUI
 
-/// Quick actions apply to their target; the last button “其他” discusses the entire visible reminder.
+/// Only direct actions belong on the card; the orb handles replies and corrections.
 struct BriefCard: View {
     let brief: ButlerBrief
     let busy: Bool
     let onAction: (BriefAction, BriefTarget) -> Void
-    let onOther: (ButlerBrief) -> Void
     let onInteraction: () -> Void
     @Environment(\.butlerAccent) private var accent
 
@@ -22,35 +21,27 @@ struct BriefCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                WeatherGreeting(greeting: brief.greeting)
-                if busy { Text("小当家正在更新…").font(.caption).foregroundStyle(.secondary).accessibilityAddTraits(.updatesFrequently) }
+            HStack(alignment: .top, spacing: 8) {
+                WeatherGreeting(greeting: brief.greeting, brief: brief)
                 Spacer(minLength: 8)
+                if busy {
+                    Text("正在更新…").font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .accessibilityLabel("小当家正在更新提醒")
+                        .accessibilityAddTraits(.updatesFrequently)
+                }
             }
             Text(brief.text)
                 .font(.system(size: 17, weight: .medium))
                 .lineSpacing(4)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
-            // A quiet day (nothing to raise) has no buttons at all, not even 其他.
-            if brief.target != nil || brief.hasSubject == true {
-                FlowLayout(spacing: 8, lineSpacing: 8) {
-                    if let target = brief.target {
-                        ForEach(Array(brief.actions.enumerated()), id: \.element.id) { index, action in
-                            Button { onAction(action, target) } label: {
-                                briefButtonLabel(action.label, primary: index == 0)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    // Last in the row, same shape as the rest: none of these fit, talk it through.
-                    Button { onOther(brief) } label: {
-                        briefButtonLabel("其他", primary: false)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("其他")
-                    .accessibilityHint("讨论当前整张管家提醒，包含其中提到的所有事情")
+            if let target = brief.target, !brief.quickActions.isEmpty {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { actionButtons(for: target) }.fixedSize(horizontal: true, vertical: false)
+                    VStack(spacing: 8) { actionButtons(for: target) }
                 }
+                .frame(maxWidth: .infinity, alignment: .center)
             }
         }
         .padding(.horizontal, 18).padding(.vertical, 14)
@@ -59,38 +50,15 @@ struct BriefCard: View {
         .simultaneousGesture(DragGesture(minimumDistance: 0).onChanged { _ in onInteraction() })
         .animation(.easeInOut(duration: 0.25), value: brief.text)
     }
-}
 
-/// Buttons flow onto the next line instead of squeezing.
-struct FlowLayout: Layout {
-    var spacing: CGFloat = 8
-    var lineSpacing: CGFloat = 8
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let width = proposal.width ?? .infinity
-        let arranged = arrange(width: width, subviews: subviews)
-        // Take the whole width offered, so the text above it isn't squeezed to the width of the buttons.
-        return CGSize(width: width.isFinite ? width : arranged.size.width, height: arranged.size.height)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let arranged = arrange(width: bounds.width, subviews: subviews)
-        for (index, origin) in arranged.origins.enumerated() {
-            subviews[index].place(at: CGPoint(x: bounds.minX + origin.x, y: bounds.minY + origin.y), proposal: .unspecified)
+    private func actionButtons(for target: BriefTarget) -> some View {
+        ForEach(Array(brief.quickActions.enumerated()), id: \.element.id) { index, action in
+            Button { onAction(action, target) } label: {
+                briefButtonLabel(action.label, primary: index == 0)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
-    }
-
-    private func arrange(width: CGFloat, subviews: Subviews) -> (size: CGSize, origins: [CGPoint]) {
-        var origins: [CGPoint] = []
-        var x: CGFloat = 0, y: CGFloat = 0, lineHeight: CGFloat = 0, maxX: CGFloat = 0
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x > 0, x + size.width > width { x = 0; y += lineHeight + lineSpacing; lineHeight = 0 }
-            origins.append(CGPoint(x: x, y: y))
-            x += size.width + spacing
-            lineHeight = max(lineHeight, size.height)
-            maxX = max(maxX, x - spacing)
-        }
-        return (CGSize(width: maxX, height: y + lineHeight), origins)
     }
 }

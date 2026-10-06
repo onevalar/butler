@@ -88,6 +88,8 @@ final class ButlerChat {
     let connection: SubscriptionConnection
     let jev: JevClient
     let scope: ChatScope
+    /// What was visible when the home input opened. Never replaces the general chat or its draft.
+    var homeBrief: BriefConversation?
     private(set) var tools: ButlerTools?
     var turns: [ChatTurn] = []
     var working = false

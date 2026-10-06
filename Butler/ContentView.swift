@@ -64,6 +64,7 @@ struct ContentView: View {
     @State private var sessions: ChatSessions?
     @State private var announcedShares: Set<UUID> = []
     @State private var voiceScope: ChatScope?
+    @State private var voiceBrief: BriefConversation?
     @State private var notificationError: String?
     /// Shared by home (to show reminders) and the chat (to set them).
     @State private var reminders = ReminderStore.openOnDevice()
@@ -202,10 +203,6 @@ struct ContentView: View {
                 onOpenButler: { path.append(.butler) },
                 onOpenTasks: { path.append(.tasks) },
                 onBriefAction: { action, target in briefTapped(action, target, facts: facts) },
-                onBriefOther: { visibleBrief in
-                    briefService.beginInteraction()
-                    openChat(scope: .brief(BriefConversation(brief: visibleBrief, day: agendaNow.isoDay)), .typing)
-                },
                 onBriefInteraction: { briefService.beginInteraction() },
                 onBrowseMonth: { browsingMonth = $0 },
                 onTaskAction: taskAction
@@ -281,7 +278,10 @@ struct ContentView: View {
             GeometryReader { geometry in
                 OrbDockView(working: chat?.working ?? false, safeBottom: geometry.safeAreaInsets.bottom,
                             onOpenChat: { openChat(.typing) }, onSend: sendSpoken,
-                            onBeginVoice: { voiceScope = currentScope })
+                            onBeginVoice: {
+                                voiceScope = currentScope
+                                voiceBrief = visibleHomeBrief
+                            })
             }
         }
         .environment(orbDock)
@@ -448,6 +448,7 @@ struct ContentView: View {
     /// Opens the conversation that belongs to one thing (an item, a task), so what is said stays about that thing.
     private func openChat(scope: ChatScope, _ start: ChatStart) {
         selectChat(scope)
+        if scope == .general { chat?.homeBrief = visibleHomeBrief }
         chatRequest = ChatRequest(start: start)
         presentChat()
     }
@@ -545,7 +546,9 @@ struct ContentView: View {
     /// Held the orb and spoke: send it straight away and show the conversation.
     private func sendSpoken(_ text: String) {
         selectChat(voiceScope ?? currentScope)
+        if chat?.scope == .general { chat?.homeBrief = voiceScope == nil ? visibleHomeBrief : voiceBrief }
         voiceScope = nil
+        voiceBrief = nil
         guard let chat else { return }
         let existing = chat.draft.trimmingCharacters(in: .whitespacesAndNewlines)
         chat.draft = existing.isEmpty ? text : existing + " " + text
@@ -575,9 +578,15 @@ struct ContentView: View {
         }
     }
 
+    private var visibleHomeBrief: BriefConversation? {
+        guard path.isEmpty, !briefService.brief.text.isEmpty else { return nil }
+        return BriefConversation(brief: briefService.brief, day: agendaNow.isoDay)
+    }
+
     private func selectChat(_ scope: ChatScope) {
         guard let sessions else { return }
         chat = sessions.chat(for: scope)
+        chat?.homeBrief = nil
         chatRequest = nil
     }
 

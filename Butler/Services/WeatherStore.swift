@@ -26,6 +26,12 @@ struct WeatherSnapshot: Codable, Equatable, Sendable {
         let text: String; let url: URL
         var id: URL { url }
     }
+    struct Hour: Codable, Equatable, Sendable {
+        let date: Date
+        let condition: String
+        let temperature: Double
+        let rainChance: Double
+    }
     let place: WeatherPlace
     let selection: WeatherLocation
     let fetchedAt: Date
@@ -41,6 +47,8 @@ struct WeatherSnapshot: Codable, Equatable, Sendable {
     let legalURL: URL
     let lightMark: URL
     let darkMark: URL
+    /// Optional so snapshots saved before hourly forecasts still decode.
+    var hours: [Hour]? = nil
     func isFresh(at now: Date = .now) -> Bool { (0..<1800).contains(now.timeIntervalSince(fetchedAt)) && now.timeIntervalSince(observedAt) < 7200 }
     /// Ordinary weather changes must not regenerate the household brief.
     func briefSignature(at now: Date) -> String { hint(at: now).map { place.name + "|" + $0 } ?? "" }
@@ -80,9 +88,13 @@ final class WeatherStore: NSObject, CLLocationManagerDelegate {
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
     @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private var failedAt: Date?
+    typealias PlaceSearch = @MainActor (String) async throws -> [WeatherPlace]
+    @ObservationIgnored private let placeSearch: PlaceSearch
+    @ObservationIgnored private var destinationForecasts: [String: WeatherSnapshot] = [:]
 
-    init(defaults: UserDefaults = .standard, loader: Loader? = nil) {
+    init(defaults: UserDefaults = .standard, placeSearch: PlaceSearch? = nil, loader: Loader? = nil) {
         self.loader = loader ?? Self.fetch
+        self.placeSearch = placeSearch ?? Self.findPlaces
         self.defaults = defaults
         selection = defaults.data(forKey: "weatherLocation").flatMap { try? JSONDecoder().decode(WeatherLocation.self, from: $0) } ?? WeatherLocation()
         snapshot = defaults.data(forKey: "weatherSnapshot").flatMap { try? JSONDecoder().decode(WeatherSnapshot.self, from: $0) }
@@ -106,16 +118,38 @@ final class WeatherStore: NSObject, CLLocationManagerDelegate {
         NotificationCenter.default.post(name: .init("butlerBriefSourcesChanged"), object: nil)
     }
     func search(_ query: String) async throws -> [WeatherPlace] {
+        searchResults = try await placeSearch(query)
+        return searchResults
+    }
+
+    private static func findPlaces(_ query: String) async throws -> [WeatherPlace] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard (2...80).contains(query.count) else { throw ButlerTools.ToolError("请输入城市或地区名称") }
         guard let request = MKGeocodingRequest(addressString: query) else { throw ButlerTools.ToolError("无法查找这个城市") }
         request.preferredLocale = Locale(identifier: "zh_CN")
         let places = try await request.mapItems
-        searchResults = places.prefix(8).compactMap { place in
+        return places.prefix(8).compactMap { place in
             let coordinate = place.location.coordinate
             return WeatherPlace(name: place.addressRepresentations?.cityWithContext(.full) ?? place.name ?? query, latitude: coordinate.latitude, longitude: coordinate.longitude, timeZoneIdentifier: place.timeZone?.identifier)
         }
-        return searchResults
+    }
+
+    /// A read for an explicit trip destination; never changes the home city or requests device location.
+    func destinationForecast(_ query: String, now: Date = .now) async throws -> WeatherSnapshot {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (2...80).contains(query.count) else { throw ButlerTools.ToolError("请提供明确的目的地城市或地区") }
+        if let cached = destinationForecasts[query], cached.isFresh(at: now) { return cached }
+        let places = try await placeSearch(query)
+        try Task.checkCancellation()
+        guard places.count == 1, let place = places.first else {
+            throw ButlerTools.ToolError(places.isEmpty ? "没有找到目的地，天气未知" : "目的地有重名，请补充省份或国家，天气仍未知")
+        }
+        let result = try await loader(place, WeatherLocation(city: place))
+        try Task.checkCancellation()
+        guard result.isFresh(at: max(now, .now)) else { throw ButlerTools.ToolError("目的地天气已过期") }
+        destinationForecasts = destinationForecasts.filter { $0.value.isFresh(at: now) }
+        destinationForecasts[query] = result
+        return result
     }
     /// Passive reads never trigger the location permission prompt. A direct UI tap may request it.
     func refresh(force: Bool = false, requestPermission: Bool = false) async {
@@ -175,7 +209,11 @@ final class WeatherStore: NSObject, CLLocationManagerDelegate {
                         .init(date: $0.date, symbol: $0.symbolName, condition: $0.condition.chineseLabel,
                               low: $0.lowTemperature.converted(to: .celsius).value, high: $0.highTemperature.converted(to: .celsius).value, rainChance: $0.precipitationChance)
                     }, alerts: (value.weatherAlerts ?? []).map { .init(text: $0.summary, url: $0.detailsURL) },
-                    legalURL: credit.legalPageURL, lightMark: credit.combinedMarkLightURL, darkMark: credit.combinedMarkDarkURL)
+                    legalURL: credit.legalPageURL, lightMark: credit.combinedMarkLightURL, darkMark: credit.combinedMarkDarkURL,
+                    hours: value.hourlyForecast.forecast.filter { $0.date.addingTimeInterval(3600) > Date.now }.prefix(48).map {
+                        .init(date: $0.date, condition: $0.condition.chineseLabel,
+                              temperature: $0.temperature.converted(to: .celsius).value, rainChance: $0.precipitationChance)
+                    })
     }
 
     private func deviceLocation(requestPermission: Bool) async throws -> CLLocation {
@@ -224,6 +262,7 @@ final class WeatherStore: NSObject, CLLocationManagerDelegate {
             result["fresh"] = snapshot.isFresh(); result["temperature_c"] = snapshot.temperature; result["feels_like_c"] = snapshot.feelsLike
             result["condition"] = snapshot.conditionLabel; result["wind_kph"] = snapshot.windKPH; result["uv_index"] = snapshot.uvIndex
             result["days"] = snapshot.days.map { ["date": snapshot.dayLabel($0.date), "low_c": $0.low, "high_c": $0.high, "rain_chance": $0.rainChance, "condition": WeatherCondition.chineseLabel(for: $0.condition)] as [String: Any] }
+            result["hours"] = (snapshot.hours ?? []).map { ["date": $0.date.ISO8601Format(), "condition": $0.condition, "temperature_c": $0.temperature, "rain_chance": $0.rainChance] as [String: Any] }
             result["alerts"] = snapshot.alerts.map { ["text": $0.text, "url": $0.url.absoluteString] }
         } else { result["available"] = false }
         if let error { result["error"] = error }

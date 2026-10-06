@@ -177,14 +177,15 @@ final class BriefService {
         }
         let identity = model?.cacheIdentity ?? "local"
         let scope = BriefContext.fingerprint(["account": identity, "calendar_allowed": context.metadata["calendar_allowed"] as? Bool ?? false])
-        let sig = "overview-v6|" + base + "|" + context.signature + "|" + BriefModelReply.weatherSignature(weather, now: now)
+        let sig = "overview-v7|" + base + "|" + context.signature + "|" + BriefModelReply.weatherSignature(weather, now: now)
             + "|" + BriefContext.fingerprint(["account": identity])
         let local = BriefLocal.compose(candidates: candidates, lotCount: lotCount, basis: basis, now: now, calendar: calendar)
         let stored = loadCache()
         let previous = stored?.scope == scope ? stored?.brief.text : nil
         let cached = cachedBrief(for: sig, now: now)
         let midnight = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)) ?? now.addingTimeInterval(86400)
-        nextCheckAt = (context.boundaries + (cached?.dependencies.flatMap(\.boundaries) ?? []) + [midnight] + [cached?.reviewAfter, weather?.fetchedAt.addingTimeInterval(1800),
+        let weatherBoundaries = (weather?.hours ?? []).map { $0.date.addingTimeInterval(3600) }
+        nextCheckAt = (context.boundaries + weatherBoundaries + (cached?.dependencies.flatMap(\.boundaries) ?? []) + [midnight] + [cached?.reviewAfter, weather?.fetchedAt.addingTimeInterval(1800),
             weather?.observedAt.addingTimeInterval(7200)].compactMap { $0 })
             .filter { $0 > now }.min()
         brief.greeting = local.greeting
@@ -287,11 +288,16 @@ final class BriefService {
                     // A sentence without usable buttons still gets sensible ones.
                     actions = BriefLocal.compose(candidates: [mine], lotCount: 1, basis: local.basis, now: now, calendar: calendar).actions
                 }
-                let result = ButlerBrief(greeting: local.greeting, text: parsed.text, basis: local.basis,
+                var result = ButlerBrief(greeting: local.greeting, text: parsed.text, basis: local.basis,
                                          target: parsed.target, actions: actions, source: .model, hasSubject: true,
                                          rationale: parsed.rationale)
                 if let review = parsed.reviewAfter, review <= completedAt { throw BriefReadError.incomplete }
                 let deadline = min(parsed.reviewAfter ?? midnight, midnight)
+                if let weather, weather.isFresh(at: completedAt) {
+                    result.weatherSummary = parsed.weatherSummary
+                    result.weatherSignature = BriefModelReply.weatherSignature(weather, now: now)
+                    result.weatherValidUntil = deadline
+                }
                 publish(result, signature: sig, local: local)
                 defaults.removeObject(forKey: Self.failureKey)
                 store(Cached(signature: sig, scope: scope, brief: result, at: completedAt, reviewAfter: deadline, dependencies: answer.dependencies))

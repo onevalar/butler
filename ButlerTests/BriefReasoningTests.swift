@@ -493,13 +493,114 @@ final class BriefReasoningTests: XCTestCase {
         XCTAssertFalse(model.lastRequest.contains("previous_text"), "Do not resubmit calendar content after permission is revoked")
     }
 
-    private func weather(at date: Date, rain: Double = 0.2) -> WeatherSnapshot {
+    private func weather(at date: Date, rain: Double = 0.2, hours: [WeatherSnapshot.Hour]? = nil) -> WeatherSnapshot {
         let url = URL(string: "https://example.com/weather")!
-        return WeatherSnapshot(place: WeatherPlace(name: "上海", latitude: 31, longitude: 121), selection: WeatherLocation(),
+        return WeatherSnapshot(place: WeatherPlace(name: "上海", latitude: 31, longitude: 121, timeZoneIdentifier: "Asia/Shanghai"), selection: WeatherLocation(),
             fetchedAt: date, observedAt: date, temperature: 22, feelsLike: 23, condition: "晴", symbol: "sun.max",
             windKPH: 8, uvIndex: 3,
             days: [.init(date: Calendar.current.startOfDay(for: now), symbol: "sun.max", condition: "晴", low: 18, high: 25, rainChance: rain)],
-            alerts: [], legalURL: url, lightMark: url, darkMark: url)
+            alerts: [], legalURL: url, lightMark: url, darkMark: url, hours: hours)
+    }
+
+    func testWeatherSummaryParsingAndDirectActionsOnly() throws {
+        for summary in ["下午可能有雨", String(repeating: "雨", count: 14)] {
+            let reply = "{\"text\":\"今天下午要出门，记得带伞。\",\"weather_summary\":\"\(summary)\"}"
+            XCTAssertEqual(BriefModelReply.parse(reply, candidates: [])?.weatherSummary, summary)
+        }
+        for summary in ["", String(repeating: "雨", count: 15), "下午\\n有雨"] {
+            let parsed = try XCTUnwrap(BriefModelReply.parse("{\"text\":\"今天有安排。\",\"weather_summary\":\"\(summary)\"}", candidates: []))
+            XCTAssertNil(parsed.weatherSummary, "Bad weather copy must not discard an otherwise useful brief")
+        }
+        let complete = BriefAction(label: "我已完成", effect: .completeTask)
+        let later = BriefAction(label: "稍后提醒", effect: .remindLater(minutes: 30))
+        var brief = ButlerBrief(greeting: "", text: "该取快递了。", basis: "", target: .task(UUID()),
+            actions: [complete, .init(label: "查看详情", effect: .openDetail), later, .init(label: "其他安排", effect: .snooze(days: 1))], source: .model)
+        XCTAssertEqual(brief.quickActions, [complete, later])
+        brief.target = nil
+        brief.hasSubject = true
+        XCTAssertTrue(brief.quickActions.isEmpty, "An overview must not sprout buttons even with legacy actions")
+    }
+
+    func testHourlyForecastCarriesTimeZoneAndNeverInventsTimesFromDailyData() throws {
+        let hours: [WeatherSnapshot.Hour] = [
+            .init(date: now.addingTimeInterval(-3600), condition: "雨", temperature: 18, rainChance: 0.9),
+            .init(date: now, condition: "晴", temperature: 22, rainChance: 0.1),
+            .init(date: now.addingTimeInterval(5 * 3600), condition: "雨", temperature: 20, rainChance: 0.8)
+        ]
+        let facts = try XCTUnwrap(BriefModelReply.weatherContext(weather(at: now, hours: hours), now: now))
+        let supplied = try XCTUnwrap(facts["hours"] as? [[String: Any]])
+        XCTAssertEqual(supplied.count, 2, "Already-ended rain must not look like upcoming rain")
+        XCTAssertEqual(supplied.last?["date"] as? String, now.addingTimeInterval(5 * 3600).ISO8601Format())
+        XCTAssertEqual(supplied.last?["rain_chance"] as? Double, 0.8)
+        XCTAssertEqual(facts["time_zone"] as? String, "Asia/Shanghai")
+        XCTAssertNil(facts["latitude"])
+        let dailyOnly = try XCTUnwrap(BriefModelReply.weatherContext(weather(at: now), now: now))
+        XCTAssertEqual((dailyOnly["hours"] as? [[String: Any]])?.count, 0)
+        let snapshot = weather(at: now.addingTimeInterval(-60), hours: hours)
+        let before = BriefModelReply.weatherSignature(snapshot, now: now.addingTimeInterval(-1))
+        XCTAssertNotEqual(before, BriefModelReply.weatherSignature(snapshot, now: now), "An hour ending must invalidate its forecast even when both reads are fresh")
+        let encoded = try JSONEncoder().encode(weather(at: now))
+        XCTAssertNil(try JSONDecoder().decode(WeatherSnapshot.self, from: encoded).hours, "Legacy snapshots remain usable")
+    }
+
+    func testWeatherSummaryIsBoundToFreshFactsAndReviewDeadline() async throws {
+        let model = Model(), service = BriefService(defaults: defaults())
+        model.reply = "{\"text\":\"今天下午出门，记得带伞。\",\"weather_summary\":\"下午可能有雨\",\"review_after\":\"\(now.addingTimeInterval(600).ISO8601Format())\"}"
+        service.attach(model: model)
+        let snapshot = weather(at: now)
+        service.update(candidates: [], lotCount: 0, taskCount: 0, usesCalendar: false, now: now, weather: snapshot)
+        await service.settle()
+        let brief = service.brief
+        XCTAssertEqual(brief.weatherLabel(for: snapshot, at: now.addingTimeInterval(599)), "下午可能有雨")
+        XCTAssertNil(brief.weatherLabel(for: snapshot, at: now.addingTimeInterval(600)))
+        XCTAssertNil(brief.weatherLabel(for: weather(at: now, rain: 0.9), at: now))
+        XCTAssertNil(brief.weatherLabel(for: nil, at: now))
+        XCTAssertNil(brief.weatherLabel(for: snapshot, at: now.addingTimeInterval(1800)))
+        XCTAssertEqual(try JSONDecoder().decode(ButlerBrief.self, from: JSONEncoder().encode(brief)), brief)
+        var longLived = brief
+        longLived.weatherValidUntil = now.addingTimeInterval(7200)
+        XCTAssertEqual(longLived.weatherLabel(for: snapshot, at: now.addingTimeInterval(1799)), "下午可能有雨")
+        XCTAssertNil(longLived.weatherLabel(for: snapshot, at: now.addingTimeInterval(1800)), "Freshness must expire even before the model's review time")
+
+        let noWeather = BriefService(defaults: defaults())
+        noWeather.attach(model: model)
+        update(noWeather, at: now)
+        await noWeather.settle()
+        XCTAssertNil(noWeather.brief.weatherSummary, "Unsolicited model weather must not appear without a source")
+    }
+
+    func testHourlyBoundaryRechecksBeforeWeatherCacheExpires() async {
+        let model = Model(), service = BriefService(defaults: defaults())
+        service.attach(model: model)
+        let snapshot = weather(at: now, hours: [
+            .init(date: now.addingTimeInterval(-3300), condition: "晴", temperature: 22, rainChance: 0.1),
+            .init(date: now.addingTimeInterval(300), condition: "雨", temperature: 20, rainChance: 0.8)
+        ])
+        service.update(candidates: [], lotCount: 0, taskCount: 0, usesCalendar: false, now: now, weather: snapshot)
+        await service.settle()
+        XCTAssertEqual(service.nextCheckAt, now.addingTimeInterval(300))
+        service.update(candidates: [], lotCount: 0, taskCount: 0, usesCalendar: false, now: now.addingTimeInterval(300), weather: snapshot)
+        await service.settle()
+        XCTAssertEqual(model.requests, 2, "A just-ended hour cannot keep a future-tense summary alive")
+    }
+
+    func testDestinationWeatherIsReadOnlyAndExpiresAtItsOwnDeadline() async throws {
+        let reads = BriefReadSession(context: BriefContext())
+        let expiry = Date.now.addingTimeInterval(1800)
+        let output = "{\"available\":true,\"place\":\"杭州\",\"valid_until\":\"\(expiry.ISO8601Format())\",\"hours\":[]}"
+        var dispatched: [String] = []
+        let value = await reads.execute(.init(id: "weather", name: "get_destination_weather", arguments: #"{"query":"浙江杭州"}"#)) {
+            dispatched.append($0.name); return output
+        }
+        XCTAssertEqual(value, output)
+        XCTAssertEqual(reads.dependencies.count, 1)
+        XCTAssertEqual(reads.dependencies.first?.boundaries, [ISO8601DateFormatter().date(from: expiry.ISO8601Format())!])
+        _ = await reads.execute(.init(id: "write", name: "propose_weather_location", arguments: "{}")) {
+            dispatched.append($0.name); return "{}"
+        }
+        XCTAssertEqual(dispatched, ["get_destination_weather"])
+        XCTAssertNotEqual(BriefReadDependency.fingerprint(output, now: expiry.addingTimeInterval(-2)),
+                          BriefReadDependency.fingerprint(output, now: expiry.addingTimeInterval(2)))
     }
 
     func testWeatherFetchTimeDoesNotRewriteButForecastAndFreshnessDo() async {

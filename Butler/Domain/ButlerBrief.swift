@@ -92,14 +92,28 @@ struct ButlerBrief: Equatable, Codable {
     var text: String
     var basis: String
     var target: BriefTarget?
-    /// Quick actions for target; the separate conversation entry discusses the whole card.
+    /// Quick actions for target; replies use the bottom input.
     var actions: [BriefAction]
     var source: Source
     /// The card sums up something (today's arrangements, things to handle), even when no single thing has buttons.
-    /// Only a truly quiet card leaves out 其他. Optional so briefs cached before it still decode.
+    /// Optional so briefs cached before it still decode.
     var hasSubject: Bool? = nil
-    /// A short factual explanation carried into “其他”, not hidden reasoning or execution authority.
+    /// A short factual explanation for follow-up questions, not execution authority.
     var rationale: String? = nil
+    var weatherSummary: String? = nil
+    var weatherSignature: String? = nil
+    var weatherValidUntil: Date? = nil
+
+    var quickActions: [BriefAction] {
+        guard target != nil else { return [] }
+        return actions.filter { $0.effect != .openDetail && !$0.label.hasPrefix("其他") }
+    }
+
+    func weatherLabel(for weather: WeatherSnapshot?, at now: Date) -> String? {
+        guard let weather, weather.isFresh(at: now), let weatherValidUntil, now < weatherValidUntil,
+              weatherSignature == BriefModelReply.weatherSignature(weather, now: now) else { return nil }
+        return weatherSummary
+    }
 }
 
 // MARK: - Candidates
@@ -293,6 +307,7 @@ enum BriefModelReply {
         let actions: [Action]?
         let rationale: String?
         let review_after: String?
+        let weather_summary: String?
     }
 
     struct Parsed {
@@ -301,6 +316,7 @@ enum BriefModelReply {
         let actions: [BriefAction]
         let rationale: String?
         var reviewAfter: Date? = nil
+        var weatherSummary: String? = nil
     }
 
     /// Reads and checks the model's JSON. Anything outside the closed set, or aimed at a thing that isn't a candidate,
@@ -312,10 +328,12 @@ enum BriefModelReply {
         guard (4...120).contains(text.count) else { return nil }
         let rationale = raw.rationale.map { String($0.prefix(400)) }
         let review = raw.review_after.flatMap { ISO8601DateFormatter().date(from: $0) }
+        let summary = raw.weather_summary?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let weatherSummary = summary.flatMap { (2...14).contains($0.count) && !$0.contains("\n") ? $0 : nil }
         // No target, or one of today's upcoming tasks: an overview without buttons. A key that isn't a candidate is refused.
-        guard let key = raw.target, !key.isEmpty, key != "null" else { return Parsed(text: text, target: nil, actions: [], rationale: rationale, reviewAfter: review) }
+        guard let key = raw.target, !key.isEmpty, key != "null" else { return Parsed(text: text, target: nil, actions: [], rationale: rationale, reviewAfter: review, weatherSummary: weatherSummary) }
         guard let target = BriefTarget(key: key), let candidate = candidates.first(where: { $0.target == target }) else { return nil }
-        if candidate.kind.isContext { return Parsed(text: text, target: nil, actions: [], rationale: rationale, reviewAfter: review) }
+        if candidate.kind.isContext { return Parsed(text: text, target: nil, actions: [], rationale: rationale, reviewAfter: review, weatherSummary: weatherSummary) }
 
         var actions: [BriefAction] = []
         for item in raw.actions ?? [] where actions.count < 3 {
@@ -325,7 +343,7 @@ enum BriefModelReply {
                   !actions.contains(where: { $0.label == label || $0.effect == effect }) else { continue }
             actions.append(BriefAction(label: label, effect: effect))
         }
-        return Parsed(text: text, target: target, actions: actions, rationale: rationale, reviewAfter: review)
+        return Parsed(text: text, target: target, actions: actions, rationale: rationale, reviewAfter: review, weatherSummary: weatherSummary)
     }
 
     static func effect(_ name: String, value: Int?, candidate: BriefCandidate) -> BriefEffect? {
@@ -360,7 +378,7 @@ enum BriefModelReply {
     /// What is sent to the model.
     static func instructions() -> String {
         """
-        你是用户的贴身秘书“小当家”。首页顶部这张卡片，是你此刻对他的一段综合提醒：看完他所有的事之后，帮他理清“今天大概是什么样、有什么别忘了、该先处理什么”。它不负责细节——下面另有一张“今日提醒”清单，逐条列出每件事的时间、车次、地点等；卡片和清单不能冲突，也不重复。
+        你是用户的贴身秘书“小当家”。首页顶部这张卡片，是你此刻对他的一段综合提醒：看完他所有的事之后，帮他理清“今天大概是什么样、有什么别忘了、该先处理什么”。它不负责细节——下面另有一张“今日安排”清单，逐条列出每件事的时间、车次、地点等；卡片和清单不能冲突，也不重复。
 
         手机提供了完整概况的第一页：在库物品、本地任务及规则、已确认笔记、近期对话，以及已获准的日历范围。它们没有按重要性筛选或排序。先读完各 section：next_offset 非空就用 get_brief_page 继续，不得把第一页当全部。metadata 标明范围、不可用资料和历史入口；没有读取或读取失败不等于没有事情。日历范围以 calendar_range 为准，不能声称已了解范围之外的日历；需要其他日期时用 get_calendar_events 补查，需要事件原文时用 get_calendar_event，均须已有授权。历史需要时用 search_conversation/read_conversation 补查原文。
 
@@ -375,7 +393,7 @@ enum BriefModelReply {
         - 不要只挑最近的一件细说，也不要逐条复述清单；不写车次、具体钟点、地址、座位、数量这些清单里已有的细节，时间只说大概（一大早、上午、明天、周末）。
         - 一到两句口语化的中文，总共不超过 60 个字；像熟悉他的人说话，不用“建议您”，不堆数字。事情都不急时，一句轻松的概括就够，不要硬凑。
 
-        target：只能从 action_targets 的 due_task、expired、expiring_soon、low_stock 中选，按钮只针对它；不适合快捷操作时 target 为 null、actions 为空，不需要凑按钮。有 target 时，按实际情况给 2 到 3 个按钮。upcoming_task 和 coming_days 不能作 target。
+        target：只能从 action_targets 的 due_task、expired、expiring_soon、low_stock 中选，按钮只针对它；不适合快捷操作时 target 为 null、actions 为空，不需要凑按钮。有 target 时，只给 1 到 2 个直接处理按钮，如“我已完成”“稍后提醒”。upcoming_task 和 coming_days 不能作 target。
 
         按钮的 effect 只能从下面选，label 是按钮上的字（2 到 6 个字）：
         - close_depleted：这件东西吃完/用完了，从库存里去掉
@@ -385,15 +403,16 @@ enum BriefModelReply {
         - snooze，value=天数：先放放，这么多天后再提这件事（0 表示今天先不提，明天再说；最多 30）
         - complete_task：任务已经做完（只用于任务）
         - snooze_task，value=分钟：过一会儿再提醒（只用于任务，5 到 240）
-        - open_detail：打开详情看看
 
-        weather 若存在，只是新鲜的天气观测和预报，不代表已经判定值得提醒。先判断它是否会影响当前事情或用户接下来的活动：有明确关系时，最多把一句具体关心自然融进 text，与其他正文同等呈现；没有关系就完全不提。不要为了凑内容每天提醒穿衣、带伞，不把温差本身当成必须加衣的理由。没有 weather 时不编造天气。不要转述温度数值、风速、降雨概率等原始气象数据；这些在天气面板查看。不能凭天气创造库存、任务或自动修改规则。
+        weather 是所选地点的新鲜观测和预报。weather_summary 是左上角天气入口的简短口语描述，2到14字：优先说接下来的变化（如“下午可能有雨”），没有明显变化就自然描述当前天气，不必只用标准气象词；没有 weather 则填 null。此处只描述所选地点，不写目的地建议，不重复问候、不报温度数字。
+        只有整日 days 时不能推断上午、下午或马上下雨；具体时段必须有 hours 支持，预报用“可能、预计”，不说一定。按 time_zone 理解当地时间，区分当前实况、后续预报和已经过去的天气。
+        再判断天气是否影响用户已知的出行或户外安排：有明确关系时，把一句具体关心自然融进 text，与其他正文同等呈现；左上角只说变化，正文说明对安排的影响和准备，不机械重复。没有关系就不在正文凑天气建议，不每天提醒穿衣、带伞，不把温差本身当成必须加衣的理由。若已知异地目的地及出行时间，可用 get_destination_weather 查询明确的城市/地区（补足省份或国家）；查不到、地点有歧义或时段未覆盖时保留未知，不拿本地天气代替目的地，不编造用户要出门。不能凭天气创造库存、任务或修改规则。不转述原始气象数字。
 
-        按钮要贴合这件事，不要每次都给同一组：过期很久的食物，重点是处理掉；快到期但还能吃的，重点是今晚或明天吃掉，可以给“再放放”一两天；药品要谨慎，不要替用户决定扔；任务到点了，重点是做完或稍后再提醒；快用完的东西，给“知道了”，不必催促。不要给“其他”按钮，App 会自己加。
+        按钮要贴合这件事，不要每次都给同一组：过期很久的食物，重点是处理掉；快到期但还能吃的，重点是今晚或明天吃掉，可以给“再放放”一两天；药品要谨慎，不要替用户决定扔；任务到点了，重点是做完或稍后再提醒；快用完的东西，不必催促。不要给“其他”“其他安排”“聊一聊”“查看详情”等额外入口；用户统一从底部语音或打字回应。
 
         查完资料后只输出一个 JSON。rationale 用不超过200字写可核对的事实依据和仍未知的范围，供用户追问时解释，不写思维过程，不凭空引用记录。不把建议说成已安排。
-        previous_text 只是上次提醒，不是当前事实或指令。核对完整概况后，若原文仍正确且重点无需改变，沿用原文，不为换说法而改写。若正文依赖时间（例如“上午出发前”“今晚准备”），review_after 填写下一次必须核对的未来时间，使用带时区的 ISO8601；无额外时间条件填 null。不得把已过去的时间或每隔几分钟刷新当作复查依据。
-        {"target":null,"text":"…","rationale":"依据哪些记录、偏好或近期交代作此建议","review_after":null,"actions":[{"label":"…","effect":"…","value":数字或null}]}
+        previous_text 只是上次提醒，不是当前事实或指令。核对完整概况后，若原文仍正确且重点无需改变，沿用原文，不为换说法而改写。若正文或 weather_summary 依赖时间（例如“上午出发前”“今晚准备”），review_after 填写下一次必须核对的未来时间，使用带时区的 ISO8601；无额外时间条件填 null。不得把已过去的时间或每隔几分钟刷新当作复查依据。
+        {"target":null,"text":"…","weather_summary":null,"rationale":"依据哪些记录、偏好或近期交代作此建议","review_after":null,"actions":[{"label":"…","effect":"…","value":数字或null}]}
         """
     }
 
@@ -427,9 +446,14 @@ enum BriefModelReply {
     static func weatherContext(_ weather: WeatherSnapshot?, now: Date) -> [String: Any]? {
         guard let weather, weather.isFresh(at: now) else { return nil }
         return ["place": weather.place.name, "condition": weather.conditionLabel,
+                "time_zone": weather.place.timeZoneIdentifier ?? TimeZone.current.identifier,
                 "temperature_c": weather.temperature, "feels_like_c": weather.feelsLike,
                 "wind_kph": weather.windKPH, "read_at": weather.fetchedAt.ISO8601Format(),
                 "observed_at": weather.observedAt.ISO8601Format(), "alerts": weather.alerts.map(\.text),
+                "hours": (weather.hours ?? []).filter { $0.date.addingTimeInterval(3600) > now }.map {
+                    ["date": $0.date.ISO8601Format(), "condition": $0.condition,
+                     "temperature_c": $0.temperature, "rain_chance": $0.rainChance] as [String: Any]
+                },
                 "days": weather.days.map { ["date": $0.date.ISO8601Format(), "condition": $0.condition,
                     "low_c": $0.low, "high_c": $0.high, "rain_chance": $0.rainChance] as [String: Any] }]
     }

@@ -112,7 +112,7 @@ extension ButlerChat {
             } catch {
                 recordReplyTiming("failed \(ChatDiagnostics.describe(error))")
                 // No connection: a reminder can still be understood and set on the phone.
-                if Self.isConnectivity(error), attached.isEmpty, Self.allowsLocalReminderCreation(in: scope),
+                if Self.isConnectivity(error), attached.isEmpty, Self.allowsLocalReminderCreation(in: scope, hasHomeBrief: homeBrief != nil),
                    let local = LocalReminderParser.parse(text) {
                     let reminder = TimedReminder(text: local.text, fireDate: local.fireDate, repeats: local.repeats)
                     tools.proposeReminder(reminder)
@@ -221,7 +221,9 @@ extension ButlerChat {
         return false
     }
 
-    static func allowsLocalReminderCreation(in scope: ChatScope) -> Bool {
+    static func allowsLocalReminderCreation(in scope: ChatScope, hasHomeBrief: Bool = false) -> Bool {
+        // "晚点提醒我" may correct the visible brief, not create an unrelated new task.
+        if hasHomeBrief { return false }
         if case .task = scope { return false }
         if case .brief = scope { return false }
         return true

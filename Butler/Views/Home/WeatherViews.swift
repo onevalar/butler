@@ -2,12 +2,14 @@ import SwiftUI
 
 struct WeatherGreeting: View {
     let greeting: String
+    let brief: ButlerBrief
     @State private var showingWeather = false
     private var weather: WeatherStore { .shared }
     var body: some View {
         Button { showingWeather = true } label: {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 6) { Text(greeting); weatherLabel }
+                    .fixedSize(horizontal: true, vertical: false)
                 VStack(alignment: .leading, spacing: 4) { Text(greeting); weatherLabel }
             }.font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
                 .contentShape(Rectangle())
@@ -16,8 +18,10 @@ struct WeatherGreeting: View {
             .task { await weather.refresh() }
     }
     private var weatherLabel: some View {
-        HStack(spacing: 4) {
-            Text(weather.snapshot.map { $0.conditionLabel + ($0.isFresh() ? "" : " · 待更新") } ?? "天气")
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            Text(brief.weatherLabel(for: weather.snapshot, at: context.date)
+                 ?? weather.snapshot.map { $0.conditionLabel + ($0.isFresh(at: context.date) ? "" : " · 待更新") }
+                 ?? "天气")
         }
     }
 }

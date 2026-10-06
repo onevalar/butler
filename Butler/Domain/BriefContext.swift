@@ -56,14 +56,17 @@ struct BriefReadDependency: Codable, Sendable {
             .filter { $0 <= now }.map { $0.ISO8601Format() }])
     }
 
-    /// Live calendar reads may extend outside the overview's seven-day window.
+    /// Calendar and destination-weather facts can expire independently of the home snapshot.
     static func boundaries(in output: String) -> [Date] {
         guard let json = try? JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any] else { return [] }
         let events = (json["events"] as? [[String: Any]] ?? []) + (json["event"].map { [$0 as? [String: Any] ?? [:]] } ?? [])
-        return events.flatMap { event -> [Date] in
+        let validity = (json["valid_until"] as? String).flatMap { ISO8601DateFormatter().date(from: $0) }
+        let hours = (json["hours"] as? [[String: Any]] ?? []).compactMap { $0["date"] as? String }
+            .compactMap { ISO8601DateFormatter().date(from: $0)?.addingTimeInterval(3600) }
+        return (events.flatMap { event -> [Date] in
             guard let fields = event["fields"] as? [String: Any] else { return [] }
             return ["start", "end"].compactMap { fields[$0] as? String }.compactMap { ISO8601DateFormatter().date(from: $0) }
-        }.sorted()
+        } + [validity].compactMap { $0 } + hours).sorted()
     }
 }
 
@@ -77,7 +80,7 @@ struct BriefAnswer: Sendable {
 final class BriefReadSession {
     static let allowed: Set<String> = ["search_inventory", "get_inventory_history",
         "conversation_overview", "search_conversation", "read_conversation",
-        "get_system_calendars", "get_calendar_events", "get_calendar_event"]
+        "get_system_calendars", "get_calendar_events", "get_calendar_event", "get_destination_weather"]
     let context: BriefContext
     private var read: [String: Set<Int>] = [:]
     private(set) var dependencies: [BriefReadDependency] = []

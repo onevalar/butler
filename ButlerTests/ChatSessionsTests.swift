@@ -57,6 +57,31 @@ final class ChatSessionsTests: XCTestCase {
         XCTAssertEqual(tools.notes.records, notes); XCTAssertEqual(try reminders.taskSnapshot(), tasks)
     }
 
+    func testHomeInputCarriesVisibleBriefWithoutReplacingGeneralDraftOrObjectContext() throws {
+        let (_, _, _, _, sessions) = try fixture()
+        let chat = sessions.chat(for: .general)
+        chat.draft = "原来还没发的话"
+        chat.photos = [Data([1, 3, 7])]
+        var brief = ButlerBrief(greeting: "", text: "取快递和买菜都在下午，出门带伞。", basis: "", target: .task(UUID()),
+                                actions: [], source: .model, rationale: "下午行程和逐小时预报")
+        chat.homeBrief = BriefConversation(brief: brief, day: "2026-10-06")
+        brief.text = "新生成的提醒"
+        let value = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(chat.scopeContext.utf8)) as? [String: Any])
+        XCTAssertEqual(value["brief_text"] as? String, "取快递和买菜都在下午，出门带伞。")
+        XCTAssertEqual(value["brief_rationale"] as? String, "下午行程和逐小时预报")
+        XCTAssertEqual(value["scope"] as? String, "general")
+        XCTAssertNil(value["task_id"])
+        XCTAssertEqual(chat.draft, "原来还没发的话")
+        XCTAssertEqual(chat.photos, [Data([1, 3, 7])])
+        XCTAssertFalse(ButlerChat.allowsLocalReminderCreation(in: .general, hasHomeBrief: true))
+        XCTAssertTrue(ButlerChat.allowsLocalReminderCreation(in: .general))
+        let taskChat = sessions.chat(for: .task(UUID()))
+        taskChat.homeBrief = chat.homeBrief
+        XCTAssertFalse(taskChat.scopeContext.contains("brief_text"), "Object pages keep their own context")
+        chat.homeBrief = nil
+        XCTAssertFalse(chat.scopeContext.contains("brief_text"), "Other entry points must not retain an old home snapshot")
+    }
+
     func testWholeBriefConversationCarriesAllSubjectsAndNeverBecomesPrimaryLotChat() throws {
         let (_, _, _, _, sessions) = try fixture()
         let id = UUID()

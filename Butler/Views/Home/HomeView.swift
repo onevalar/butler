@@ -47,7 +47,6 @@ struct HomeView: View {
     let onOpenButler: () -> Void
     let onOpenTasks: () -> Void
     let onBriefAction: (BriefAction, BriefTarget) -> Void
-    let onBriefOther: (ButlerBrief) -> Void
     let onBriefInteraction: () -> Void
     let onBrowseMonth: (Date) -> Void
     /// Done / later / pause / cancel straight from the list, without opening the task.
@@ -65,13 +64,13 @@ struct HomeView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 if !brief.text.isEmpty {
-                    BriefCard(brief: brief, busy: briefBusy, onAction: onBriefAction, onOther: onBriefOther, onInteraction: onBriefInteraction)
+                    BriefCard(brief: brief, busy: briefBusy, onAction: onBriefAction, onInteraction: onBriefInteraction)
                         .padding(.horizontal, 16)
                         .padding(.bottom, 16)
                 }
                 VStack(spacing: 0) {
                     HStack {
-                        Text(isToday ? "今日提醒" : Self.label(for: listDay, today: agenda.today))
+                        Text(isToday ? "今日安排" : Self.label(for: listDay, today: agenda.today))
                             .font(.subheadline.weight(.semibold))
                         Spacer(minLength: 8)
                         if !isToday {
