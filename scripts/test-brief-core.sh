@@ -41,7 +41,7 @@ PY
 cat > "$scratch/Package.swift" <<'SWIFT'
 // swift-tools-version: 6.2
 import PackageDescription
-let package = Package(name: "ButlerBriefCore", targets: [
+let package = Package(name: "ButlerBriefCore", platforms: [.macOS(.v15)], targets: [
     .target(name: "Butler", swiftSettings: [
         .defaultIsolation(MainActor.self),
         .unsafeFlags(["-strict-concurrency=complete", "-warnings-as-errors"])

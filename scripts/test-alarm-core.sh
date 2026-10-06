@@ -16,6 +16,15 @@ ln -s "$root/Butler/Services/SystemCalendarStore.swift" "$scratch/Sources/Butler
 ln -s "$root/ButlerTests/SystemCalendarStoreTests.swift" "$scratch/Tests/ButlerTests/SystemCalendarStoreTests.swift"
 ln -s "$root/Butler/Services/ShortcutNavigation.swift" "$scratch/Sources/Butler/ShortcutNavigation.swift"
 ln -s "$root/ButlerTests/ShortcutNavigationTests.swift" "$scratch/Tests/ButlerTests/ShortcutNavigationTests.swift"
+# The real CaptureInputMode is an AppIntents AppEnum (ScreenshotCaptureIntent.swift); navigation only needs its cases.
+python3 - "$root" "$scratch" <<'PY'
+import pathlib, re, sys
+root, scratch = map(pathlib.Path, sys.argv[1:])
+source = (root / "Butler/Services/ScreenshotCaptureIntent.swift").read_text()
+cases = re.search(r"enum CaptureInputMode:[^{]*\{\s*(case [^\n]+)", source).group(1)
+(scratch / "Sources/Butler/CaptureInputMode.swift").write_text(
+    "enum CaptureInputMode: String, Hashable, Sendable {\n    " + cases + "\n}\n")
+PY
 ln -s "$root/ButlerShareShared/ShareInbox.swift" "$scratch/Sources/Butler/ShareInbox.swift"
 ln -s "$root/ButlerTests/ShareInboxTests.swift" "$scratch/Tests/ButlerTests/ShareInboxTests.swift"
 ln -s "$root/ButlerWidgetShared/WidgetSnapshot.swift" "$scratch/Sources/Butler/WidgetSnapshot.swift"
@@ -52,7 +61,7 @@ ln -s "$root/ButlerTests/FolderAndRecoveryTests.swift" "$scratch/Tests/ButlerTes
 cat > "$scratch/Package.swift" <<'SWIFT'
 // swift-tools-version: 6.2
 import PackageDescription
-let package = Package(name: "ButlerAlarmCore", targets: [
+let package = Package(name: "ButlerAlarmCore", platforms: [.macOS(.v15)], targets: [
     .target(name: "Butler", swiftSettings: [.defaultIsolation(MainActor.self)]),
     .testTarget(name: "ButlerTests", dependencies: ["Butler"])
 ], swiftLanguageModes: [.v5])

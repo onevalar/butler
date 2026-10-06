@@ -43,7 +43,7 @@ SWIFT
 cat > "$scratch/Package.swift" <<'SWIFT'
 // swift-tools-version: 6.2
 import PackageDescription
-let package = Package(name: "ButlerAgendaCore", targets: [
+let package = Package(name: "ButlerAgendaCore", platforms: [.macOS(.v15)], targets: [
     .target(name: "Butler", swiftSettings: [
         .defaultIsolation(MainActor.self),
         .unsafeFlags(["-strict-concurrency=complete", "-warnings-as-errors"])

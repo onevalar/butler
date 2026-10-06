@@ -1,3 +1,35 @@
+# Butler 开发日志
+
+**阅读说明（2026-10-06 补充）**：本文件由三段排序不同的内容组成，历史条目保持原文不改写。
+
+1. 从开头到“对话面板说话后改为约 3/4 高”：**新的在前**，2026-09-29 至今的功能与修复。新条目继续加在最前面。
+2. “Butler Project Development Log & Handover Notes”至“Troubleshooting for "Future Me"”：**新的在前**，2026-09-29 之前的早期记录与英文 MVP 交接说明。
+3. “2026-09-29 通用物品与混合交互能力”到文件末尾：**按时间顺序追加**，包含 TestFlight 构建 25–35 的发布与修复记录。查找某次构建结果请看这一段。
+
+最近一次完整 Xcode 验证：Build 35（2026-10-04，`84fd591`），本机 661 项通过、1 项既有跳过。之后的提交尚未完整编译，见下方 10-05 条目及 [代码结构与健壮性整理方案](docs/CODE_HEALTH_PLAN.md)。
+
+## 核心测试脚本可在 macOS 运行、修复 alarm 脚本编译失败、文档整理
+**Date:** 2026-10-06 · 本地检查，未改生产代码，未构建或发布
+
+- 本次检查的 Mac 有 Xcode 26.3 但没有 iOS 26.2 平台组件，用户决定暂不下载；无法编译 App 或运行应用层测试。
+- 五个核心脚本原先只能在 Linux 运行：生成的测试包没有声明平台，macOS 按最低部署版本编译，`@Observable`、`Date.now` 等报错。统一加 `platforms: [.macOS(.v15)]`，Linux 忽略。
+- `test-alarm-core.sh` 自 `79b61d5` 起编译失败：`ShortcutNavigation` 引用了定义在 AppIntents 文件里的 `CaptureInputMode`。脚本改为从原文件提取枚举分支生成纯值替身，与已有的 `BriefConversation` 替身做法一致，生产代码不变。
+- 结果（macOS 15.7 / Swift 6.2.4）：chat 48、alarm 164、warning 5、brief 26、agenda 15，共 258 项通过、0 失败。只覆盖脚本列出的 Foundation 逻辑。
+- 审查全部 22 处 `try!` / `as!` / `fatalError`，只有 `ButlerApp` 创建数据库失败时直接崩溃属于真实风险；修复需要新增界面，待确认后在可编译环境实施。大文件拆分、工具描述序列化去重、Swift 6 迁移评估同样只写方案。详见 `docs/CODE_HEALTH_PLAN.md`。
+- 文档：本日志加阅读说明；功能说明加“当前状态一览”；README 更新基线与验证方式。
+
+## 10-05 五个提交补记（截图采集、简报刷新、回复进度、日程总览）
+**Date:** 2026-10-05 · 已推送 `main`；**未经 Xcode 编译或应用层测试**，未构建 TestFlight
+
+本条根据提交内容和功能说明补记，提交当时未写入本日志。
+
+- `56063fa` 独立截图采集实验 `experiments/CaptureLab`：截屏交接、自由打字与本机听写、私有草稿存储及可移植测试；附独立验证说明，不改正式 App。
+- `79b61d5` 截图采集接入正式版：设置 →「从其他 App 采集」提供打字、语音两个已签名快捷指令（`Butler/Resources/*.shortcut`，签名脚本在 `scripts/shortcuts/`）。截图进入通用对话草稿，补充意图后才发送，发送前不调用模型。安装入口改用 `UIDocumentInteractionController` 交给系统导入。新增 `ScreenshotCaptureIntent`，`ShortcutNavigation` 增加截图目的地。修正版菜单、添加流程与端到端仍待真机验收。
+- `bae603e` 首页简报只在资料有实质变化时刷新，不再每次启动都请求模型：复用已校验的提醒，跟踪资料来源与时间依赖，新增 `BriefRefreshController` 做尽力而为的后台刷新，带过期操作与超时保护。
+- `e999875` 对话回复进度改为一行状态，统一等待、流式生成、工具轮次和重试；去掉多余占位与耗时提示，保留未完成回复警告。新增状态与原生布局回归测试。
+- `5b9c3da` 日程总览改为方案 B 连续清单：默认定位今天，双向滚动分段加载；右上角只留“日期”打开月历面板；只有主动选择时间段才限定结果；首页“本周”改为今天至周日。新增 `AgendaOverview` 与 `scripts/test-agenda-core.sh`。
+- 这五个提交都在 Build 35 之后，下次具备 Xcode 与 iOS 平台时需先跑完整编译与全量测试。
+
 ## 六批对话改进汇总提交
 **Date:** 2026-10-02 · 用户要求提交推送；不启动云构建或发布
 
