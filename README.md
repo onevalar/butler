@@ -24,4 +24,5 @@
 ## 验证
 
 - 可移植核心测试（macOS 或 Linux，无需 iOS 平台）：`bash scripts/test-chat-core.sh`，同样运行 `alarm`、`warning`、`brief`、`agenda` 四个脚本。只覆盖 Foundation 逻辑，不能替代应用层测试。
+- 类型检查（只需 Xcode，不需 iOS 平台）：`bash scripts/typecheck-catalyst.sh`，用 Mac Catalyst 框架检查整个 App 模块；除已知的 Catalyst 不可用诊断外有任何错误或警告即失败。不链接、不含测试目标。
 - 完整验证：Xcode 26.3 并安装 iOS 26.2 平台，运行 `Butler` scheme 的 `xcodebuild test`（测试串行执行）。最近一次完整通过是 Build 35（`84fd591`）。

@@ -34,7 +34,7 @@ extension ButlerTools {
             ]),
             functionSchema("get_apple_reminder_operations", "查看本设备最近系统写入回执。operation_id=null返回最近100条及总数；指定ID只读对账，可消除已核实的待确认结果，不重复写系统。标识失效不能证明删除成功。", ["operation_id": optionalString])
         ]
-        return tools.map { String(decoding: try! JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys]), as: UTF8.self) }.joined(separator: ",")
+        return ToolSchema.json(tools, sortedKeys: true)
     }
 
     func executeAppleReminderTool(_ name: String, data: Data) async throws -> String? {

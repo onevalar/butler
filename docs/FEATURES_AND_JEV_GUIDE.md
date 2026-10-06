@@ -316,9 +316,9 @@ Jev 的两项核心价值是：提前判断资料需求以争取减少等待，�
 
 | 位置 | 职责 |
 |---|---|
-| [ButlerChat.swift](../Butler/Services/Agent/ButlerChat.swift) | 一个会话的发送、确认、历史与摘要、草稿、模型指令 |
+| [ButlerChat.swift](../Butler/Services/Agent/ButlerChat.swift) 与 `ButlerChat+Sending` / `+Confirmation` / `+History`、`ButlerChatInstructions` | 一个会话的状态、发送、确认、历史与摘要、草稿、模型指令 |
 | [ChatSessions.swift](../Butler/Services/Agent/ChatSessions.swift)、[ChatScope.swift](../Butler/Services/Agent/ChatScope.swift) | 会话缓存与按对象划分的会话标识 |
-| [ButlerTools.swift](../Butler/Services/Agent/ButlerTools.swift) 及同目录 `*Tools.swift` | 工具定义与执行、待确认项、确认执行；各领域工具在各自文件 |
+| [ButlerTools.swift](../Butler/Services/Agent/ButlerTools.swift) 及同目录 `ButlerTools+Inventory` / `+Jev`、`*Tools.swift`、`ToolSchema.swift` | 工具定义与执行、待确认项、确认执行；库存查询与 Jev 核对、各领域工具在各自文件 |
 | [ToolConversationLoop.swift](../Butler/Services/Agent/ToolConversationLoop.swift)、[SubscriptionModel.swift](../Butler/Services/SubscriptionModel.swift) | 模型与工具往返、订阅直连请求 |
 | [JevClient.swift](../Butler/Services/Agent/JevClient.swift)、[JevPrefetchPlanner.swift](../Butler/Services/Agent/JevPrefetchPlanner.swift)、[ButlerPrefetch.swift](../Butler/Services/Agent/ButlerPrefetch.swift) | Jev 请求、预取判断与编排 |
 | [BriefService.swift](../Butler/Services/BriefService.swift)、[BriefRefreshController.swift](../Butler/Services/BriefRefreshController.swift)、[BriefContext.swift](../Butler/Domain/BriefContext.swift)、[ButlerBrief.swift](../Butler/Domain/ButlerBrief.swift) | 首页总览的资料、缓存、刷新与按钮校验 |
@@ -329,7 +329,7 @@ Jev 的两项核心价值是：提前判断资料需求以争取减少等待，�
 | `Butler/Views/` | 首页、物品、对话、设置等页面 |
 | `Butler/Design/` | 水晶球、主题与触感；约束见 `AGENTS.md` |
 | `ButlerShareExtension/`、`ButlerWidget/`、`ButlerAlarmWidget/` | 分享扩展、小组件、闹钟与实时活动扩展 |
-| `scripts/test-*-core.sh` | 可移植核心测试 |
+| `scripts/test-*-core.sh`、`scripts/typecheck-catalyst.sh` | 可移植核心测试；无 iOS 平台时对整个 App 模块做 Catalyst 类型检查 |
 
 ## 附录 A：按日期的补充说明（原文保留）
 

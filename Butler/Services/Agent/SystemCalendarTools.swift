@@ -25,7 +25,7 @@ extension ButlerTools {
             ]),
             functionSchema("get_calendar_operations", "读取最近100条日历操作回执；operation_id非null则只读核实该操作，不重复写入。标识变化、结果未知不得重新创建。需要对话访问许可。", ["operation_id": optionalString])
         ]
-        return tools.map { String(decoding: try! JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys]), as: UTF8.self) }.joined(separator: ",")
+        return ToolSchema.json(tools, sortedKeys: true)
     }
 
     func executeSystemCalendarTool(_ name: String, data: Data) throws -> String? {

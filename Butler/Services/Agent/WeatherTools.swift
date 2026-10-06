@@ -7,7 +7,7 @@ extension ButlerTools {
             functionSchema("search_weather_places", "搜索天气城市或地区，返回候选place_id。城市有重名时请用户选择，不能猜坐标。", ["query": ["type": "string"]]),
             functionSchema("propose_weather_location", "修改天气位置，确认后生效。place_id用search_weather_places返回值；null切回手机定位（系统权限仍由用户授权）。", ["place_id": ["type": ["string", "null"]]])
         ]
-        return tools.map { String(decoding: try! JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys]), as: UTF8.self) }.joined(separator: ",")
+        return ToolSchema.json(tools, sortedKeys: true)
     }
     func executeWeatherTool(_ name: String, data: Data) async throws -> String? {
         switch name {

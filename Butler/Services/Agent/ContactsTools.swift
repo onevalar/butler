@@ -16,7 +16,7 @@ extension ButlerTools {
             functionSchema("get_contact_operations", "查询最近50次写入状态及未知结果。不是联系人当前状态；未核实操作禁止自动重试。", [:]),
             functionSchema("propose_close_contact_operation", "仅在用户已在系统通讯录人工核对未知结果并要求结束等待时提议；确认后只解除写入等待，仍标记未核实，不重新写入或回滚。", ["operation_id": string])
         ]
-        return tools.map { String(decoding: try! JSONSerialization.data(withJSONObject: $0), as: UTF8.self) }.joined(separator: ",")
+        return ToolSchema.json(tools)
     }
     func executeContactsTool(_ name: String, data: Data) throws -> String? {
         let change: ContactChange, title: String, detail: String

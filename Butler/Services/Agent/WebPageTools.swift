@@ -3,7 +3,7 @@ import Foundation
 extension ButlerTools {
     static var webPageTools: String {
         let tool = functionSchema("propose_read_webpage", "仅用户明确要求读取某个公开网页时，提议单独确认该HTTPS链接。提议不联网；确认后读取一次静态文字，保留来源和时间，结果成为历史回执供后续对话使用。不登录、不执行脚本、不跟随跳转，不猜网址、不主动访问网页里的链接。", ["url": ["type": "string"]])
-        return String(decoding: try! JSONSerialization.data(withJSONObject: tool), as: UTF8.self)
+        return ToolSchema.json(tool)
     }
 
     func executeWebPageTool(_ name: String, data: Data) throws -> String? {

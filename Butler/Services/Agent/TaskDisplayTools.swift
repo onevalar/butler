@@ -8,7 +8,7 @@ extension ButlerTools {
             functionSchema("propose_start_task_display", "仅在用户明确要求锁屏/灵动岛展示时提出开启已有任务的限时展示；先get_tasks读取id/revision。until是带偏移的ISO8601时间，必须根据用户意图明确，不超过8小时或任务自动结束时间。窗口到期不代表任务完成，不更改提醒规则，重复任务也只展示这一个窗口。默认不显示任务名称，只有时间/状态；不等于响铃。修改、暂停、完成/取消任务会结束旧展示，恢复不会自动开启。", ["task_id": string, "expected_revision": ["type": "integer"], "until": string]),
             functionSchema("propose_end_task_display", "用户确认后只关闭指定实时活动，不完成/取消任务，也不停止闹钟。先get_task_displays获取准确task_id和session_id；任务已删除也可结束原展示。", ["task_id": string, "session_id": string])
         ]
-        return tools.map { String(decoding: try! JSONSerialization.data(withJSONObject: $0), as: UTF8.self) }.joined(separator: ",")
+        return ToolSchema.json(tools)
     }
 
     func executeTaskDisplayTool(_ name: String, data: Data) async throws -> String? {

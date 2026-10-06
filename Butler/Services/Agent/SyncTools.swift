@@ -16,7 +16,7 @@ extension ButlerTools {
             functionSchema("get_sync_conflict", "按编号查看冲突各版本，包括删除版本。库存一个商品及其批次作为一组，不擅自挑版本。", key),
             functionSchema("propose_sync_resolution", "用户明确选择一个已展示的版本后提出解决冲突。确认卡列出全部版本；后续新冲突不会被本次选择覆盖。", key.merging(["selected_version": ["type": "string"]]) { _, new in new })
         ]
-        return tools.map { String(decoding: try! JSONSerialization.data(withJSONObject: $0), as: UTF8.self) }.joined(separator: ",")
+        return ToolSchema.json(tools)
     }
     func syncStore(kind: SyncRecord.Kind = .note) throws -> SyncStore {
         guard let store = kind.isPhoto ? photoSynchronization : (kind == .chat ? chatSynchronization : synchronization) else { throw SyncFailure("本机同步尚未准备好；请检查本地记录和iCloud构建配置，未上传资料。") }

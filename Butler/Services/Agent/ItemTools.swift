@@ -61,7 +61,7 @@ extension ButlerTools {
             items["items"] = item; properties["items"] = items; parameters["properties"] = properties; tools[index]["parameters"] = parameters
             tools[index]["description"] = (tools[index]["description"] as? String ?? "") + " profile可为null；衣服、工具、数码等请填写category和已知属性（颜色、尺码、材质、季节、用途等），未知不猜。photo_index仅引用本轮附件，从0起；多人多件合照需用户明确选择。耐用品track用quantity。"
         }
-        return tools.map { String(decoding: try! JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys]), as: UTF8.self) }.joined(separator: ",")
+        return ToolSchema.json(tools, sortedKeys: true)
     }
     static var itemTools: String {
         let string: [String: Any] = ["type": "string"]
@@ -74,7 +74,7 @@ extension ButlerTools {
             functionSchema("update_shown_list", "修改对话里最近显示的那张清单（current_context 的 shown_list）：remove 去掉某几行（只是不列在清单里，东西仍在家里，不改库存），add 追加真实物品。用户说“去掉某样/不用带某样/再加上某样”时用它，不要重新 show_inventory 出一张新清单。", ["remove": ["type": "array", "maxItems": 30, "items": string], "add": ["type": "array", "maxItems": 30, "items": objectSchema(["lot_id": string, "reason": string])]]),
             functionSchema("propose_regroup", "一次调整多件物品的存放位置和/或分类，例如“把酸奶和饮用水放到卫生间架子”“这几样归到工具”。location为新位置（不改则null），category为新分类（不改则null）；每件生成一条待确认修改，用户确认后才保存。", ["lot_ids": ["type": "array", "minItems": 1, "maxItems": 30, "items": string], "location": ["type": ["string", "null"]], "category": ["type": ["string", "null"], "enum": ItemCategory.allCases.map { $0.rawValue as Any } + [NSNull()]]])
         ]
-        return tools.map { String(decoding: try! JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys]), as: UTF8.self) }.joined(separator: ",")
+        return ToolSchema.json(tools, sortedKeys: true)
     }
 
     func executeItemTool(_ name: String, data: Data) throws -> String? {

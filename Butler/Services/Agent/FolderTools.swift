@@ -11,7 +11,7 @@ extension ButlerTools {
             functionSchema("propose_revoke_folder", "提议撤销一个文件夹的后续访问权，不删除文件或聊天历史，已开始的系统写入可能完成。", ["folder_id": string]),
             functionSchema("list_file_operations", "查询本机文件导出记录，completed=false表示结果待核查，不可据此重试或声称失败。", [:])
         ]
-        return tools.map { String(decoding: try! JSONSerialization.data(withJSONObject: $0), as: UTF8.self) }.joined(separator: ",")
+        return ToolSchema.json(tools)
     }
 
     func executeFolderTool(_ name: String, data: Data) async throws -> String? {

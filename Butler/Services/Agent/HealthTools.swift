@@ -18,7 +18,7 @@ extension ButlerTools {
             functionSchema("propose_health_verification", "提出核对未知写入，用户确认后只查询该写入标识，绝不重新保存。查不到不能断言失败，删除丢回执不能靠空结果判断成功。", ["operation_id": string]),
             functionSchema("propose_close_health_verification", "只有用户明确表示已在健康App人工核对，并希望结束等待时才提议。确认后仅解除本机未知操作阻塞，状态为closedUnverified，不认定原操作成功或失败、不重试或撤销；以后的新记录仍可能重复，必须提醒。", ["operation_id": string])
         ]
-        return schemas.map { String(decoding: try! JSONSerialization.data(withJSONObject: $0), as: UTF8.self) }.joined(separator: ",")
+        return ToolSchema.json(schemas)
     }
 
     func executeHealthTool(_ name: String, data: Data) throws -> String? {

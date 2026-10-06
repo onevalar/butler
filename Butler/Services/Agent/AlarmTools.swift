@@ -22,7 +22,7 @@ extension ButlerTools {
                 "action": ["type": "string", "enum": ["cancel", "enable", "stop", "pause", "resume"]]
             ])
         ]
-        return tools.map { String(decoding: try! JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys]), as: UTF8.self) }.joined(separator: ",")
+        return ToolSchema.json(tools, sortedKeys: true)
     }
 
     func executeAlarmTool(_ name: String, data: Data) throws -> String? {

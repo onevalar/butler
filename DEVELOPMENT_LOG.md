@@ -5,6 +5,7 @@
 最近一次完整 Xcode 验证：Build 35（2026-10-04，`84fd591`），本机 661 项通过、1 项既有跳过。之后的提交尚未完整编译，见 [代码结构与健壮性整理方案](docs/CODE_HEALTH_PLAN.md)。查找 TestFlight 构建结果可搜索“Build”或“TestFlight”。
 
 ## 目录
+- 2026-10-06 · 启动时资料库打不开不再闪退、拆分四个大文件、Catalyst 类型检查脚本
 - 2026-10-06 · 文档结构整理：日志统一排序、功能说明按现状重写、过时状态标注
 - 2026-10-06 · 核心测试脚本可在 macOS 运行、修复 alarm 脚本编译失败、文档整理
 - 2026-10-05 · 10-05 五个提交补记（截图采集、简报刷新、回复进度、日程总览）
@@ -74,6 +75,14 @@
 - 2026-09-22 · V2 直接接入与“青花”界面
 - 2026-07-26 · Butler 2.0 M0–M2 source handoff
 - 2026-01-06 · 📌 Project Status: Phase 1 & 2 Complete (MVP Ready)
+
+## 启动时资料库打不开不再闪退、拆分四个大文件、Catalyst 类型检查脚本
+**Date:** 2026-10-06 · 用户确认修复方式并接受未完整编译即提交；未构建或发布
+
+- **启动崩溃**：`ButlerApp` 创建 `ModelContainer` 失败原先直接 `fatalError`，资料库损坏、迁移失败或磁盘满时每次启动都闪退。新增 `AppLaunch`：打开成功才配置通知、小组件、实时活动、同步与首页简报；失败显示 `StoreUnavailableView`（资料暂时无法打开、原文件保留、不要删除 App、可复制的错误信息、重试）。重试不删除也不重建数据库。新增 `AppLaunchTests` 2 项，尚未运行。
+- **拆分**：`ButlerChat`（→5 个文件）、`ButlerTools`（→3）、`HomeView`（→4）、`ButlerChatView`（→3）纯搬移，脚本核对每个非空行恰好出现一次。跨文件使用的 `private` 成员改为模块内可见（ButlerChat 32、ButlerTools 14 + `Review`、ButlerChatView 16），`ButlerChat` 五个 `private(set)` 属性模块内可写；唯一的非搬移改动是 `self.siblings(of:)` 消除同名局部变量的名字查找歧义。`ContentView` 未动。
+- **去重**：15 处工具描述序列化收敛为 `ToolSchema.json(_:sortedKeys:)`，各自保留是否排序，实测输出逐字节相同。
+- **验证**：本机无 iOS 平台（用户决定不下载）。新增 `scripts/typecheck-catalyst.sh`，用 macOS SDK 的 Mac Catalyst 框架对整个 App 模块（191 个文件）做类型检查；改动前后诊断完全一致，只有 31 条“iOS API 在 Catalyst 不可用”，无其他错误或警告。注入错误可被发现。5 个核心脚本 258 项通过。没有链接、应用层测试、测试目标编译或真机运行，下次有 Xcode + iOS 平台须先跑完整 `xcodebuild test`。详见 `docs/CODE_HEALTH_PLAN.md`。
 
 ## 文档结构整理：日志统一排序、功能说明按现状重写、过时状态标注
 **Date:** 2026-10-06 · 只改文档，未改代码，未构建或发布

@@ -13,7 +13,7 @@ extension ButlerTools {
             functionSchema("propose_home_scene", "提议场景完整动作，确认前后核对内容。逐项执行非原子，部分失败不重试/回滚。混合高风险与普通动作、重复属性、未知动作或超过20项的场景拒绝，不擅自省略。", ["home_id": string, "scene_id": string]),
             functionSchema("get_home_operations", "查看最近50次确认的尝试/读回计数；不是设备当前状态，未完成可能已生效。不能自动重试。", [:])
         ]
-        return tools.map { String(decoding: try! JSONSerialization.data(withJSONObject: $0), as: UTF8.self) }.joined(separator: ",")
+        return ToolSchema.json(tools)
     }
 
     func executeHomeTool(_ name: String, data: Data) async throws -> String? {

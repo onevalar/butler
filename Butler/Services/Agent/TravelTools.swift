@@ -17,7 +17,7 @@ extension ButlerTools {
             functionSchema("get_place_reminders", "读取并核对地点提醒，缺失/unknown不等于完成或已通知。不会重新安排；取消中可再次确认取消。最多返回最近100条，活动项优先。", [:]),
             functionSchema("propose_cancel_place_reminder", "确认后移除指定地点通知，不完成普通任务/不停止闹钟；修改内容、范围或重复方式时先取消旧项，再明确新建。", ["reminder_id": string])
         ]
-        return tools.map { String(decoding: try! JSONSerialization.data(withJSONObject: $0), as: UTF8.self) }.joined(separator: ",")
+        return ToolSchema.json(tools)
     }
     func executeTravelTool(_ name: String, data: Data) async throws -> String? {
         let change: TravelChange, title: String, detail: String

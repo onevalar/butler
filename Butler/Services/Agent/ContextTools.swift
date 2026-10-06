@@ -33,7 +33,7 @@ extension ButlerTools {
                 "action": ["type": "string", "enum": ["complete", "pause", "resume", "cancel", "reopen", "delete"]]
             ])
         ]
-        return tools.map { String(decoding: try! JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys]), as: UTF8.self) }.joined(separator: ",")
+        return ToolSchema.json(tools, sortedKeys: true)
     }
 
     func requireTaskRevision(_ id: UUID, _ revision: Int) throws {
