@@ -34,24 +34,22 @@ struct CalendarOverviewView: View {
         GeometryReader { viewport in
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
-                        if window.selection == nil { edgeButton(earlier: true) }
+                    LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(overview.days) { day in
-                            Section {
-                                VStack(alignment: .leading, spacing: 0) { dayRows(day) }
-                                    .padding(.bottom, 16)
-                            } header: {
+                            VStack(alignment: .leading, spacing: 0) {
                                 dateHeading(day.date)
+                                dayRows(day)
                             }
+                            .padding(.bottom, 28)
                             .id(day.date)
                         }
-                        if window.selection == nil { edgeButton(earlier: false) }
                     }
                     .scrollTargetLayout()
                     .padding(.horizontal, 24)
                     .padding(.bottom, max(24, viewport.size.height - 160))
                 }
                 .scrollPosition(id: $visibleDay, anchor: .top)
+                .clipped()
                 .onScrollPhaseChange { _, phase, context in
                     if phase == .interacting { userScrolled = true }
                     guard phase == .idle, userScrolled, !showingDates else { return }
@@ -84,7 +82,7 @@ struct CalendarOverviewView: View {
                 }
                 calendarStatus
             }
-            .background(.regularMaterial)
+            .padding(.bottom, 6)
         }
         .background { ButlerBackground() }
         .navigationTitle("日程总览")
@@ -122,18 +120,11 @@ struct CalendarOverviewView: View {
         // scrollPosition preserves the visible date when earlier rows are prepended.
     }
 
-    private func edgeButton(earlier: Bool) -> some View {
-        Button { extend(earlier: earlier) } label: {
-            Text(earlier ? "\(dateLabel(window.interval.start))之前" : "\(dateLabel(window.interval.end))及之后")
-                .font(.footnote).foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, minHeight: 44)
-        }
-        .buttonStyle(.plain)
-    }
-
+    /// Only says something when it matters: the calendar was turned on but can't be read, or is still loading.
+    /// Earlier and later days load by themselves as the list reaches either end; there are no load buttons.
     @ViewBuilder private var calendarStatus: some View {
         if !calendarFeed.enabled {
-            status("未包含系统日历")
+            EmptyView()
         } else if !calendarFeed.canRead {
             status("无法读取系统日历，请检查日历权限")
         } else if waitingForCalendar {
@@ -148,15 +139,15 @@ struct CalendarOverviewView: View {
     }
 
     private func dateHeading(_ day: Date) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(dateLabel(day)).font(.subheadline.weight(.semibold))
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(dateLabel(day)).font(.title3.weight(.semibold))
             Text(day.formatted(.dateTime.weekday(.wide).locale(Locale(identifier: "zh_CN")))
                  + (calendar.isDate(day, inSameDayAs: agenda.today) ? " · 今天" : ""))
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.subheadline).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 12)
-        .background(.regularMaterial)
+        .padding(.top, 12)
+        .padding(.bottom, 4)
         .accessibilityAddTraits(.isHeader)
     }
 
@@ -175,8 +166,8 @@ struct CalendarOverviewView: View {
             .tint(Color.secondary)
         }
         if day.entries.isEmpty && day.routines.isEmpty {
-            Text(waitingForCalendar ? "正在读取安排…" : "没有安排")
-                .font(.subheadline).foregroundStyle(.secondary).padding(.vertical, 20)
+            Text(waitingForCalendar ? "正在读取安排…" : "暂无安排")
+                .font(.subheadline).foregroundStyle(.secondary).padding(.vertical, 16)
         }
     }
 

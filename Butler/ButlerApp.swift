@@ -16,6 +16,9 @@ final class AppLaunch {
         open()
     }
 
+    // Match the other observable services: avoid isolated teardown on the iOS 26.2 runtime.
+    nonisolated deinit {}
+
     func open() {
         guard container == nil else { return }
         let container: ModelContainer
@@ -57,7 +60,10 @@ struct ButlerApp: App {
         if !Self.isRunningTests { NotificationManager.shared.installDelegate() }
         let testing = Self.isRunningTests
         _launch = State(initialValue: AppLaunch(
-            makeContainer: testing ? ButlerStore.makePreviewContainer : ButlerStore.makeContainer,
+            makeContainer: {
+                if testing { return try ButlerStore.makePreviewContainer() }
+                return try ButlerStore.makeContainer()
+            },
             configuresServices: !testing))
     }
 
