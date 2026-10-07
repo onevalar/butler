@@ -111,3 +111,10 @@ GitHub 仓库授权已完成，以上工作流已在 App Store Connect 保存并
 用户补齐并保存Apple Developer配置后，Build 32的Test Build、Test Execute、Archive及Export均成功。四份用户提供日志确认571项测试、1项跳过、0失败；此前主应用、分享扩展、小组件的签名阻塞已不再出现。本段更新前文“待补齐配置”的状态。
 
 本次附件没有TestFlight内部/外部Post-Actions最终结果，分发可用性仍须在后台核对。页面26/27条警告主要重复，完整清单与待实施修复计划见[Build 32警告修复计划](BUILD_32_WARNING_FIX_PLAN.md)。保存记录及计划不触发新构建。
+
+### Build 37 发布（2026-10-08）
+
+- 当前完整工作区提交 `444576d` 已推送 main，手动启动 Main · TestFlight；包括首页、天气抽屉、日期抽屉、物品卡片/搜索及水晶球形变优化。中文测试说明已更新并自动同步。
+- [构建37](https://appstoreconnect.apple.com/teams/52049831-307a-44f3-95af-623b83d68dc0/xcode-cloud/products/ECE4419A-60C4-420A-A42F-FEB1AC95BFB8/builds/4d791bc5-4733-4bf3-abf8-5d808034ffcf/summary) 的 Test、Archive、Internal Testing 和 External Testing 均 Succeeded；外部经过 Pending Beta Review 后完成。测试页显示716/717通过，无失败；3条警告均为 WeatherStoreTests 未标记 loader 尾随闭包的弃用提示。
+- TestFlight `1.0 (37)` 状态 Testing，已核对 Groups (2)：内部 test（1人）和外部 test（2人）。云端时长11分钟，Usage10分钟。手机安装/通知送达未验证。
+- 本记录仅保存发布结果，不再触发构建。
