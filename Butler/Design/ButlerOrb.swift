@@ -111,29 +111,45 @@ private struct OrbDrawing: View {
                 Ellipse().fill(p.edge.opacity(p.edgeOpacity * 0.35))
                     .frame(width: 140, height: 80).position(x: 100, y: 62).blur(radius: 15)
 
-                // The only colour: a small bloom at the centre. It sits deep inside, so it moves with the tilt.
-                glow(drift: drift)
+                // The only colour: a little liquid at the centre, always flowing. It sits deep inside, so it moves with the tilt.
+                flowGlow(drift: drift)
                     .offset(x: tilt.width * 7, y: tilt.height * 7)
 
                 // Light gathered at the bottom of the ball.
-                Caustic().fill(LinearGradient(colors: [.white.opacity(p.caustic), .white.opacity(0)], startPoint: .bottom, endPoint: .top))
-                    .blur(radius: 2)
+                Caustic().fill(LinearGradient(colors: [.white.opacity(p.caustic * 0.75), .white.opacity(0)],
+                                              startPoint: .bottom, endPoint: .top))
+                    .blur(radius: 5)
                 Ellipse().fill(p.core.opacity(0.25))
                     .frame(width: 52, height: 14).position(x: 100, y: 162).blur(radius: 6)
 
                 // Reflection of the sky across the top, and one bright point.
                 // The reflection is on the surface, so it slides the other way.
                 Group {
-                    TopReflection().fill(LinearGradient(colors: [.white.opacity(p.spec), .white.opacity(0)], startPoint: .top, endPoint: .bottom))
-                        .blur(radius: 2)
+                    // Soft all the way down: no visible lower edge where the reflection ends.
+                    TopReflection().fill(LinearGradient(stops: [
+                        .init(color: .white.opacity(p.spec), location: 0),
+                        .init(color: .white.opacity(p.spec * 0.35), location: 0.45),
+                        .init(color: .white.opacity(0), location: 0.8),
+                    ], startPoint: .top, endPoint: .bottom))
+                        .blur(radius: 5)
                     Ellipse().fill(.white.opacity(0.9))
                         .frame(width: 24, height: 12).rotationEffect(.degrees(-38)).position(x: 66, y: 60).blur(radius: 0.9)
                 }
                 .offset(x: -tilt.width * 6 - contact.x * pressure * 8,
                         y: -tilt.height * 4 - contact.y * pressure * 8)
 
-                // Inner reflection along the lower rim, and the thickness of the glass.
-                LowerArc().stroke(.white.opacity(0.45), style: StrokeStyle(lineWidth: 1.4, lineCap: .round)).blur(radius: 0.9)
+                // Light gathered just inside the bottom edge (no line across the lower half: real glass has none),
+                // brightest at the bottom and fading up the sides; then the thickness of the glass.
+                Circle()
+                    .trim(from: 0.06, to: 0.44)
+                    .stroke(LinearGradient(stops: [
+                        .init(color: .white.opacity(0), location: 0),
+                        .init(color: .white.opacity(0.55), location: 0.5),
+                        .init(color: .white.opacity(0), location: 1),
+                    ], startPoint: .leading, endPoint: .trailing), style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                    .frame(width: 162, height: 162)
+                    .position(x: 100, y: 100)
+                    .blur(radius: 2.5)
                 ball.stroke(LinearGradient(stops: [
                     .init(color: p.edge.opacity(0), location: 0.6),
                     .init(color: p.edge.opacity(p.edgeOpacity * 1.2), location: 1),
@@ -154,28 +170,16 @@ private struct OrbDrawing: View {
         .compositingGroup()
     }
 
-    private func glow(drift: Double) -> some View {
+    /// Three colours carried by a slowly turning, warped flow (Metal shader `orbGlowFlow`), no fixed bright core.
+    private func flowGlow(drift: Double) -> some View {
         let g = palette.glow
-        // While active the three lights circle each other and the core breathes.
-        let a = drift * 0.9
-        let breathe = 1 + 0.12 * sin(drift * 2.1)
-        return ZStack {
-            Ellipse().fill(g[0].0.opacity(g[0].1)).frame(width: 44, height: 34).rotationEffect(.degrees(-20))
-                .position(x: 91 + 5 * cos(a), y: 107 + 4 * sin(a))
-            Ellipse().fill(g[1].0.opacity(g[1].1)).frame(width: 38, height: 30).rotationEffect(.degrees(30))
-                .position(x: 112 + 5 * cos(a + 2.1), y: 97 + 4 * sin(a + 2.1))
-            Circle().fill(g[2].0.opacity(g[2].1)).frame(width: 30, height: 30)
-                .position(x: 104 + 5 * cos(a + 4.2), y: 114 + 4 * sin(a + 4.2))
-        }
-        .blur(radius: 15)
-        .overlay {
-            Circle().fill(RadialGradient(stops: [
-                .init(color: palette.core.opacity(palette.coreOpacity), location: 0),
-                .init(color: palette.core.opacity(palette.coreOpacity * 0.45), location: 0.5),
-                .init(color: palette.core.opacity(0), location: 1),
-            ], center: .center, startRadius: 0, endRadius: 18))
-            .frame(width: 36, height: 36).scaleEffect(breathe).position(x: 101, y: 104).blur(radius: 6)
-        }
+        return Rectangle()
+            .colorEffect(ShaderLibrary.orbGlowFlow(
+                .boundingRect, .float(Float(drift)),
+                .color(g[0].0), .color(g[1].0), .color(g[2].0),
+                .float(Float(g[0].1)), .float(Float(g[1].1)), .float(Float(g[2].1))))
+            .frame(width: 200, height: 200)
+            .blur(radius: 3.5)
     }
 }
 
@@ -195,15 +199,6 @@ private struct TopReflection: Shape {
         path.move(to: CGPoint(x: 42, y: 74))
         path.addQuadCurve(to: CGPoint(x: 158, y: 74), control: CGPoint(x: 100, y: 0))
         path.addQuadCurve(to: CGPoint(x: 42, y: 74), control: CGPoint(x: 100, y: 46))
-        return path
-    }
-}
-
-private struct LowerArc: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: CGPoint(x: 30, y: 118))
-        path.addCurve(to: CGPoint(x: 170, y: 118), control1: CGPoint(x: 38, y: 188), control2: CGPoint(x: 162, y: 188))
         return path
     }
 }
