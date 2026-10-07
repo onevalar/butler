@@ -114,6 +114,7 @@ final class BriefService {
     @ObservationIgnored private let calendar: Calendar
 
     private static let cacheKey = "briefCache"
+    private static let contentVersion = "overview-v8|"
     private static let failureKey = "briefFailure"
     private static let retryAfter: TimeInterval = 10 * 60
     @ObservationIgnored private let timeout: Double
@@ -177,11 +178,11 @@ final class BriefService {
         }
         let identity = model?.cacheIdentity ?? "local"
         let scope = BriefContext.fingerprint(["account": identity, "calendar_allowed": context.metadata["calendar_allowed"] as? Bool ?? false])
-        let sig = "overview-v7|" + base + "|" + context.signature + "|" + BriefModelReply.weatherSignature(weather, now: now)
+        let sig = Self.contentVersion + base + "|" + context.signature + "|" + BriefModelReply.weatherSignature(weather, now: now)
             + "|" + BriefContext.fingerprint(["account": identity])
         let local = BriefLocal.compose(candidates: candidates, lotCount: lotCount, basis: basis, now: now, calendar: calendar)
         let stored = loadCache()
-        let previous = stored?.scope == scope ? stored?.brief.text : nil
+        let previous = stored?.scope == scope && stored?.signature.hasPrefix(Self.contentVersion) == true ? stored?.brief.text : nil
         let cached = cachedBrief(for: sig, now: now)
         let midnight = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)) ?? now.addingTimeInterval(86400)
         let weatherBoundaries = (weather?.hours ?? []).map { $0.date.addingTimeInterval(3600) }

@@ -232,14 +232,14 @@ enum BriefLocal {
         let pressing = candidates.filter { !$0.kind.isContext }
         let upcoming = candidates.filter { $0.kind == .upcomingTask }
         guard !candidates.isEmpty else {
-            let text = lotCount == 0 ? "家里还没记东西。买了什么跟我说一句，我来记着到期。"
-                : "暂时没有新的提醒，其他安排和记录都在下面。"
+            let text = lotCount == 0 ? "还没有记下要提醒的事，有什么需要我记着，随时告诉我。"
+                : "暂时没有需要提醒的事。"
             return ButlerBrief(greeting: greeting, text: text, basis: basis, target: nil, actions: [], source: .local)
         }
         // First the shape of the day, in a few words; the list below has the times and details.
         var text = upcoming.isEmpty ? "" : overview(upcoming, calendar: calendar)
         let laterCount = candidates.filter { $0.kind == .comingDays }.count
-        if upcoming.isEmpty, pressing.isEmpty, laterCount > 0 { text = "今天没什么要忙的，这几天还有 \(laterCount) 件事，可以提前看一眼。" }
+        if upcoming.isEmpty, pressing.isEmpty, laterCount > 0 { text = "今天暂时没有安排，接下来几天还有 \(laterCount) 件事，可以提前看一眼。" }
         guard let top = pressing.first else {
             return ButlerBrief(greeting: greeting, text: text, basis: basis, target: nil, actions: [], source: .local, hasSubject: true)
         }
@@ -392,6 +392,10 @@ enum BriefModelReply {
         - 概括今天的主要安排，合并同类；有需要时指出值得准备或先处理的事。根据情境组织，不机械套用“今天很忙、另外、记得”的句式。没有值得打扰的事情就平实简短，不硬凑建议。
         - 不要只挑最近的一件细说，也不要逐条复述清单；不写车次、具体钟点、地址、座位、数量这些清单里已有的细节，时间只说大概（一大早、上午、明天、周末）。
         - 一到两句口语化的中文，总共不超过 60 个字；像熟悉他的人说话，不用“建议您”，不堆数字。事情都不急时，一句轻松的概括就够，不要硬凑。
+
+        - 正文直接说人和事，不出现“本地提醒”“任务对象”“已确认笔记”“数据源”等内部分类；提醒可以说“有件事别忘了”，安排可以说“晚上还有一件事”。不要把“赶”与“提醒”搭配，也不写“按自己的节奏来就好”“安心享受空闲”等没有信息的安慰话。
+        - 没有要提醒的事，一句“暂时没有需要提醒的事。”即可；不要把记录为空推断成用户没事可做。未读取日历时不声称“今天没有任何安排”；确有必要说明范围时说“我这里暂时没有新的提醒”，不要把权限或数据分类塞进正文。称呼只在自然、必要时使用，不在每次提醒前重复叫名字。
+        - 输出前读一遍正文，删掉生硬搭配、重复问候和多余的劝慰；previous_text 如果不符合这些表达要求，保留事实并重新组织语言，不沿用旧句式。
 
         target：只能从 action_targets 的 due_task、expired、expiring_soon、low_stock 中选，按钮只针对它；不适合快捷操作时 target 为 null、actions 为空，不需要凑按钮。有 target 时，只给 1 到 2 个直接处理按钮，如“我已完成”“稍后提醒”。upcoming_task 和 coming_days 不能作 target。
 

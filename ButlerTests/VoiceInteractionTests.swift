@@ -61,6 +61,18 @@ final class VoiceInteractionTests: XCTestCase {
         }
     }
 
+    func testCancelGrowthStartsInsideTheBarWithoutAFrameJump() {
+        var previousTop: CGFloat = 266 - 31
+        for frame in 0...120 {
+            let geometry = VoiceGeometry(barWidth: VoiceGeometry.barWidth, extent: CGFloat(frame) / 120)
+            let points = outline(geometry).flatMap { $0 }
+            let top = points.map(\.y).min()!
+            XCTAssertLessThan(abs(top - previousTop), 2.5, "No pop as the cancel neck first appears, frame \(frame)")
+            XCTAssertEqual(points.map(\.y).max()!, 297, accuracy: 0.1, "The bottom of the bar stays flat")
+            previousTop = top
+        }
+    }
+
     // MARK: Gesture
 
     func testOnlySlidingUpGrowsTheZoneAndDownOrSidewaysNeverCancels() {

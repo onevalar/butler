@@ -63,6 +63,39 @@ final class ItemsPageTests: XCTestCase {
         XCTAssertNil(InventoryGroups.group(key, facts: home.filter { $0.storageLocation != "冷藏" }), "emptied since")
     }
 
+    // MARK: Individual-item catalog
+
+    func testCatalogSearchCombinesWordsAndFiltersWithoutHidingQuantityOnlyItems() {
+        let items = home
+        XCTAssertEqual(InventoryCatalog.items(items).count, items.count)
+        XCTAssertEqual(InventoryCatalog.items(items, query: "冷藏 酸奶").map(\.name), ["红枣酸奶"])
+        XCTAssertEqual(InventoryCatalog.items(items, category: .tools, place: "客厅柜").count, 2)
+        XCTAssertTrue(InventoryCatalog.items(items, query: "冷冻", category: .clothing).isEmpty)
+        XCTAssertEqual(InventoryCatalog.items(items, query: "纯净水").map(\.name), ["七鲜饮用纯净水"])
+        XCTAssertEqual(InventoryCatalog.items(items, query: "   ").count, items.count)
+    }
+
+    func testCatalogRetainsSeparatePurchasesAndStableOrderForIdenticalNames() {
+        let first = lot("牛奶", days: 2, category: .food)
+        let second = lot("牛奶", days: 2, category: .food)
+        let forward = InventoryCatalog.items([first, second], order: .name).map(\.id)
+        XCTAssertEqual(forward.count, 2)
+        XCTAssertEqual(forward, InventoryCatalog.items([second, first], order: .name).map(\.id))
+        XCTAssertEqual(InventoryCatalog.items(home).first?.name, "七鲜饮用纯净水")
+    }
+
+    func testCatalogStatusDoesNotInventExpiryForQuantityOnlyOrDurableThings() {
+        XCTAssertNil(InventoryCatalog.status(for: lot("饮用水", quantity: 6, category: .household)))
+        XCTAssertEqual(InventoryCatalog.status(for: lot("饮用水", quantity: 1, category: .household)), "快用完了")
+        XCTAssertNil(InventoryCatalog.status(for: lot("螺丝刀", quantity: 1, category: .tools)))
+        XCTAssertEqual(InventoryCatalog.status(for: lot("牛奶", days: 1, category: .food)), "明天到期")
+        XCTAssertEqual(InventoryCatalog.status(for: lot("牛奶", category: .food)), "未记录日期")
+        let product = CatalogProduct(canonicalName: "苹果", categoryRawValue: "food")
+        let record = InventoryLot(productID: product.id, quantity: 2, unit: "个")
+        record.plannedUseByDate = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now))!
+        XCTAssertEqual(InventoryCatalog.status(for: LotFacts(lot: record, product: product, now: now)), "明天前用完")
+    }
+
     // MARK: Answers on the phone
 
     func testPlainQuestionsAreAnsweredOnThePhone() throws {

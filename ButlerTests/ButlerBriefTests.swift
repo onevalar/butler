@@ -78,7 +78,7 @@ final class ButlerBriefTests: XCTestCase {
         XCTAssertNil(overview.target)
         XCTAssertTrue(overview.actions.isEmpty)
         XCTAssertEqual(overview.hasSubject, true, "not a quiet day: 其他 stays")
-        XCTAssertNotEqual(overview.text, "暂时没有新的提醒，其他安排和记录都在下面。")
+        XCTAssertNotEqual(overview.text, "暂时没有需要提醒的事。")
 
         // The model may not aim buttons at an upcoming task; it may answer with an overview only.
         let upcomingKey = BriefTarget.task(morning.id).key
@@ -120,9 +120,9 @@ final class ButlerBriefTests: XCTestCase {
                                       daysLeft: -1, location: nil, isMedicine: true)
         XCTAssertFalse(BriefLocal.compose(candidates: [medicine], lotCount: 1, basis: "", now: now).actions.contains { $0.effect == .closeLot(.depleted) })
 
-        XCTAssertEqual(BriefLocal.compose(candidates: [], lotCount: 0, basis: "", now: now).text, "家里还没记东西。买了什么跟我说一句，我来记着到期。")
-        XCTAssertEqual(BriefLocal.compose(candidates: [], lotCount: 4, basis: "", now: now).text, "暂时没有新的提醒，其他安排和记录都在下面。")
-        XCTAssertEqual(BriefLocal.compose(candidates: [], lotCount: 4, basis: "", now: at(20)).text, "暂时没有新的提醒，其他安排和记录都在下面。")
+        XCTAssertEqual(BriefLocal.compose(candidates: [], lotCount: 0, basis: "", now: now).text, "还没有记下要提醒的事，有什么需要我记着，随时告诉我。")
+        XCTAssertEqual(BriefLocal.compose(candidates: [], lotCount: 4, basis: "", now: now).text, "暂时没有需要提醒的事。")
+        XCTAssertEqual(BriefLocal.compose(candidates: [], lotCount: 4, basis: "", now: at(20)).text, "暂时没有需要提醒的事。")
         XCTAssertTrue(BriefLocal.compose(candidates: [], lotCount: 4, basis: "", now: now).actions.isEmpty)
     }
 
@@ -198,7 +198,7 @@ final class ButlerBriefTests: XCTestCase {
         let items = try XCTUnwrap(json["action_targets"] as? [[String: Any]])
         XCTAssertEqual(items.first?["key"] as? String, lot.target.key)
         XCTAssertEqual(items.first?["kind"] as? String, "expiring_soon")
-        for effect in ["close_depleted", "close_discarded", "close_gifted", "adjust_quantity", "snooze", "complete_task", "snooze_task", "open_detail"] {
+        for effect in ["close_depleted", "close_discarded", "close_gifted", "adjust_quantity", "snooze", "complete_task", "snooze_task"] {
             XCTAssertTrue(BriefModelReply.instructions().contains(effect), effect)
         }
     }

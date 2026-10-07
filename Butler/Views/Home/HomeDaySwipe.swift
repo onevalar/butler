@@ -8,11 +8,13 @@ import UIKit
 final class HomeDayInteraction {
     private(set) var offset: CGFloat = 0
     private(set) var allowsTap = true
+    private(set) var isSettling = false
     private var startingDay: Date?
 
     nonisolated deinit {}
 
     func touchBegan() {
+        guard !isSettling else { return }
         allowsTap = true
         startingDay = nil
         offset = 0
@@ -27,28 +29,46 @@ final class HomeDayInteraction {
     }
 
     func begin(day: Date) {
+        guard !isSettling else { return }
         allowsTap = false
         startingDay = day
     }
 
-    func move(_ x: CGFloat) {
+    func move(_ x: CGFloat, width: CGFloat = 320) {
         guard startingDay != nil else { return }
-        offset = min(64, max(-64, x * 0.4))
+        // Follow the finger, allowing at most one day per gesture.
+        offset = min(width, max(-width, x))
     }
 
-    func finish(translation: CGFloat, velocity: CGFloat, calendar: Calendar = .current) -> Date? {
-        defer { startingDay = nil; offset = 0 }
+    func finish(translation: CGFloat, velocity: CGFloat, width: CGFloat = 320, calendar: Calendar = .current) -> Date? {
+        // Keep the release position: the pager continues from here instead of restarting at zero.
+        defer { startingDay = nil }
         guard let day = startingDay else { return nil }
-        let farEnough = abs(translation) >= 56
+        let farEnough = abs(translation) >= max(56, width * 0.2)
         let flick = abs(translation) >= 24 && abs(velocity) >= 500 && translation * velocity > 0
         guard farEnough || flick else { return nil }
         return calendar.date(byAdding: .day, value: translation < 0 ? 1 : -1, to: day)
+    }
+
+    func beginSettlement() {
+        startingDay = nil
+        allowsTap = false
+        isSettling = true
+    }
+
+    func settle(at offset: CGFloat) { self.offset = offset }
+
+    func completeSettlement() {
+        offset = 0
+        isSettling = false
+        // Only a new touch can restore tapping, never the release which changed the page.
     }
 
     func cancel() {
         startingDay = nil
         offset = 0
         allowsTap = false
+        isSettling = false
     }
 }
 
@@ -58,8 +78,9 @@ final class HomeDayInteraction {
 struct HomeDaySwipe: UIGestureRecognizerRepresentable {
     let interaction: HomeDayInteraction
     let day: Date
+    let width: CGFloat
     let isEnabled: Bool
-    let onPick: (Date) -> Void
+    let onEnd: (Date?) -> Void
 
     func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator { Coordinator() }
 
@@ -88,16 +109,22 @@ struct HomeDaySwipe: UIGestureRecognizerRepresentable {
         switch recognizer.state {
         case .began:
             interaction.begin(day: day)
-            interaction.move(translation)
+            interaction.move(translation, width: width)
         case .changed:
-            interaction.move(translation)
+            interaction.move(translation, width: width)
         case .ended:
-            if let next = interaction.finish(translation: translation, velocity: recognizer.velocity(in: nil).x) {
+            guard !interaction.isSettling else { return }
+            let next = interaction.finish(translation: translation, velocity: recognizer.velocity(in: nil).x, width: width)
+            if let next {
                 ChatDiagnostics.log("home day swipe committed direction=\(next > day ? 1 : -1)")
-                onPick(next)
             }
-        case .cancelled, .failed:
-            interaction.cancel()
+            onEnd(next)
+        case .cancelled:
+            guard !interaction.isSettling else { return }
+            _ = interaction.finish(translation: 0, velocity: 0, width: width)
+            onEnd(nil)
+        case .failed:
+            break // Vertical scrolling and taps never began a horizontal page movement.
         default: break
         }
     }

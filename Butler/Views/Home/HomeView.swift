@@ -53,12 +53,11 @@ struct HomeView: View {
     var onTaskAction: (UUID, TaskQuickAction) -> Void = { _, _ in }
 
     @State private var showingPicker = false
-    @State private var slideForward = true
+    @State private var dateNavigation: HomeDayNavigationStyle = .slide
     @State private var listInteraction = HomeDayInteraction()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var calendar: Calendar { .current }
-    private var isToday: Bool { listDay == agenda.today }
 
     var body: some View {
         ScrollView {
@@ -68,29 +67,11 @@ struct HomeView: View {
                         .padding(.horizontal, 16)
                         .padding(.bottom, 16)
                 }
-                VStack(spacing: 0) {
-                    HStack {
-                        Text(isToday ? "今日安排" : Self.label(for: listDay, today: agenda.today))
-                            .font(.subheadline.weight(.semibold))
-                        Spacer(minLength: 8)
-                        if !isToday {
-                            Button("回到今天") {
-                                if listInteraction.allowsTap { selectDay(agenda.today) }
-                            }
-                                .font(.subheadline).buttonStyle(.plain)
-                                .accessibilityAction { selectDay(agenda.today) }
-                        }
-                    }
-                    .frame(minHeight: 36)
-                    .padding(.horizontal, 22).padding(.bottom, 6)
-                    dayList
-                        .offset(x: reduceMotion ? 0 : listInteraction.offset)
-                        .padding(.horizontal, 16)
-                        .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: listDay)
+                dayNavigation
+                HomeDayPager(day: $listDay, interaction: listInteraction, isActive: isActive,
+                             navigationStyle: dateNavigation) { day in
+                    dayList(day).padding(.horizontal, 16)
                 }
-                .contentShape(Rectangle())
-                .gesture(HomeDaySwipe(interaction: listInteraction, day: listDay, isEnabled: isActive, onPick: selectDay))
-                .allowsHitTesting(isActive)
                 .accessibilityAction(named: "前一天") { step(-1) }
                 .accessibilityAction(named: "后一天") { step(1) }
                 .padding(.bottom, 14)
@@ -108,7 +89,7 @@ struct HomeView: View {
             // Just the month: tap a day to see it. The overview lives at the bottom of home, tasks in settings.
             DayPickerPanel(agenda: agenda, selected: listDay,
                            onPick: { day in
-                               selectDay(day)
+                               selectDay(day, style: .fade)
                                closePicker()
                            },
                            onBrowseMonth: onBrowseMonth)
@@ -130,7 +111,7 @@ struct HomeView: View {
 
     private var header: some View {
         HStack(alignment: .center, spacing: 12) {
-            dateCapsule
+            calendarButton
             Spacer(minLength: 8)
             GlassEffectContainer(spacing: 8) {
                 HStack(spacing: 0) {
@@ -154,24 +135,20 @@ struct HomeView: View {
         .padding(.bottom, 8)
     }
 
-    /// Home stays anchored to today. The sheet selects the list's date, not a different home page.
-    private var dateCapsule: some View {
-        HStack(spacing: 6) {
-            Button { showingPicker.toggle() } label: {
-                HStack(spacing: 8) {
-                    Text(Self.label(for: agenda.today, today: agenda.today, calendar: calendar))
-                        .font(.system(size: 17, weight: .semibold))
-                        .lineLimit(1).minimumScaleFactor(0.8)
-                    Image(systemName: "chevron.down").font(.system(size: 12, weight: .bold)).foregroundStyle(.secondary)
-                }
-                .contentShape(Rectangle())
+    /// Today stays visible while the schedule below browses other dates.
+    private var calendarButton: some View {
+        Button { showingPicker.toggle() } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(agenda.today.monthDay).font(.title2.weight(.semibold))
+                Text(agenda.today.formatted(.dateTime.weekday(.abbreviated).locale(Locale(identifier: "zh_CN"))))
+                    .font(.subheadline).foregroundStyle(.secondary)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("日期与记录")
-            .accessibilityHint("打开完整日期面板，清单当前显示\(Self.label(for: listDay, today: agenda.today, calendar: calendar))")
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
         }
-        .padding(.leading, 4)
-        .frame(height: 44)
+        .buttonStyle(.plain)
+        .accessibilityLabel("选择日期")
+        .accessibilityHint("打开月历，清单当前显示\(Self.label(for: listDay, today: agenda.today, calendar: calendar))")
     }
 
     static func label(for day: Date, today: Date, calendar: Calendar = .current) -> String {
@@ -190,14 +167,42 @@ struct HomeView: View {
 
     // MARK: The day's list
 
-    private var dayList: some View {
-        let list = HomeList.build(day: listDay, agenda: agenda, facts: facts,
+    private var dayNavigation: some View {
+        HStack(spacing: 4) {
+            Text(listDay == agenda.today ? "今日安排" : browsedDateLabel)
+                .font(.subheadline.weight(.semibold))
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
+            Spacer(minLength: 4)
+            if listDay != agenda.today {
+                Button("回到今天") { selectDay(agenda.today) }
+                    .font(.subheadline)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .accessibilityLabel("回到今天")
+            }
+        }
+        .buttonStyle(.plain)
+        .frame(minHeight: 44)
+        .disabled(!isActive || listInteraction.isSettling)
+        .padding(.horizontal, 22)
+    }
+
+    private var browsedDateLabel: String {
+        let date = calendar.component(.year, from: listDay) == calendar.component(.year, from: agenda.today)
+            ? listDay.monthDay
+            : listDay.formatted(.dateTime.year().month().day().locale(Locale(identifier: "zh_CN")))
+        let weekday = listDay.formatted(.dateTime.weekday(.abbreviated).locale(Locale(identifier: "zh_CN")))
+        return "\(date) \(weekday)"
+    }
+
+    private func dayList(_ day: Date) -> some View {
+        let list = HomeList.build(day: day, agenda: agenda, facts: facts,
                                   featured: nil, now: now)
         return VStack(spacing: 0) {
             if list.rows.isEmpty && list.completed.isEmpty {
                 HStack(spacing: 10) {
                     Image(systemName: "checkmark.circle").foregroundStyle(.secondary)
-                    Text(isToday ? "今天没有别的安排" : "这天没有安排")
+                    Text(day == agenda.today ? "今天暂无安排" : "这天没有安排")
                         .font(.subheadline).foregroundStyle(.secondary)
                     Spacer()
                 }
@@ -224,10 +229,6 @@ struct HomeView: View {
         .padding(.vertical, 6)
         .glassCard()
         .contentShape(Rectangle())
-        .id(listDay)
-        .transition(reduceMotion ? .opacity : .asymmetric(
-            insertion: .move(edge: slideForward ? .trailing : .leading).combined(with: .opacity),
-            removal: .move(edge: slideForward ? .leading : .trailing).combined(with: .opacity)))
     }
 
     private func taskAction(_ id: UUID, _ action: TaskQuickAction) {
@@ -254,9 +255,9 @@ struct HomeView: View {
         selectDay(next)
     }
 
-    private func selectDay(_ day: Date) {
-        guard isActive else { return }
-        slideForward = day > listDay
+    private func selectDay(_ day: Date, style: HomeDayNavigationStyle = .slide) {
+        guard isActive, !listInteraction.isSettling else { return }
+        dateNavigation = style
         listDay = calendar.startOfDay(for: day)
     }
 

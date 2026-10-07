@@ -22,7 +22,7 @@ final class HomeDayInteractionTests: XCTestCase {
             XCTAssertFalse(interaction.allowsTap)
             let selected = interaction.finish(translation: dx, velocity: 0, calendar: calendar)
             XCTAssertEqual(selected, calendar.date(byAdding: .day, value: dx < 0 ? 1 : -1, to: today))
-            XCTAssertEqual(interaction.offset, 0)
+            XCTAssertEqual(interaction.offset, dx, "Release must preserve the finger position for continuous settling")
             XCTAssertFalse(interaction.allowsTap, "A Button callback delivered after pan end must still be blocked")
             XCTAssertNil(interaction.finish(translation: -dx, velocity: 0), "A release cannot turn a second page")
         }
@@ -33,6 +33,9 @@ final class HomeDayInteractionTests: XCTestCase {
         interaction.touchBegan()
         interaction.begin(day: today)
         _ = interaction.finish(translation: -100, velocity: -600)
+        interaction.beginSettlement()
+        interaction.settle(at: -320)
+        interaction.completeSettlement()
         XCTAssertFalse(interaction.allowsTap)
         interaction.touchBegan()
         interaction.touchMoved(CGPoint(x: 2, y: 3))
@@ -44,8 +47,62 @@ final class HomeDayInteractionTests: XCTestCase {
         interaction.touchBegan()
         interaction.touchMoved(CGPoint(x: -18, y: 2))
         interaction.begin(day: today)
+        interaction.move(-18)
         XCTAssertNil(interaction.finish(translation: -18, velocity: -800))
+        XCTAssertEqual(interaction.offset, -18, "An incomplete swipe also returns from its actual release position")
         XCTAssertFalse(interaction.allowsTap, "An incomplete swipe is not a click")
+    }
+
+    func testNewTouchCannotResetASettlingPageOrTurnItAgain() {
+        let interaction = HomeDayInteraction()
+        interaction.touchBegan()
+        interaction.begin(day: today)
+        interaction.move(-120)
+        _ = interaction.finish(translation: -120, velocity: 0, calendar: calendar)
+        interaction.beginSettlement()
+        interaction.settle(at: -200)
+        interaction.touchBegan()
+        interaction.begin(day: today)
+        interaction.move(120)
+        XCTAssertTrue(interaction.isSettling)
+        XCTAssertFalse(interaction.allowsTap)
+        XCTAssertEqual(interaction.offset, -200)
+        XCTAssertNil(interaction.finish(translation: 120, velocity: 800, calendar: calendar))
+        interaction.completeSettlement()
+        interaction.touchBegan()
+        XCTAssertTrue(interaction.allowsTap)
+        XCTAssertFalse(interaction.isSettling)
+        XCTAssertEqual(interaction.offset, 0)
+    }
+
+    func testReverseSwipeReturnsToTodayAfterBrowsingEitherDirection() {
+        for direction in [-1, 1] {
+            let interaction = HomeDayInteraction()
+            let otherDay = calendar.date(byAdding: .day, value: direction, to: today)!
+            interaction.touchBegan()
+            interaction.begin(day: otherDay)
+            let returningDrag = CGFloat(direction) * 100
+            interaction.move(returningDrag)
+            XCTAssertEqual(interaction.finish(translation: returningDrag, velocity: 0, calendar: calendar), today)
+            XCTAssertEqual(interaction.offset, returningDrag)
+            interaction.beginSettlement()
+            interaction.cancel()
+            XCTAssertFalse(interaction.isSettling)
+            XCTAssertEqual(interaction.offset, 0)
+            XCTAssertNil(interaction.finish(translation: returningDrag, velocity: 800, calendar: calendar))
+        }
+    }
+
+    func testDragTracksTheFingerAndIsBoundedToOnePage() {
+        let interaction = HomeDayInteraction()
+        interaction.touchBegan()
+        interaction.begin(day: today)
+        interaction.move(100, width: 390)
+        XCTAssertEqual(interaction.offset, 100)
+        interaction.move(-800, width: 390)
+        XCTAssertEqual(interaction.offset, -390)
+        XCTAssertEqual(interaction.finish(translation: -800, velocity: -900, width: 390, calendar: calendar),
+                       calendar.date(byAdding: .day, value: 1, to: today))
     }
 
     func testNavigationCancellationCannotChangeTheDateOnReturn() {

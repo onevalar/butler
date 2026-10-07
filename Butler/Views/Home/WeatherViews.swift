@@ -51,8 +51,11 @@ struct WeatherPanel: View {
             }
             .padding(.horizontal, 16).padding(.top, 24).padding(.bottom, 28)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .scrollDismissesKeyboard(.interactively)
-        .background { ButlerBackground() }
+        // Let the sheet own its edge-to-edge material. A custom geometry-backed page
+        // background can retain the compact detent's safe-area width and expose a side strip.
+        .presentationBackground(.regularMaterial)
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .task { await weather.refresh(force: true, requestPermission: true) }

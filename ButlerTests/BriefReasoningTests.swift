@@ -470,6 +470,25 @@ final class BriefReasoningTests: XCTestCase {
         XCTAssertEqual(model.requests, 1)
     }
 
+    func testOldWritingStyleCacheIsRegeneratedWithoutRepeatingPreviousText() async throws {
+        let storage = defaults(), model = Model()
+        let service = BriefService(defaults: storage)
+        service.attach(model: model)
+        update(service, at: now)
+        await service.settle()
+        let data = try XCTUnwrap(storage.data(forKey: "briefCache"))
+        var cache = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        cache["signature"] = "overview-v7|" + (cache["signature"] as! String).split(separator: "|", maxSplits: 1)[1]
+        storage.set(try JSONSerialization.data(withJSONObject: cache), forKey: "briefCache")
+
+        let reopened = BriefService(defaults: storage)
+        reopened.attach(model: model)
+        update(reopened, at: now.addingTimeInterval(1))
+        await reopened.settle()
+        XCTAssertEqual(model.requests, 2)
+        XCTAssertFalse(model.lastRequest.contains("previous_text"), "Old awkward phrasing must not seed the new brief")
+    }
+
     func testAccountAndPermissionChangesCannotReuseAnOldAnswer() async {
         let model = Model(), service = BriefService(defaults: defaults())
         model.context.metadata["calendar_allowed"] = true

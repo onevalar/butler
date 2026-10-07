@@ -132,7 +132,6 @@ struct VoiceGeometry: Sendable, Equatable {
     var barWidth: CGFloat
     var barHeight: CGFloat = 62
     static let ballWidth: CGFloat = 62
-    static let bulgeWidth: CGFloat = 96
     /// Wide enough that both hands of bars show either side of a fingertip.
     static let barWidth: CGFloat = 176
     /// 0...1: how far the cancel zone has grown.
@@ -155,13 +154,14 @@ struct VoiceGeometry: Sendable, Equatable {
     }
 
     /// Centre of the zone above the bar's centre.
-    var zoneOffset: CGFloat { barHeight / 2 + (Self.reach - barHeight / 2) * extent }
+    // Start inside the bar, rather than jumping from its edge to a separate rounded tip.
+    var zoneOffset: CGFloat { Self.reach * Self.smooth(extent) }
 
     /// Signed distance to the fused shape: inside is negative. `x` is from the centre line, `y` is downward,
     /// `centerY` is the bar's centre in the same space.
     func distance(x: CGFloat, y: CGFloat, centerY: CGFloat) -> CGFloat {
         let bar = Self.pill(x: x, y: y - centerY, halfWidth: barWidth / 2, halfHeight: barHeight / 2)
-        guard extent > 0.001 else { return bar }
+        guard extent > 0.001, y < centerY else { return bar }
         let grow = Self.smooth(extent)
         let zoneY = centerY - zoneOffset
         let zone = Self.pill(x: x, y: y - zoneY, halfWidth: max(8, Self.zoneWidth / 2 * grow), halfHeight: max(8, Self.zoneHeight / 2 * grow))

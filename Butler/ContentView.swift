@@ -409,7 +409,7 @@ struct ContentView: View {
             if let chat { MemoriesView(chat: chat) }
         case .items:
             InventoryView(facts: facts, historyCount: lots.count - facts.count,
-                          onOpenGroup: { path.append(.itemGroup($0)) }, onOpenHistory: { path.append(.itemHistory) })
+                          onOpenLot: { path.append(.lot($0)) }, onOpenHistory: { path.append(.itemHistory) })
         case .itemGroup(let key):
             InventoryGroupView(key: key, facts: facts, onOpenLot: { path.append(.lot($0)) })
         case .itemHistory:
