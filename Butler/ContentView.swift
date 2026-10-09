@@ -488,6 +488,7 @@ struct ContentView: View {
         switch action {
         case .complete: runTask { try reminders.complete(id) }
         case .pause: runTask { try reminders.pause(id) }
+        case .nudge: runTask { try HouseholdService.shared.nudge(id) }
         case .cancel: cancellingTask = id
         case .remindLater:
             guard let task = reminders.reminder(id: id) else { return }

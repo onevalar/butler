@@ -106,8 +106,8 @@ import SwiftData
         switch key.kind {
         case .chat, .itemPhoto, .chatPhoto:
             throw SyncFailure("聊天和图片只能通过各自单独确认的同步接收。")
-        case .member:
-            throw SyncFailure("家庭成员只通过家庭同步接收。")
+        case .member, .rule:
+            throw SyncFailure("家庭成员和规则只通过家庭同步接收。")
         case .note:
             if let payload {
                 var value = try JSONDecoder().decode(LocalMemory.self, from: payload)

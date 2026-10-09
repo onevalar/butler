@@ -36,6 +36,7 @@ import UserNotifications
                 result[.init(kind: .task, id: task.id)] = try SyncRecord.encode(ButlerSyncData.portable(task))
             }
             for (id, task) in store.hiddenTasks { result[.init(kind: .task, id: id)] = try SyncRecord.encode(task) }
+            for rule in store.rules { result[.init(kind: .rule, id: rule.id)] = try SyncRecord.encode(rule) }
         }
         return result
     }
@@ -89,8 +90,14 @@ import UserNotifications
                 if old != nil { try base.tasks.receiveSyncedTask(key.id, value: nil) }
                 if store.hiddenTasks[key.id] != nil { store.setHiddenTask(nil, id: key.id) }
             }
+        case .rule:
+            if let payload {
+                let rule = try JSONDecoder().decode(HouseholdRule.self, from: payload)
+                guard rule.id == key.id, !rule.text.isEmpty, rule.text.count <= 200 else { throw SyncFailure("家庭规则记录无效。") }
+                store.setRule(rule, id: key.id)
+            } else { store.setRule(nil, id: key.id) }
         default:
-            throw SyncFailure("家庭同步只包含共享的物品、任务和成员。")
+            throw SyncFailure("家庭同步只包含共享的物品、任务、规则和成员。")
         }
         WidgetSnapshotPublisher.shared.refresh()
         NotificationCenter.default.post(name: .init("butlerBriefSourcesChanged"), object: nil)
@@ -105,6 +112,12 @@ import UserNotifications
         if new.status == .active, sharing.reminded.contains(me), !remindedBefore, by != me {
             announce("\(names.name(by) ?? "家人")交给你一件事", "\(new.text) · \(new.whenLabel)", new.id)
         }
+        // "提醒他一下": someone asked this person to look at it.
+        if let nudge = new.activity.last, nudge.kind == "nudged", let from = nudge.by, from != me,
+           sharing.reminded.contains(me) || sharing.assignee == me, old?.activity.contains(where: { $0.id == nudge.id }) != true,
+           new.status == .active {
+            announce("\(names.name(from) ?? "家人")提醒你", new.text, new.id)
+        }
         if new.status == .completed, old?.status != .completed, sharing.createdBy == me,
            let done = new.activity.last(where: { $0.kind == "completed" })?.by, done != me {
             announce("\(names.name(done) ?? "家人")完成了", new.text, new.id)
@@ -117,8 +130,13 @@ import UserNotifications
         content.body = body
         content.sound = .default
         content.userInfo = ["reminderID": task.uuidString]
+        // Inside this person's quiet hours it waits until they end.
+        let at = HouseholdStore.shared.deliveryDate(for: .now)
+        let trigger: UNNotificationTrigger? = at > .now.addingTimeInterval(1)
+            ? UNCalendarNotificationTrigger(dateMatching: Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: at), repeats: false)
+            : nil
         let request = UNNotificationRequest(identifier: "butler.household.\(task.uuidString).\(UUID().uuidString)",
-                                            content: content, trigger: nil)
+                                            content: content, trigger: trigger)
         UNUserNotificationCenter.current().add(request) { _ in }
     }
 }

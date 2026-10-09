@@ -273,4 +273,79 @@ import XCTest
         XCTAssertEqual(diary.first?.family, ["老婆完成了 交水费"])
         XCTAssertEqual(diary.first?.headline, "家里：家人完成了 1 件事")
     }
+
+    // MARK: Step 3
+
+    func testANudgeReachesThePersonResponsibleOnce() async throws {
+        let (_, mine, theirs) = try await pair()
+        let bills = task("交水费", TaskSharing(scope: .household, createdBy: owner, assignee: member))
+        try mine.tasks.add(bills)
+        try await roundTrip(mine, theirs)
+        theirs.said.lines = []
+        try mine.tasks.nudge(bills.id, detail: "老公提醒老婆一下")
+        XCTAssertThrowsError(try mine.tasks.nudge(bills.id, detail: "again"), "not twice within minutes")
+        try await roundTrip(mine, theirs)
+        XCTAssertEqual(theirs.said.lines, ["老公提醒你：交水费"])
+        try await theirs.sync.synchronize(); try await theirs.sync.synchronize()
+        XCTAssertEqual(theirs.said.lines.count, 1, "said once")
+    }
+
+    func testWhenNobodyHandlesItTheNextPersonIsReminded() async throws {
+        let (_, mine, theirs) = try await pair()
+        var sharing = TaskSharing(scope: .household, createdBy: owner, assignee: member)
+        sharing.escalateTo = owner; sharing.escalateAfter = 30
+        let bills = task("交水费", sharing.normalized())
+        try mine.tasks.add(bills)
+        let alerts = mine.tasks.extraAlerts(try XCTUnwrap(mine.tasks.reminder(id: bills.id)), .now)
+        XCTAssertEqual(alerts.map(\.body), ["老婆还没处理：交水费"])
+        XCTAssertEqual(alerts.first?.date, bills.fireDate.addingTimeInterval(1800))
+        try await roundTrip(mine, theirs)
+        XCTAssertTrue(theirs.tasks.extraAlerts(try XCTUnwrap(theirs.tasks.reminder(id: bills.id)), .now).isEmpty, "only the next person")
+        XCTAssertEqual(theirs.household.names.summary(theirs.tasks.reminder(id: bills.id)?.sharing), "全家可见 · 你负责 · 30 分钟没人处理就提醒老公")
+    }
+
+    func testQuietHoursHoldBackWhatOthersSendButNotOnesOwnReminders() async throws {
+        let night = QuietHours(start: 22 * 60, end: 7 * 60)
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(identifier: "Asia/Shanghai")!
+        let late = calendar.date(from: DateComponents(year: 2026, month: 10, day: 9, hour: 23, minute: 15))!
+        let morning = calendar.date(from: DateComponents(year: 2026, month: 10, day: 10, hour: 7))!
+        let noon = calendar.date(from: DateComponents(year: 2026, month: 10, day: 9, hour: 12))!
+        XCTAssertEqual(night.deliveryDate(for: late, calendar: calendar), morning)
+        XCTAssertEqual(night.deliveryDate(for: noon, calendar: calendar), noon)
+        XCTAssertEqual(QuietHours.minutes("22:30"), 22 * 60 + 30)
+        XCTAssertNil(QuietHours.minutes("25:00"))
+
+        let cloud = FakeSyncCloud()
+        let theirs = try phone(cloud, me: member, role: .member, name: "老婆")
+        theirs.household.setQuiet(QuietHours(start: 0, end: 23 * 60 + 59))
+        let fromHim = task("交水费", TaskSharing(scope: .household, createdBy: owner, assignee: member))
+        let mineToo = task("敷面膜", TaskSharing(scope: .personal, createdBy: member))
+        XCTAssertNotEqual(theirs.tasks.deliveryDate(fromHim, fromHim.fireDate), fromHim.fireDate, "what he set waits")
+        XCTAssertEqual(theirs.tasks.deliveryDate(mineToo, mineToo.fireDate), mineToo.fireDate, "her own reminder rings")
+    }
+
+    func testHouseholdRulesAreSharedAndOnesOwnStayOnThePhone() async throws {
+        let (_, mine, theirs) = try await pair()
+        mine.household.setRule(HouseholdRule(text: "缴费的事都交给老婆", createdBy: owner), id: UUID())
+        let own = HouseholdRule(text: "我的体检只给我看", createdBy: owner)
+        mine.household.setMyRule(own, id: own.id)
+        try await roundTrip(mine, theirs)
+        XCTAssertEqual(theirs.household.rules.map(\.text), ["缴费的事都交给老婆"])
+        XCTAssertTrue(theirs.household.myRules.isEmpty)
+        mine.household.end()
+        XCTAssertEqual(mine.household.myRules.map(\.text), ["我的体检只给我看"], "one's own rules outlive the household")
+    }
+
+    func testTheBriefOffersOnlyANudgeForSomeoneElsesTask() {
+        let theirs = BriefCandidate(target: .task(UUID()), kind: .dueTask, name: "交水费", detail: "已到时间", quantity: nil,
+                                    unit: nil, daysLeft: nil, location: nil, isMedicine: false, family: "交给老婆", isOthers: true)
+        XCTAssertEqual(BriefModelReply.effect("nudge", value: nil, candidate: theirs), .nudge)
+        XCTAssertNil(BriefModelReply.effect("complete_task", value: nil, candidate: theirs))
+        XCTAssertNil(BriefModelReply.effect("snooze_task", value: 30, candidate: theirs))
+        let mine = BriefCandidate(target: .task(UUID()), kind: .dueTask, name: "接孩子", detail: "已到时间", quantity: nil,
+                                  unit: nil, daysLeft: nil, location: nil, isMedicine: false, family: "老婆交给你")
+        XCTAssertNil(BriefModelReply.effect("nudge", value: nil, candidate: mine))
+        XCTAssertEqual(BriefModelReply.effect("complete_task", value: nil, candidate: mine), .completeTask)
+        XCTAssertEqual(theirs.dictionary["responsible"] as? String, "family_member")
+    }
 }

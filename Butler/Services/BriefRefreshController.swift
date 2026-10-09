@@ -114,7 +114,7 @@ final class BriefRefreshController {
             let agenda = HomeAgenda.build(lots: facts, reminders: tasks, events: [], now: now, dayCount: 7,
                                           household: HouseholdStore.shared.names)
             let candidates = BriefCandidates.make(facts: facts, agenda: agenda, now: now,
-                snoozed: BriefSnoozes.active(now: now))
+                snoozed: BriefSnoozes.active(now: now), tasks: tasks, household: HouseholdStore.shared.names)
             service.update(candidates: candidates, lotCount: facts.count,
                 taskCount: tasks.filter { $0.status == .active }.count,
                 usesCalendar: model.tools.systemCalendar.conversationAllowed && model.tools.systemCalendar.systemAuthorized,

@@ -48,6 +48,17 @@ struct HouseholdSettingsPage: View {
                 .glassRows()
 
                 Section {
+                    NavigationLink { HouseholdRulesPage() } label: {
+                        HStack(spacing: 8) {
+                            Text("共享与提醒规则")
+                            Spacer(minLength: 12)
+                            Text(rulesSummary).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                    }
+                }
+                .glassRows()
+
+                Section {
                     Text("家里的东西全家都能看到，谁记的、谁改的都会标明；个人的药、护肤品、礼物等由管家判断只留给你自己。想改的话点开那样东西，或者直接跟管家说“这个只给我看”。")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
@@ -95,6 +106,12 @@ struct HouseholdSettingsPage: View {
             Button("知道了", role: .cancel) {}
         } message: { Text(error ?? "") }
         .task { await service.sync() }
+    }
+
+    private var rulesSummary: String {
+        let count = store.rules.count + store.myRules.count
+        let quiet = store.me?.quiet.map { "免打扰" + ($0.start == 0 && $0.end == 0 ? "" : " \($0.label)") }
+        return [count > 0 ? "\(count) 条" : nil, quiet].compactMap { $0 }.joined(separator: " · ")
     }
 
     private var syncLine: String {

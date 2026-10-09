@@ -197,11 +197,7 @@ extension ButlerChat {
             data["shown_list"] = ["title": list.title, "items": list.items.map { ["lot_id": $0.id.uuidString, "name": $0.name] }] as [String: Any]
         }
         // In a household: who is talking and who else is there, so "老公" and "我" mean someone.
-        if let state = HouseholdStore.shared.state {
-            let household = HouseholdStore.shared
-            data["household"] = ["name": state.name, "me": household.me?.name ?? "我",
-                                 "members": household.members.map(\.name)] as [String: Any]
-        }
+        if let household = tools?.householdContext() { data["household"] = household }
         return (try? JSONSerialization.data(withJSONObject: data, options: [.sortedKeys]))
             .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
     }

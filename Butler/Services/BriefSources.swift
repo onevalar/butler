@@ -11,6 +11,7 @@ enum BriefSources {
         context.metadata["scope"] = "全部在库物品、全部本地任务（含暂停/完成状态）、全部已确认笔记；最近对话只作线索，可查历史原文。没有按类别或紧急程度筛选。"
         context.metadata["snoozed_targets"] = BriefSnoozes.active(now: now, defaults: tools.settingsDefaults).sorted()
         if let expiration = BriefSnoozes.nextExpiration(now: now, defaults: tools.settingsDefaults) { context.boundaries.append(expiration) }
+        if let household = tools.householdContext() { context.metadata["household"] = household }
         do {
             context.sections["inventory"] = try tools.activeFacts().sorted { $0.id.uuidString < $1.id.uuidString }.map { lot in
                 var row: [String: Any] = ["key": BriefTarget.lot(lot.id).key, "name": lot.name,
@@ -31,6 +32,8 @@ enum BriefSources {
                 var row = try json(task)
                 row.removeValue(forKey: "activity")
                 row.removeValue(forKey: "revision")
+                row.removeValue(forKey: "sharing")
+                if let family = tools.familyDescription(task) { row["family"] = family }
                 row["key"] = BriefTarget.task(task.id).key
                 let occurrences = ReminderSchedule.preview(task, now: now, limit: 3)
                 context.boundaries += occurrences.filter { $0 > now }

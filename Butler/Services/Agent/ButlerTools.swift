@@ -22,6 +22,10 @@ struct PendingChange: Identifiable, Codable {
         case taskAction(UUID, TaskAction, expectedRevision: Int)
         /// Who can see a task, who is responsible, who is reminded (household only).
         case taskSharing(UUID, TaskSharing?, expectedRevision: Int)
+        case nudge(UUID)
+        case householdRule(HouseholdRule, forMe: Bool)
+        case removeHouseholdRule(HouseholdRule)
+        case quietHours(QuietHours?)
         case settings([ButlerSettingChange])
         case weatherLocation(WeatherLocation, before: WeatherLocation)
         case alarm(ButlerAlarm.Change)
@@ -61,7 +65,7 @@ struct PendingChange: Identifiable, Codable {
         case .setQuantity(let lot, _), .close(let lot, _), .setDate(let lot, _, _), .move(let lot, _), .tracking(let lot, _),
              .itemProfile(let lot, _), .undoInventory(let lot, _), .itemSharing(let lot, _, _): .lot(lot.id)
         case .reminder(let value), .cancelReminder(let value), .taskPlan(let value, _): .task(value.id)
-        case .taskAction(let id, _, _), .taskSharing(let id, _, _): .task(id)
+        case .taskAction(let id, _, _), .taskSharing(let id, _, _), .nudge(let id): .task(id)
         case .taskDisplay(let change): .task(change.taskID)
         case .settings, .weatherLocation: .settings
         default: nil
@@ -504,6 +508,16 @@ final class ButlerTools {
                     case .cancel: try reminders.remove(id)
                     case .delete: try reminders.delete(id, expectedRevision: revision)
                     }
+                case .nudge(let id):
+                    try HouseholdService.shared.nudge(id)
+                case .householdRule(let rule, let forMe):
+                    guard HouseholdStore.shared.state != nil else { throw ToolError("还没有建立家庭") }
+                    HouseholdService.shared.addRule(rule.text, forMe: forMe)
+                case .removeHouseholdRule(let rule):
+                    HouseholdService.shared.removeRule(rule.id)
+                case .quietHours(let quiet):
+                    guard HouseholdStore.shared.state != nil else { throw ToolError("还没有建立家庭") }
+                    HouseholdService.shared.setQuiet(quiet)
                 case .taskSharing(let id, let sharing, let revision):
                     guard HouseholdStore.shared.state != nil else { throw ToolError("还没有建立家庭") }
                     try reminders.setSharing(id, sharing, detail: "改为" + HouseholdStore.shared.names.thirdPerson.summary(sharing),

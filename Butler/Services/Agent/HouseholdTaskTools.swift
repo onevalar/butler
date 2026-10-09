@@ -7,6 +7,8 @@ struct TaskFamilyArgs: Decodable, Equatable {
     var hidden_from: [String]
     var assignee: String?
     var notify: [String]
+    var escalate_to: String?
+    var escalate_after_minutes: Int?
 
     static let schema: [String: Any] = {
         let names: [String: Any] = ["type": "array", "maxItems": 10, "items": ["type": "string"]]
@@ -14,6 +16,8 @@ struct TaskFamilyArgs: Decodable, Equatable {
             "visibility": ["type": "string", "enum": ["personal", "household", "people"]],
             "people": names, "hidden_from": names,
             "assignee": ["type": ["string", "null"]], "notify": names,
+            "escalate_to": ["type": ["string", "null"]],
+            "escalate_after_minutes": ["type": ["integer", "null"], "minimum": 5, "maximum": 1440],
         ]
         return ["anyOf": [["type": "object", "properties": fields, "required": fields.keys.sorted(),
                            "additionalProperties": false], ["type": "null"]]]
@@ -24,7 +28,7 @@ struct TaskFamilyArgs: Decodable, Equatable {
         return String(decoding: data, as: UTF8.self)
     }()
 
-    static let guidance = "family：仅当current_context有household时填写，否则null。visibility：personal只有我、household全家、people只给people里的人；hidden_from全家可见但不让这些人看到；assignee谁负责（家人称呼，null没人负责）；notify到点提醒谁（空数组=负责的人，没人负责就提醒创建的人）。先按用户这句话，其次已记住的家庭规则，再由你按内容判断：家务、采购、缴费、孩子和老人的事通常全家可见；交给别人做的事给对方看并提醒对方；看病、体检、私人约会、礼物惊喜等私事只有我。只有涉及隐私又真拿不准时才问一句是/否，其他情况直接给出判断，用户会在卡片上改。修改已有任务的范围用propose_task_sharing。"
+    static let guidance = "family：仅当current_context有household时填写，否则null。visibility：personal只有我、household全家、people只给people里的人；hidden_from全家可见但不让这些人看到；assignee谁负责（家人称呼，null没人负责）；notify到点提醒谁（空数组=负责的人，没人负责就提醒创建的人）；escalate_to和escalate_after_minutes：一次性任务到点后这么久还没人完成，再提醒这个人（用户或家庭规则要求时才填，否则null）。先按用户这句话，其次已记住的家庭规则，再由你按内容判断：家务、采购、缴费、孩子和老人的事通常全家可见；交给别人做的事给对方看并提醒对方；看病、体检、私人约会、礼物惊喜等私事只有我。只有涉及隐私又真拿不准时才问一句是/否，其他情况直接给出判断，用户会在卡片上改。修改已有任务的范围用propose_task_sharing。"
 }
 
 extension ButlerTools {
@@ -52,6 +56,8 @@ extension ButlerTools {
         sharing.hiddenFrom = try members(family.hidden_from).subtracting([state.me])
         sharing.assignee = try family.assignee.flatMap { try members([$0]).first }
         sharing.notify = try members(family.notify)
+        sharing.escalateTo = try family.escalate_to.flatMap { try members([$0]).first }
+        sharing.escalateAfter = family.escalate_after_minutes
         if scope == .people, sharing.people.subtracting([state.me]).isEmpty, sharing.assignee == nil, sharing.notify.isEmpty {
             throw ToolError("visibility=people 需要在 people 里写给谁看")
         }
@@ -72,6 +78,22 @@ extension ButlerTools {
             value["completed_by"] = names.name(done.by) ?? NSNull()
         }
         return value
+    }
+
+    /// Who is in the household, who is talking, and the rules the butler follows.
+    func householdContext() -> [String: Any]? {
+        let household = HouseholdStore.shared
+        guard let state = household.state else { return nil }
+        let rule: (HouseholdRule, String) -> [String: Any] = { value, scope in
+            ["id": value.id.uuidString, "text": value.text, "applies_to": scope,
+             "added_by": household.names.name(value.createdBy) ?? NSNull()]
+        }
+        return ["name": state.name, "me": household.me?.name ?? "我",
+                "members": household.members.map { member -> [String: Any] in
+                    ["name": member.name, "is_me": member.id == state.me, "quiet_hours": member.quiet?.label ?? NSNull()]
+                },
+                "rules": household.rules.map { rule($0, "household") } + household.myRules.map { rule($0, "me") },
+                "rule_order": "这句话说的 > 只对我的规则 > 家里的规则 > 你按内容判断 > 保守默认（任务只有我，物品全家）"]
     }
 
     func notificationPolicy(_ task: TimedReminder) -> String {

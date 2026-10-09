@@ -112,11 +112,17 @@ struct TaskDetailView: View {
                 if task.status == .active || task.status == .paused {
                     Section {
                         HStack(spacing: 10) {
-                            quickButton("完成", "checkmark", primary: true) { act { try store.complete(id) } }
-                            if task.status == .active {
-                                quickButton("暂停提醒", "pause") { act { try store.pause(id) } }
+                            if let nudge = HouseholdStore.shared.names.nudgeLabel(task.sharing), task.status == .active {
+                                // Someone else's to do: the first thing is to remind them, not to do it for them.
+                                quickButton(nudge, "hand.wave", primary: true) { act { try HouseholdService.shared.nudge(id) } }
+                                quickButton("完成", "checkmark") { act { try store.complete(id) } }
                             } else {
-                                quickButton("恢复提醒", "play") { act { try store.resume(id) } }
+                                quickButton("完成", "checkmark", primary: true) { act { try store.complete(id) } }
+                                if task.status == .active {
+                                    quickButton("暂停提醒", "pause") { act { try store.pause(id) } }
+                                } else {
+                                    quickButton("恢复提醒", "play") { act { try store.resume(id) } }
+                                }
                             }
                             quickButton("取消任务", "xmark") { confirmCancel = true }
                         }

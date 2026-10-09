@@ -8,6 +8,8 @@ struct HouseholdMember: Codable, Equatable, Identifiable {
     var name: String
     var isOwner: Bool
     var joinedAt: Date
+    /// When this person does not want to be disturbed by what others send.
+    var quiet: QuietHours? = nil
 
     /// A stable member id for an iCloud user record name.
     static func id(forUser recordName: String) -> UUID {
@@ -15,6 +17,46 @@ struct HouseholdMember: Codable, Equatable, Identifiable {
         return UUID(uuid: (digest[0], digest[1], digest[2], digest[3], digest[4], digest[5], digest[6], digest[7],
                            digest[8], digest[9], digest[10], digest[11], digest[12], digest[13], digest[14], digest[15]))
     }
+}
+
+/// A daily window, in minutes from midnight; it may cross midnight (22:00–07:00).
+struct QuietHours: Codable, Equatable {
+    var start: Int
+    var end: Int
+
+    var label: String { "\(Self.clock(start))–\(Self.clock(end))" }
+
+    static func clock(_ minutes: Int) -> String { String(format: "%02d:%02d", minutes / 60, minutes % 60) }
+
+    static func minutes(_ text: String) -> Int? {
+        let parts = text.split(separator: ":").compactMap { Int($0) }
+        guard parts.count == 2, (0..<24).contains(parts[0]), (0..<60).contains(parts[1]) else { return nil }
+        return parts[0] * 60 + parts[1]
+    }
+
+    func contains(_ date: Date, calendar: Calendar = .current) -> Bool {
+        let parts = calendar.dateComponents([.hour, .minute], from: date)
+        let minute = (parts.hour ?? 0) * 60 + (parts.minute ?? 0)
+        return start <= end ? (minute >= start && minute < end) : (minute >= start || minute < end)
+    }
+
+    /// The date itself, or the end of the window it falls in.
+    func deliveryDate(for date: Date, calendar: Calendar = .current) -> Date {
+        guard start != end, contains(date, calendar: calendar) else { return date }
+        let day = calendar.startOfDay(for: date)
+        var end = calendar.date(byAdding: .minute, value: self.end, to: day) ?? date
+        if end <= date { end = calendar.date(byAdding: .day, value: 1, to: end) ?? date }
+        return end
+    }
+}
+
+/// A rule the butler follows when deciding who sees, does and is reminded of things. Household rules are shared;
+/// a person's own rules stay on their phone.
+struct HouseholdRule: Codable, Equatable, Identifiable {
+    var id = UUID()
+    var text: String
+    var createdBy: UUID?
+    var createdAt = Date()
 }
 
 /// Who can see a thing at home, and who recorded it.
@@ -75,6 +117,9 @@ struct TaskSharing: Codable, Equatable {
     var assignee: UUID?
     /// Who gets the reminders. Empty: the person responsible, or the creator when nobody is.
     var notify: Set<UUID> = []
+    /// If it is still not done this long after its time, this person is reminded too (one-off tasks).
+    var escalateTo: UUID? = nil
+    var escalateAfter: Int? = nil
 
     var isShared: Bool { scope != .personal }
 
@@ -94,12 +139,14 @@ struct TaskSharing: Codable, Equatable {
     /// A task assigned to or reminding someone else cannot stay private to its creator: it is shown to them.
     func normalized() -> TaskSharing {
         var value = self
-        let others = Set([assignee].compactMap { $0 }).union(notify).subtracting([createdBy].compactMap { $0 })
+        let others = Set([assignee, escalateTo].compactMap { $0 }).union(notify).subtracting([createdBy].compactMap { $0 })
         if value.scope == .personal, !others.isEmpty { value.scope = .people; value.people = others }
         if value.scope == .people { value.people.formUnion(others) }
         if value.scope != .household { value.hiddenFrom = [] }
         value.hiddenFrom.subtract(others)
         if value.scope != .people { value.people = [] }
+        if value.escalateTo == nil { value.escalateAfter = nil }
+        else if value.escalateAfter == nil { value.escalateAfter = 30 }
         return value
     }
 }
@@ -141,9 +188,16 @@ struct HouseholdNames: Equatable {
             else { parts.append("\(list(all))可见") }
         }
         if let assignee = sharing.assignee, let name = name(assignee) { parts.append(assignee == me ? "你负责" : "交给\(name)") }
+        if let next = sharing.escalateTo, let name = name(next), let after = sharing.escalateAfter {
+            parts.append("\(Self.duration(after))没人处理就提醒\(name)")
+        }
         // Reminding the person responsible (or the creator) goes without saying; only a choice is shown.
         if !sharing.notify.isEmpty { parts.append("提醒\(list(sharing.notify))") }
         return parts.joined(separator: " · ")
+    }
+
+    static func duration(_ minutes: Int) -> String {
+        minutes % 60 == 0 ? "\(minutes / 60) 小时" : "\(minutes) 分钟"
     }
 
     /// On a list row: only what this person needs to know ("妈妈交给你", "交给妈妈").
@@ -154,6 +208,13 @@ struct HouseholdNames: Equatable {
             if assignee != me, let name = name(assignee) { return "交给\(name)" }
         }
         return sharing.scope == .household ? "全家" : nil
+    }
+
+    /// "提醒老婆一下" for a task someone else is responsible for.
+    func nudgeLabel(_ sharing: TaskSharing?) -> String? {
+        guard isActive, let sharing, sharing.isShared, let assignee = sharing.assignee, assignee != me,
+              let name = name(assignee) else { return nil }
+        return "提醒\(name)一下"
     }
 
     /// "妈妈完成" when someone else finished it; nil when it was this person.

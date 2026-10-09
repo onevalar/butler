@@ -23,6 +23,8 @@ final class HouseholdStore {
         sharing = load("sharing.json") ?? [:]
         staged = load("staged.json") ?? []
         hiddenTasks = load("hidden-tasks.json") ?? [:]
+        rules = load("rules.json") ?? []
+        myRules = load("my-rules.json") ?? []
     }
 
     nonisolated deinit {}
@@ -53,6 +55,38 @@ final class HouseholdStore {
     func setHiddenTask(_ task: TimedReminder?, id: UUID) {
         hiddenTasks[id] = task
         save(hiddenTasks, "hidden-tasks.json")
+    }
+
+    // MARK: Rules and quiet hours
+
+    /// The household's rules, shared with everyone.
+    private(set) var rules: [HouseholdRule] = []
+    /// This person's own rules; they stay on this phone.
+    private(set) var myRules: [HouseholdRule] = []
+
+    func setRule(_ rule: HouseholdRule?, id: UUID) {
+        rules.removeAll { $0.id == id }
+        if let rule { rules.append(rule) }
+        rules.sort { $0.createdAt < $1.createdAt }
+        save(rules, "rules.json")
+    }
+
+    func setMyRule(_ rule: HouseholdRule?, id: UUID) {
+        myRules.removeAll { $0.id == id }
+        if let rule { myRules.append(rule) }
+        myRules.sort { $0.createdAt < $1.createdAt }
+        save(myRules, "my-rules.json")
+    }
+
+    func setQuiet(_ quiet: QuietHours?) {
+        guard var me else { return }
+        me.quiet = quiet
+        upsert(me)
+    }
+
+    /// When something others send should reach this person: now, or when their quiet hours end.
+    func deliveryDate(for date: Date) -> Date {
+        me?.quiet?.deliveryDate(for: date) ?? date
     }
 
     /// The things that go through the household zone. Things not yet sorted are sorted first, so a thing never
@@ -126,7 +160,9 @@ final class HouseholdStore {
         staged = []
         sharing = [:]
         hiddenTasks = [:]
-        for name in ["state.json", "members.json", "sharing.json", "staged.json", "hidden-tasks.json"] {
+        rules = []
+        // This person's own rules are theirs, not the household's: they stay.
+        for name in ["state.json", "members.json", "sharing.json", "staged.json", "hidden-tasks.json", "rules.json"] {
             try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
         }
     }

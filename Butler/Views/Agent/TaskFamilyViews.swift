@@ -52,6 +52,13 @@ enum TaskFamilyEdit {
         return s.normalized()
     }
 
+    static func escalate(_ s: TaskSharing, to member: UUID?, after minutes: Int?) -> TaskSharing {
+        var s = s
+        s.escalateTo = member
+        s.escalateAfter = member == nil ? nil : minutes
+        return s.normalized()
+    }
+
     static func notifyDefault(_ s: TaskSharing) -> TaskSharing {
         var s = s
         s.notify = []
@@ -107,6 +114,22 @@ struct TaskFamilyMenus {
         }
     }
 
+    @ViewBuilder var escalation: some View {
+        Button { apply(TaskFamilyEdit.escalate(sharing, to: nil, after: nil)) } label: {
+            Label("不用再提醒别人", systemImage: mark(sharing.escalateTo == nil, "minus"))
+        }
+        ForEach(store.members) { member in
+            Menu(member.id == me ? "提醒我" : "提醒\(member.name)") {
+                ForEach([15, 30, 60, 120], id: \.self) { minutes in
+                    Button { apply(TaskFamilyEdit.escalate(sharing, to: member.id, after: minutes)) } label: {
+                        Label("过 \(HouseholdNames.duration(minutes))还没完成",
+                              systemImage: mark(sharing.escalateTo == member.id && sharing.escalateAfter == minutes, "clock"))
+                    }
+                }
+            }
+        }
+    }
+
     @ViewBuilder var notify: some View {
         Button { apply(TaskFamilyEdit.notifyDefault(sharing)) } label: {
             Label(sharing.assignee == nil ? "记下的人" : "负责的人", systemImage: mark(sharing.notify.isEmpty, "person.crop.circle.badge.checkmark"))
@@ -133,6 +156,9 @@ struct TaskFamilySection: View {
             Menu { menus.visibility } label: { row("谁能看到", visibility(sharing, names)) }
             Menu { menus.assignee } label: { row("谁负责", names.name(sharing.assignee).map { $0 == "你" ? "我" : $0 } ?? "没人负责") }
             Menu { menus.notify } label: { row("到点提醒", reminded(sharing, names)) }
+            if task.repeats == .none, task.phases == nil {
+                Menu { menus.escalation } label: { row("没人处理时", escalation(sharing, names)) }
+            }
             if let creator = store.member(sharing.createdBy), creator.id != names.me {
                 HStack(spacing: 8) {
                     Text("谁记的")
@@ -169,6 +195,12 @@ struct TaskFamilySection: View {
         }
     }
 
+    private func escalation(_ s: TaskSharing, _ names: HouseholdNames) -> String {
+        guard let next = s.escalateTo, let after = s.escalateAfter else { return "不用" }
+        let who = names.name(next).map { $0 == "你" ? "我" : $0 } ?? "家人"
+        return "\(HouseholdNames.duration(after))后提醒\(who)"
+    }
+
     private func reminded(_ s: TaskSharing, _ names: HouseholdNames) -> String {
         s.reminded.map { names.name($0) == "你" ? "我" : (names.name($0) ?? "家人") }.sorted().joined(separator: "、")
     }
@@ -186,6 +218,7 @@ struct TaskFamilyCardLine: View {
             Menu("谁能看到") { menus.visibility }
             Menu("谁负责") { menus.assignee }
             Menu("到点提醒") { menus.notify }
+            Menu("没人处理时") { menus.escalation }
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "person.2")

@@ -59,7 +59,7 @@ final class HouseholdService {
                               transport: CloudKitSyncTransport(household: state), kinds: Self.kinds)
     }
 
-    static let kinds: Set<SyncRecord.Kind> = [.inventory, .member, .task]
+    static let kinds: Set<SyncRecord.Kind> = [.inventory, .member, .task, .rule]
 
     /// Connects this device's own data to the household: which things and tasks travel through the household,
     /// who is acting, and which tasks this phone reminds about.
@@ -76,6 +76,20 @@ final class HouseholdService {
         base.tasks.remindsHere = { [weak store] task in
             if let me = store?.state?.me, let sharing = task.sharing, sharing.isShared { return sharing.reminded.contains(me) }
             return task.syncReceived != true
+        }
+        // What someone else set for this person waits for the end of their quiet hours; their own times are kept.
+        base.tasks.deliveryDate = { [weak store] task, date in
+            guard let store, let me = store.state?.me, let sharing = task.sharing, sharing.isShared,
+                  sharing.createdBy != me else { return date }
+            return store.deliveryDate(for: date)
+        }
+        base.tasks.extraAlerts = { [weak store] task, _ in
+            guard let store, let me = store.state?.me, let sharing = task.sharing, sharing.isShared,
+                  sharing.escalateTo == me, let after = sharing.escalateAfter,
+                  task.repeats == .none, task.phases == nil else { return [] }
+            let who = store.names.name(sharing.assignee ?? sharing.createdBy) ?? "家人"
+            let at = store.deliveryDate(for: task.fireDate.addingTimeInterval(Double(after) * 60))
+            return [(at, "\(who)还没处理：\(task.text)")]
         }
     }
 
@@ -228,6 +242,36 @@ final class HouseholdService {
         entry.hiddenFrom = scope == .household ? hiddenFrom : []
         entry.changedBy = state.me
         store.setSharing(entry, for: product)
+        Task { await sync() }
+    }
+
+    /// "提醒他一下" from this phone: recorded on the task and carried to the person responsible.
+    func nudge(_ task: UUID) throws {
+        guard let base, let value = base.tasks.reminder(id: task), let sharing = value.sharing, sharing.isShared else {
+            throw SyncFailure("这件事没有交给家人。")
+        }
+        let target = sharing.assignee ?? sharing.reminded.first
+        let name = store.names.thirdPerson.name(target) ?? "家人"
+        let me = store.names.thirdPerson.name(store.state?.me) ?? "家人"
+        try base.tasks.nudge(task, detail: "\(me)提醒\(name)一下")
+        notice = "已经提醒\(store.names.name(target) ?? "家人")了，对方手机会收到。"
+        Task { await sync() }
+    }
+
+    func addRule(_ text: String, forMe: Bool) {
+        let rule = HouseholdRule(text: text, createdBy: store.state?.me)
+        if forMe { store.setMyRule(rule, id: rule.id) } else { store.setRule(rule, id: rule.id); Task { await sync() } }
+    }
+
+    func removeRule(_ id: UUID) {
+        if store.myRules.contains(where: { $0.id == id }) { store.setMyRule(nil, id: id); return }
+        store.setRule(nil, id: id)
+        Task { await sync() }
+    }
+
+    func setQuiet(_ quiet: QuietHours?) {
+        store.setQuiet(quiet)
+        base?.tasks.rescheduleAll()
         Task { await sync() }
     }
 

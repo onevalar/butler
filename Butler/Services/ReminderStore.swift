@@ -106,6 +106,10 @@ final class ReminderStore {
     @ObservationIgnored var actor: () -> UUID? = { nil }
     /// Whether this phone delivers a task's reminders. Outside a household: only tasks made here.
     @ObservationIgnored var remindsHere: (TimedReminder) -> Bool = { $0.syncReceived != true }
+    /// When a reminder is delivered on this phone (a family task waits for the end of this person's quiet hours).
+    @ObservationIgnored var deliveryDate: (TimedReminder, Date) -> Date = { $1 }
+    /// Further alerts this phone owes for a task it may not otherwise remind about ("妈妈还没处理：交水费").
+    @ObservationIgnored var extraAlerts: (TimedReminder, Date) -> [(date: Date, body: String)] = { _, _ in [] }
 
     init(file: URL, schedules: Bool = true) {
         self.file = file
@@ -274,6 +278,21 @@ final class ReminderStore {
         rescheduleAll()
     }
 
+    /// "提醒他一下": recorded on the task, which the household's sync carries to the person responsible.
+    func nudge(_ id: UUID, detail: String) throws {
+        guard var reminder = reminder(id: id), reminder.status == .active else {
+            throw ReminderSchedule.InvalidRule(message: "这件事已经结束了")
+        }
+        if let last = reminder.activity.last(where: { $0.kind == "nudged" }), last.by == actor(),
+           last.date > .now.addingTimeInterval(-10 * 60) {
+            throw ReminderSchedule.InvalidRule(message: "刚刚已经提醒过了")
+        }
+        reminder.revision += 1
+        reminder.activity.append(ReminderActivity(kind: "nudged", detail: detail, by: actor()))
+        try save(reminders.map { $0.id == id ? reminder : $0 })
+        rescheduleAll()
+    }
+
     /// Who can see it, who is responsible, who is reminded. Allowed at any status, and recorded.
     func setSharing(_ id: UUID, _ sharing: TaskSharing?, detail: String, expectedRevision: Int? = nil) throws {
         guard var reminder = reminder(id: id) else { throw ReminderSchedule.InvalidRule(message: "任务不存在") }
@@ -405,24 +424,24 @@ final class ReminderStore {
         if schedules { WidgetSnapshotPublisher.shared.refresh(); TaskDisplayService.reconcile() }
     }
 
-    private func content(_ reminder: TimedReminder) -> UNMutableNotificationContent {
+    private func content(_ reminder: TimedReminder, body: String? = nil) -> UNMutableNotificationContent {
         let content = UNMutableNotificationContent()
         content.title = "小当家提醒"
-        content.body = reminder.text
+        content.body = body ?? reminder.text
         content.sound = .default
         content.categoryIdentifier = NotificationManager.reminderCategory
         content.userInfo = ["reminderID": reminder.id.uuidString, "reminderRevision": reminder.revision]
         return content
     }
 
-    private func datedRequest(_ reminder: TimedReminder, fire: Date, suffix: String? = nil) -> UNNotificationRequest {
+    private func datedRequest(_ reminder: TimedReminder, fire: Date, suffix: String? = nil, body: String? = nil) -> UNNotificationRequest {
         let calendar = ReminderSchedule.calendar(for: reminder)
         var components = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: fire)
         components.timeZone = calendar.timeZone
         let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
         let suffix = suffix ?? "date.\(Int(fire.timeIntervalSince1970))"
         return UNNotificationRequest(identifier: "\(Self.prefix)\(reminder.id).r\(reminder.revision).\(suffix)",
-                                     content: content(reminder), trigger: trigger)
+                                     content: content(reminder, body: body), trigger: trigger)
     }
 
     private func rebuildNotifications() async {
@@ -456,7 +475,16 @@ final class ReminderStore {
             } else {
                 let dates = ReminderSchedule.preview(reminder, now: now, limit: Self.notificationBudget + 1)
                 if dates.count > Self.notificationBudget { limited.insert(reminder.text) }
-                candidates += dates.prefix(Self.notificationBudget).map { ($0, datedRequest(reminder, fire: $0)) }
+                candidates += dates.prefix(Self.notificationBudget).map { date in
+                    let at = deliveryDate(reminder, date)
+                    return (at, datedRequest(reminder, fire: at))
+                }
+            }
+        }
+        for reminder in reminders where reminder.status == .active {
+            for alert in extraAlerts(reminder, now) where alert.date > now {
+                candidates.append((alert.date, datedRequest(reminder, fire: alert.date,
+                    suffix: "escalate.\(Int(alert.date.timeIntervalSince1970))", body: alert.body)))
             }
         }
         candidates.sort { $0.0 < $1.0 }
