@@ -5,12 +5,14 @@
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array><string>com.anvalar.Butler.brief-refresh</string></array>
 	<key>UIBackgroundModes</key>
-	<array><string>fetch</string></array>
+	<array><string>fetch</string><string>remote-notification</string></array>
 	<key>CFBundleURLTypes</key>
 	<array><dict>
 		<key>CFBundleURLName</key><string>com.anvalar.Butler.widget</string>
 		<key>CFBundleURLSchemes</key><array><string>butler</string></array>
 	</dict></array>
+	<key>CKSharingSupported</key>
+	<true/>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSAlarmKitUsageDescription</key>

@@ -72,6 +72,7 @@ extension ButlerTools {
             functionSchema("propose_undo_inventory", "纠正误操作：撤销最近一次数量或处理操作。必须先get_inventory_history，只能用undoable=true的operation_id和当前revision。确认后执行。", ["lot_id": string, "operation_id": string, "expected_revision": revision]),
             functionSchema("show_inventory", "把查询得到的真实物品显示为可点击的图形清单或对比/搭配卡片，不修改库存。场景类问题（修自行车、野餐要带什么、我有什么衣服）先查库存，再用本工具把相关物品列出来，可以跨分类、位置和到期状态。title写清是什么清单（不带数量），reason一句话说为什么用得上，没有可写空字符串。不可把尚未购买的东西列成家里已有。", ["title": string, "items": ["type": "array", "minItems": 1, "maxItems": 30, "items": objectSchema(["lot_id": string, "reason": string])]]),
             functionSchema("update_shown_list", "修改对话里最近显示的那张清单（current_context 的 shown_list）：remove 去掉某几行（只是不列在清单里，东西仍在家里，不改库存），add 追加真实物品。用户说“去掉某样/不用带某样/再加上某样”时用它，不要重新 show_inventory 出一张新清单。", ["remove": ["type": "array", "maxItems": 30, "items": string], "add": ["type": "array", "maxItems": 30, "items": objectSchema(["lot_id": string, "reason": string])]]),
+            functionSchema("propose_item_sharing", "家庭里谁能看到某样东西（仅当 current_context 有 household 时）。scope=household 全家可见，personal 只有当前用户自己；hidden_from 填家人称呼，表示全家可见但不让这些人看到（例如送给他的礼物），不需要则空数组。先自己判断：个人的药、护肤品、礼物通常只给自己，家里共用的东西全家可见；用户说“这个只给我看/别让老婆看到”时用它。确认后生效。", ["lot_id": string, "scope": ["type": "string", "enum": ["household", "personal"]], "hidden_from": ["type": "array", "maxItems": 10, "items": string]]),
             functionSchema("propose_regroup", "一次调整多件物品的存放位置和/或分类，例如“把酸奶和饮用水放到卫生间架子”“这几样归到工具”。location为新位置（不改则null），category为新分类（不改则null）；每件生成一条待确认修改，用户确认后才保存。", ["lot_ids": ["type": "array", "minItems": 1, "maxItems": 30, "items": string], "location": ["type": ["string", "null"]], "category": ["type": ["string", "null"], "enum": ItemCategory.allCases.map { $0.rawValue as Any } + [NSNull()]]])
         ]
         return ToolSchema.json(tools, sortedKeys: true)
@@ -134,6 +135,25 @@ extension ButlerTools {
             else { shownListEdit = list }
             relatedScopes.formUnion(list.items.map { .lot($0.id) })
             return try encode(["updated": true, "count": list.items.count, "items": list.items.map(\.name)] as [String: Any])
+        case "propose_item_sharing":
+            struct Args: Decodable { let lot_id: String; let scope: String; let hidden_from: [String] }
+            let args = try JSONDecoder().decode(Args.self, from: data)
+            let household = HouseholdStore.shared
+            guard household.state != nil else { throw ToolError("还没有建立家庭，东西都只在这台手机上") }
+            let lot = try activeLot(args.lot_id)
+            let scope: ItemSharing.Scope = args.scope == "personal" ? .personal : .household
+            var hidden: [UUID] = []
+            for name in args.hidden_from where scope == .household {
+                guard let member = household.members.first(where: { $0.name == name })
+                        ?? household.members.first(where: { $0.name.contains(name) || name.contains($0.name) }) else {
+                    throw ToolError("家里没有“\(name)”。家人：" + household.members.map(\.name).joined(separator: "、"))
+                }
+                guard member.id != household.state?.me else { throw ToolError("不能对自己隐藏") }
+                hidden.append(member.id)
+            }
+            let names = hidden.compactMap { household.member($0)?.name }
+            let detail = scope == .personal ? "只有你能看到，家人那边不再显示" : (names.isEmpty ? "全家都能看到" : "全家能看到，但不让\(names.joined(separator: "、"))看到")
+            add(.itemSharing(lot, scope, hiddenFrom: hidden), title: "\(lot.name)：\(scope == .personal ? "只给自己" : "家里共享")", detail: detail)
         case "propose_regroup":
             struct Args: Decodable { let lot_ids: [String]; let location: String?; let category: ItemCategory? }
             let args = try JSONDecoder().decode(Args.self, from: data)

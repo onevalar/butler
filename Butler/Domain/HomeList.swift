@@ -67,7 +67,7 @@ enum HomeList {
             if calendar.component(.hour, from: now) >= 18, let tomorrow = calendar.date(byAdding: .day, value: 1, to: day) {
                 for entry in agenda.entries(on: tomorrow) where !entry.isCompleted && (entry.kind == .reminder || entry.kind == .calendar) {
                     guard let start = entry.start, calendar.component(.hour, from: start) < 10 else { continue }
-                    let what = entry.kind == .reminder ? "提醒" : (entry.subtitle ?? "日历")
+                    let what = entry.subtitle ?? (entry.kind == .reminder ? "提醒" : "日历")
                     add(HomeListRow(id: "morning-" + entry.id, kind: entry.kind, lead: "明早", title: entry.title,
                                     subtitle: "\(start.clockTime) \(what)", isAlert: false, action: nil, target: entry.target))
                 }

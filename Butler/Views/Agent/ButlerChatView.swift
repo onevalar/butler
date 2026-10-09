@@ -479,7 +479,7 @@ struct ButlerChatView: View {
 
     private func color(for change: PendingChange) -> Color {
         switch change.kind {
-        case .reminder, .cancelReminder, .taskPlan, .taskAction: .blue
+        case .reminder, .cancelReminder, .taskPlan, .taskAction, .taskSharing: .blue
         case .note, .settings: .gray
         case .add: .green
         default: .orange
@@ -495,6 +495,9 @@ struct ButlerChatView: View {
                         Text("\(index + 1). \(change.title)").font(.body.weight(.medium))
                         if let detail = ConfirmationPresentation.detail(change.detail, title: change.title) {
                             Text(detail).font(.subheadline).foregroundStyle(.secondary)
+                        }
+                        if let family = change.taskFamily {
+                            TaskFamilyCardLine(sharing: family, disabled: blocked) { chat.reviseFamily(of: change.id, to: $0) }
                         }
                         switch change.check {
                         case .passed:

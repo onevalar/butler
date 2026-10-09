@@ -13,6 +13,10 @@ import SwiftData
     let notes: LocalMemoryStore
     let tasks: ReminderStore
     private let revisionFile: URL
+    /// Products that travel through the household zone instead; this device's own sync leaves them out.
+    var householdProducts: () -> Set<UUID> = { [] }
+    /// Tasks shared in the household travel through its zone too.
+    var householdTasks: () -> Set<UUID> = { [] }
     init(container: ModelContainer, notes: LocalMemoryStore, tasks: ReminderStore, revisionFile: URL) {
         self.container = container; self.notes = notes; self.tasks = tasks; self.revisionFile = revisionFile
     }
@@ -30,6 +34,23 @@ import SwiftData
         var task = task; task.revision = 0; task.syncReceived = nil; return task
     }
     func snapshot() throws -> [SyncRecord.Key: Data] {
+        let shared = householdProducts()
+        var result: [SyncRecord.Key: Data] = [:]
+        for (id, inventory) in try inventories(where: { !shared.contains($0) }) {
+            result[.init(kind: .inventory, id: id)] = try SyncRecord.encode(inventory)
+        }
+        for note in try notes.recordsForSync() {
+            var value = note; value.revision = 0
+            result[.init(kind: .note, id: note.id)] = try SyncRecord.encode(value)
+        }
+        let sharedTasks = householdTasks()
+        for task in try tasks.tasksForSync() where !sharedTasks.contains(task.id) {
+            result[.init(kind: .task, id: task.id)] = try SyncRecord.encode(Self.portable(task))
+        }
+        return result
+    }
+    /// Each product with its batches and defaults, in the portable form both syncs use.
+    func inventories(where include: (UUID) -> Bool) throws -> [UUID: Inventory] {
         let context = ModelContext(container)
         let products = try context.fetch(FetchDescriptor<CatalogProduct>())
         let lots = try context.fetch(FetchDescriptor<InventoryLot>())
@@ -38,8 +59,8 @@ import SwiftData
         guard lots.allSatisfy({ ids.contains($0.productID) }), templates.allSatisfy({ ids.contains($0.productID) }) else {
             throw SyncFailure("库存存在缺失的商品关联，停止同步而非丢弃批次。")
         }
-        var result: [SyncRecord.Key: Data] = [:]
-        for p in products {
+        var result: [UUID: Inventory] = [:]
+        for p in products where include(p.id) {
             let product = ButlerBackup.Product(id: p.id, canonicalName: p.canonicalName, brand: p.brand,
                 categoryRawValue: p.categoryRawValue, barcode: p.barcode, defaultUnit: p.defaultUnit,
                 typicalShelfLifeDays: p.typicalShelfLifeDays, postOpeningLifeDays: p.postOpeningLifeDays,
@@ -56,16 +77,11 @@ import SwiftData
                     reminderLeadDays: $0.reminderLeadDays, repurchaseThreshold: $0.repurchaseThreshold,
                     createdAt: $0.createdAt, updatedAt: $0.updatedAt, revision: 0)
             }
-            result[.init(kind: .inventory, id: p.id)] = try SyncRecord.encode(Inventory(product: product, lots: batches, templates: defaults))
+            result[p.id] = Inventory(product: product, lots: batches, templates: defaults)
         }
-        for note in try notes.recordsForSync() {
-            var value = note; value.revision = 0
-            result[.init(kind: .note, id: note.id)] = try SyncRecord.encode(value)
-        }
-        for task in try tasks.tasksForSync() { result[.init(kind: .task, id: task.id)] = try SyncRecord.encode(Self.portable(task)) }
         return result
     }
-    private func nextRevision() throws -> Int {
+    func nextRevision() throws -> Int {
         let context = ModelContext(container)
         let revisions = try context.fetch(FetchDescriptor<CatalogProduct>()).map(\.revision)
             + context.fetch(FetchDescriptor<InventoryLot>()).map(\.revision)
@@ -82,11 +98,16 @@ import SwiftData
         return maximum + 1
     }
     func replace(_ key: SyncRecord.Key, expected: Data?, with payload: Data?) throws {
+        // The household zone owns shared things; this device's own sync never overwrites them.
+        if key.kind == .inventory, householdProducts().contains(key.id) { return }
+        if key.kind == .task, householdTasks().contains(key.id) { return }
         guard try snapshot()[key] == expected else { throw SyncFailure("本机资料刚发生变化，未覆盖。") }
         let revision = try nextRevision()
         switch key.kind {
         case .chat, .itemPhoto, .chatPhoto:
             throw SyncFailure("聊天和图片只能通过各自单独确认的同步接收。")
+        case .member, .rule:
+            throw SyncFailure("家庭成员和规则只通过家庭同步接收。")
         case .note:
             if let payload {
                 var value = try JSONDecoder().decode(LocalMemory.self, from: payload)
@@ -106,7 +127,7 @@ import SwiftData
         WidgetSnapshotPublisher.shared.refresh()
         NotificationCenter.default.post(name: .init("butlerBriefSourcesChanged"), object: nil)
     }
-    private func replaceInventory(_ id: UUID, _ value: Inventory?, revision: Int) throws {
+    func replaceInventory(_ id: UUID, _ value: Inventory?, revision: Int) throws {
         let context = ModelContext(container); context.autosaveEnabled = false
         let products = try context.fetch(FetchDescriptor<CatalogProduct>())
         let lots = try context.fetch(FetchDescriptor<InventoryLot>())

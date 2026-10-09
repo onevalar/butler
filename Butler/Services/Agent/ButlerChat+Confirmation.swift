@@ -106,7 +106,7 @@ extension ButlerChat {
         }
         let hasReminders = selected.contains {
             switch $0.kind {
-            case .reminder, .cancelReminder, .taskPlan, .taskAction: return true
+            case .reminder, .cancelReminder, .taskPlan, .taskAction, .taskSharing: return true
             default: return false
             }
         }
@@ -232,6 +232,16 @@ extension ButlerChat {
         let results = selected.map { $0.result(.notStarted, "\($0.title)：已取消，没有执行。") }
         turns.append(ChatTurn(question: "取消待确认修改", receipts: results.map(\.message), confirmationResults: results, confirmationFinished: true))
         messages.append(.receipt(summary: "用户取消了选中的待确认修改，没有保存；其余内容以get_pending_changes为准。"))
+        save()
+    }
+}
+
+extension ButlerChat {
+    /// Who can see / who does / who is reminded, changed by a tap on the card. The butler is told, so it can
+    /// offer to remember the correction as a household rule.
+    func reviseFamily(of id: UUID, to sharing: TaskSharing) {
+        guard !working, pendingReadable, let tools, let revised = tools.reviseFamily(of: id, to: sharing) else { return }
+        messages.append(.receipt(summary: "用户在确认卡片上把「\(revised.title)」的家人设置改为：\(HouseholdStore.shared.names.summary(revised.taskFamily))。仍待确认。"))
         save()
     }
 }

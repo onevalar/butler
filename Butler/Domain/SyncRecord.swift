@@ -14,6 +14,10 @@ struct SyncCleanupNotStarted: LocalizedError {
 struct SyncRecord: Codable, Equatable, Identifiable {
     enum Kind: String, Codable {
         case inventory, task, note, chat, itemPhoto, chatPhoto
+        /// A household member's name and role (household zone only).
+        case member
+        /// A household rule the butler follows (household zone only).
+        case rule
         var isPhoto: Bool { self == .itemPhoto || self == .chatPhoto }
     }
     struct Key: Codable, Hashable {

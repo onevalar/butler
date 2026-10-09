@@ -12,12 +12,20 @@ struct PendingChange: Identifiable, Codable {
         case move(LotFacts, String)
         case tracking(LotFacts, quantityOnly: Bool)
         case itemProfile(LotFacts, ItemProfile)
+        /// Who in the household can see a thing (household only).
+        case itemSharing(LotFacts, ItemSharing.Scope, hiddenFrom: [UUID])
         case undoInventory(LotFacts, UUID)
         case note(LocalMemory)
         case reminder(TimedReminder)
         case cancelReminder(TimedReminder)
         case taskPlan(TimedReminder, expectedRevision: Int?)
         case taskAction(UUID, TaskAction, expectedRevision: Int)
+        /// Who can see a task, who is responsible, who is reminded (household only).
+        case taskSharing(UUID, TaskSharing?, expectedRevision: Int)
+        case nudge(UUID)
+        case householdRule(HouseholdRule, forMe: Bool)
+        case removeHouseholdRule(HouseholdRule)
+        case quietHours(QuietHours?)
         case settings([ButlerSettingChange])
         case weatherLocation(WeatherLocation, before: WeatherLocation)
         case alarm(ButlerAlarm.Change)
@@ -55,9 +63,9 @@ struct PendingChange: Identifiable, Codable {
     var relatedScope: ChatScope? {
         switch kind {
         case .setQuantity(let lot, _), .close(let lot, _), .setDate(let lot, _, _), .move(let lot, _), .tracking(let lot, _),
-             .itemProfile(let lot, _), .undoInventory(let lot, _): .lot(lot.id)
+             .itemProfile(let lot, _), .undoInventory(let lot, _), .itemSharing(let lot, _, _): .lot(lot.id)
         case .reminder(let value), .cancelReminder(let value), .taskPlan(let value, _): .task(value.id)
-        case .taskAction(let id, _, _): .task(id)
+        case .taskAction(let id, _, _), .taskSharing(let id, _, _), .nudge(let id): .task(id)
         case .taskDisplay(let change): .task(change.taskID)
         case .settings, .weatherLocation: .settings
         default: nil
@@ -176,7 +184,7 @@ final class ButlerTools {
     {"type":"function","name":"propose_set_date","description":"设置或清除某件物品的日期。kind=package_expiry 包装有效期（只能用用户明确给出的日期），kind=planned_use_by 计划吃完/用完的日期。date 为 YYYY-MM-DD，null 表示清除。","strict":true,"parameters":{"type":"object","properties":{"lot_id":{"type":"string"},"kind":{"type":"string","enum":["package_expiry","planned_use_by"]},"date":{"type":["string","null"]}},"required":["lot_id","kind","date"],"additionalProperties":false}},
     {"type":"function","name":"propose_move","description":"更改某件物品的存放位置。","strict":true,"parameters":{"type":"object","properties":{"lot_id":{"type":"string"},"location":{"type":"string"}},"required":["lot_id","location"],"additionalProperties":false}},
     {"type":"function","name":"propose_set_tracking","description":"切换某样东西的记录方式：quantity 只记数量、不再追问和提醒过期；expiry 恢复跟踪到期日期。对同一种东西的所有批次生效。","strict":true,"parameters":{"type":"object","properties":{"lot_id":{"type":"string"},"track":{"type":"string","enum":["expiry","quantity"]}},"required":["lot_id","track"],"additionalProperties":false}},
-    {"type":"function","name":"propose_reminder","description":"设一个定时提醒：到点时手机弹出通知。用于“11点提醒我热饭”“每天晚上9点提醒我吃药”“周六早上提醒我买菜”。time 为本地时间 YYYY-MM-DD HH:mm；repeat：none 只提醒一次，daily 每天这个时间，weekly 每周这一天这个时间。text 是通知里显示的话，简短具体。","strict":true,"parameters":{"type":"object","properties":{"text":{"type":"string"},"time":{"type":"string"},"repeat":{"type":"string","enum":["none","daily","weekly"]}},"required":["text","time","repeat"],"additionalProperties":false}},
+    {"type":"function","name":"propose_reminder","description":"设一个定时提醒：到点时手机弹出通知。用于“11点提醒我热饭”“每天晚上9点提醒我吃药”“周六早上提醒我买菜”。time 为本地时间 YYYY-MM-DD HH:mm；repeat：none 只提醒一次，daily 每天这个时间，weekly 每周这一天这个时间。text 是通知里显示的话，简短具体。","strict":true,"parameters":{"type":"object","properties":{"text":{"type":"string"},"time":{"type":"string"},"repeat":{"type":"string","enum":["none","daily","weekly"]},"family":\#(TaskFamilyArgs.schemaJSON)},"required":["family","repeat","text","time"],"additionalProperties":false}},
     {"type":"function","name":"list_reminders","description":"查看已经设好、还没到点（或重复）的定时提醒。","strict":true,"parameters":{"type":"object","properties":{},"additionalProperties":false}},
     {"type":"function","name":"propose_cancel_reminder","description":"取消一个定时提醒，id 来自 list_reminders。","strict":true,"parameters":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":false}},
     {"type":"function","name":"search_notes","description":"查询用户告诉过你的习惯、偏好和其他需要记住的事（例如常去哪家店买、放在哪里、家里的布局）。query 为空返回全部笔记。程序预取的笔记有容量上限，以complete/truncated判断是否完整；资料不足时可按关键词调用本工具补查。","strict":true,"parameters":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}},
@@ -332,7 +340,7 @@ final class ButlerTools {
                                                from: try Self.date(args.from_date), to: try Self.date(args.to_date),
                                                cursor: args.cursor))
             case "propose_reminder":
-                struct Args: Decodable { var text: String; var time: String; var `repeat`: String }
+                struct Args: Decodable { var text: String; var time: String; var `repeat`: String; var family: TaskFamilyArgs? }
                 let args = try JSONDecoder().decode(Args.self, from: data)
                 let text = args.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !text.isEmpty, text.count <= 200 else { throw ToolError("提醒内容不能为空") }
@@ -341,12 +349,13 @@ final class ButlerTools {
                 guard repeats != .none || date > Date.now.addingTimeInterval(30) else {
                     throw ToolError("这个时间已经过了（现在是 \(Self.nowLabel)），请和用户确认时间")
                 }
-                let reminder = TimedReminder(text: text, fireDate: date, repeats: repeats)
+                var reminder = TimedReminder(text: text, fireDate: date, repeats: repeats)
+                reminder.sharing = try taskSharing(args.family, existing: nil)
                 add(.reminder(reminder), title: "提醒：\(text)", detail: reminder.whenLabel)
             case "list_reminders":
                 return try encode(["now": Self.nowLabel, "reminders": reminders.upcoming.map {
                     ["id": $0.id.uuidString, "text": $0.text, "when": $0.whenLabel,
-                     "notification_policy": $0.syncReceived == true ? "同步收到的任务，本机不新增通知" : "本机按规则尽力安排"] as [String: Any]
+                     "notification_policy": notificationPolicy($0)] as [String: Any]
                 }] as [String: Any])
             case "propose_cancel_reminder":
                 struct Args: Decodable { var id: String }
@@ -471,6 +480,9 @@ final class ButlerTools {
                     if lot.isDurable { throw ToolError("耐用品通过物品资料管理，不使用食品跟踪方式") }
                     try actions.setQuantityOnly(quantityOnly, productID: lot.productID)
                 case .itemProfile(let lot, let profile): try actions.setProfile(profile, for: try fresh(lot))
+                case .itemSharing(let lot, let scope, let hidden):
+                    guard HouseholdStore.shared.state != nil else { throw ToolError("还没有建立家庭") }
+                    HouseholdService.shared.setScope(scope, for: lot.productID, hiddenFrom: Set(hidden))
                 case .undoInventory(let lot, let eventID):
                     let current = try lotFacts(lot.id)
                     guard current.revision == lot.revision else { throw ToolError("物品已改变，请重新查询") }
@@ -496,6 +508,20 @@ final class ButlerTools {
                     case .cancel: try reminders.remove(id)
                     case .delete: try reminders.delete(id, expectedRevision: revision)
                     }
+                case .nudge(let id):
+                    try HouseholdService.shared.nudge(id)
+                case .householdRule(let rule, let forMe):
+                    guard HouseholdStore.shared.state != nil else { throw ToolError("还没有建立家庭") }
+                    HouseholdService.shared.addRule(rule.text, forMe: forMe)
+                case .removeHouseholdRule(let rule):
+                    HouseholdService.shared.removeRule(rule.id)
+                case .quietHours(let quiet):
+                    guard HouseholdStore.shared.state != nil else { throw ToolError("还没有建立家庭") }
+                    HouseholdService.shared.setQuiet(quiet)
+                case .taskSharing(let id, let sharing, let revision):
+                    guard HouseholdStore.shared.state != nil else { throw ToolError("还没有建立家庭") }
+                    try reminders.setSharing(id, sharing, detail: "改为" + HouseholdStore.shared.names.thirdPerson.summary(sharing),
+                                             expectedRevision: revision)
                 case .weatherLocation(let selection, let before):
                     try weather.setLocation(selection, expected: before)
                     Task { await weather.refresh(force: true) }

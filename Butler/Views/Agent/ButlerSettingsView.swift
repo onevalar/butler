@@ -40,6 +40,9 @@ struct ButlerSettingsView: View {
             .listRowInsets(EdgeInsets())
 
             Section {
+                NavigationLink { HouseholdSettingsPage() } label: {
+                    LabeledContent("家庭", value: HouseholdStore.shared.state.map { "\($0.name) · \(HouseholdStore.shared.members.count) 人" } ?? "未建立")
+                }
                 NavigationLink { ProfileSettingsPage(chat: chat) } label: {
                     LabeledContent("关于我和家里", value: chat.profile.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "未填写" : "已填写")
                 }

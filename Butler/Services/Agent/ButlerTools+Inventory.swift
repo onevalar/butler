@@ -41,7 +41,10 @@ extension ButlerTools {
         let context = ModelContext(container)
         let products = Dictionary(try context.fetch(FetchDescriptor<CatalogProduct>()).map { ($0.id, $0) },
                                   uniquingKeysWith: { first, _ in first })
-        return try context.fetch(FetchDescriptor<InventoryLot>()).map { ($0, products[$0.productID]) }
+        // A present hidden from this person is neither listed nor told to the model.
+        let household = HouseholdStore.shared
+        return try context.fetch(FetchDescriptor<InventoryLot>()).filter { household.isVisible($0.productID) }
+            .map { ($0, products[$0.productID]) }
     }
 
     /// Everything at home right now.

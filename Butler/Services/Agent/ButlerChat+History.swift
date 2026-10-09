@@ -162,7 +162,8 @@ extension ButlerChat {
             data["task_id"] = id.uuidString
             if var reminder = tools?.reminders.reminder(id: id) {
                 data["exists"] = true
-                data["notification_policy"] = reminder.syncReceived == true ? "同步收到的任务，本机不新增通知" : "本机按规则尽力安排"
+                data["notification_policy"] = tools?.notificationPolicy(reminder)
+                data["family"] = tools?.familyDescription(reminder)
                 reminder.activity = Array(reminder.activity.suffix(20))
                 let encoder = JSONEncoder()
                 encoder.dateEncodingStrategy = .iso8601
@@ -195,6 +196,8 @@ extension ButlerChat {
         if let list = latestCollection, !list.items.isEmpty {
             data["shown_list"] = ["title": list.title, "items": list.items.map { ["lot_id": $0.id.uuidString, "name": $0.name] }] as [String: Any]
         }
+        // In a household: who is talking and who else is there, so "老公" and "我" mean someone.
+        if let household = tools?.householdContext() { data["household"] = household }
         return (try? JSONSerialization.data(withJSONObject: data, options: [.sortedKeys]))
             .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
     }

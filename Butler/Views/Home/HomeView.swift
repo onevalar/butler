@@ -287,7 +287,7 @@ struct HomeView: View {
 
 /// One line of the day list.
 /// What can be done to a task from the home list.
-enum TaskQuickAction { case complete, remindLater, pause, cancel }
+enum TaskQuickAction { case complete, remindLater, pause, cancel, nudge }
 
 /// One line of the day list. A task has a circle to tick it off (like Reminders) and, on a long press,
 /// the other things you'd otherwise dig for on its page.
@@ -348,6 +348,9 @@ struct HomeRowView: View {
         }
         .contextMenu {
             if let taskID, !row.isCompleted {
+                if let nudge = HouseholdStore.shared.names.nudgeLabel(ReminderStore.openOnDevice().reminder(id: taskID)?.sharing) {
+                    Button(nudge, systemImage: "hand.wave") { onTaskAction(taskID, .nudge) }
+                }
                 Button("完成", systemImage: "checkmark.circle") { onTaskAction(taskID, .complete) }
                 Button("30 分钟后再提醒", systemImage: "clock.arrow.circlepath") { onTaskAction(taskID, .remindLater) }
                 Button("暂停提醒", systemImage: "pause.circle") { onTaskAction(taskID, .pause) }

@@ -81,6 +81,9 @@ struct LotDetailView: View {
                 quickActions(facts)
                 details(lot: lot, facts: facts)
                     .padding(.top, 12)
+                if HouseholdStore.shared.state != nil {
+                    HouseholdSharingCard(productID: lot.productID)
+                }
                 VStack(spacing: 0) {
                     DetailRow(title: "变动记录", value: "\(events.count) 条") { showingHistory = true }
                     if hasUndo(facts) {
@@ -378,6 +381,61 @@ struct LotDetailView: View {
 }
 
 // MARK: - Rows and tiles
+
+/// Who in the household can see this thing, and who recorded it. Changed here or by telling the butler.
+private struct HouseholdSharingCard: View {
+    let productID: UUID
+    private var store: HouseholdStore { .shared }
+
+    var body: some View {
+        let entry = store.sharing[productID]
+        let others = store.members.filter { $0.id != store.state?.me }
+        VStack(spacing: 0) {
+            Menu {
+                Button { HouseholdService.shared.setScope(.household, for: productID) } label: {
+                    Label("全家", systemImage: entry?.scope != .personal && (entry?.hiddenFrom.isEmpty ?? true) ? "checkmark" : "house")
+                }
+                Button { HouseholdService.shared.setScope(.personal, for: productID) } label: {
+                    Label("只有我", systemImage: entry?.scope == .personal ? "checkmark" : "lock")
+                }
+                if !others.isEmpty {
+                    Menu("全家，但不让…看到") {
+                        ForEach(others) { member in
+                            Button(member.name) {
+                                var hidden = entry?.hiddenFrom ?? []
+                                if hidden.contains(member.id) { hidden.remove(member.id) } else { hidden.insert(member.id) }
+                                HouseholdService.shared.setScope(.household, for: productID, hiddenFrom: hidden)
+                            }
+                        }
+                    }
+                }
+            } label: {
+                DetailRowLabel(title: "谁能看到", value: visibility(entry))
+            }
+            .buttonStyle(.plain)
+            if let recorder = store.member(entry?.recordedBy) {
+                RowDivider(inset: 16)
+                HStack(spacing: 8) {
+                    Text("谁记的").foregroundStyle(.primary)
+                    Spacer(minLength: 12)
+                    MemberBadge(member: recorder, size: 22)
+                    Text(recorder.name).foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 16)
+                .frame(minHeight: 52)
+            }
+        }
+        .padding(.vertical, 4)
+        .glassCard(radius: 26)
+    }
+
+    private func visibility(_ entry: ItemSharing?) -> String {
+        guard let entry else { return "全家" }
+        if entry.scope == .personal { return "只有我" }
+        let hidden = entry.hiddenFrom.compactMap { store.member($0)?.name }
+        return hidden.isEmpty ? "全家" : "全家（不让\(hidden.joined(separator: "、"))看到）"
+    }
+}
 
 private struct DetailRowLabel: View {
     let title: String

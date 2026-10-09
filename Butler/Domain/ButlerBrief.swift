@@ -54,27 +54,31 @@ enum BriefEffect: Hashable, Codable {
     case completeTask
     case remindLater(minutes: Int)
     case openDetail
+    /// "提醒他一下": a task someone else in the household is responsible for.
+    case nudge
 
     var forLots: Bool {
         switch self {
         case .closeLot, .usedSome: true
         case .snooze, .openDetail: true
-        case .completeTask, .remindLater: false
+        case .completeTask, .remindLater, .nudge: false
         }
     }
 
     var forTasks: Bool {
         switch self {
-        case .completeTask, .remindLater, .snooze, .openDetail: true
+        case .completeTask, .remindLater, .snooze, .openDetail, .nudge: true
         case .closeLot, .usedSome: false
         }
     }
+
+    var isRemindLater: Bool { if case .remindLater = self { true } else { false } }
 
     /// Changes stock or a task: medicine asks once more before doing it.
     var changesData: Bool {
         switch self {
         case .closeLot, .usedSome, .completeTask: true
-        case .snooze, .remindLater, .openDetail: false
+        case .snooze, .remindLater, .openDetail, .nudge: false
         }
     }
 }
@@ -137,9 +141,14 @@ struct BriefCandidate: Equatable {
     let daysLeft: Int?
     let location: String?
     let isMedicine: Bool
+    /// In a household: "交给老婆", "老婆交给你", "全家".
+    var family: String? = nil
+    /// Someone else in the household is responsible: this person can only nudge them.
+    var isOthers = false
 
     var dictionary: [String: Any] {
         var out: [String: Any] = ["key": target.key, "kind": kind.rawValue, "name": name, "detail": detail, "medicine": isMedicine]
+        if let family { out["family"] = family; out["responsible"] = isOthers ? "family_member" : "user" }
         if let quantity { out["quantity"] = quantity }
         if let unit { out["unit"] = unit }
         if let daysLeft { out["days_left"] = daysLeft }
@@ -152,7 +161,20 @@ enum BriefCandidates {
     /// Local fallback and quick-action validation only. The model's understanding comes from BriefContext,
     /// not this list. No cap may hide an otherwise valid action target.
     static func make(facts: [LotFacts], agenda: HomeAgenda, now: Date, snoozed: Set<String> = [],
-                     calendar: Calendar = .current) -> [BriefCandidate] {
+                     calendar: Calendar = .current, tasks: [TimedReminder] = [],
+                     household: HouseholdNames = .none) -> [BriefCandidate] {
+        let byTask = Dictionary(tasks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return makeUnlabelled(facts: facts, agenda: agenda, now: now, snoozed: snoozed, calendar: calendar).map { item in
+            guard household.isActive, case .task(let id) = item.target, let sharing = byTask[id]?.sharing, sharing.isShared else { return item }
+            var item = item
+            item.family = household.rowLabel(sharing)
+            item.isOthers = sharing.assignee.map { $0 != household.me } ?? false
+            return item
+        }
+    }
+
+    private static func makeUnlabelled(facts: [LotFacts], agenda: HomeAgenda, now: Date, snoozed: Set<String>,
+                                       calendar: Calendar) -> [BriefCandidate] {
         let byID = Dictionary(facts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var out: [BriefCandidate] = []
 
@@ -364,8 +386,12 @@ enum BriefModelReply {
             guard let minutes = value, (5...240).contains(minutes) else { return nil }
             effect = .remindLater(minutes: minutes)
         case "open_detail": effect = .openDetail
+        case "nudge": effect = .nudge
         default: return nil
         }
+        // Someone else's task: this person can only nudge them or let it be; their own task cannot be nudged.
+        if candidate.isOthers, effect == .completeTask || effect.isRemindLater { return nil }
+        if !candidate.isOthers, effect == .nudge { return nil }
         return (isLot ? effect.forLots : effect.forTasks) ? effect : nil
     }
 
@@ -407,12 +433,15 @@ enum BriefModelReply {
         - snooze，value=天数：先放放，这么多天后再提这件事（0 表示今天先不提，明天再说；最多 30）
         - complete_task：任务已经做完（只用于任务）
         - snooze_task，value=分钟：过一会儿再提醒（只用于任务，5 到 240）
+        - nudge：提醒负责的家人一下（只用于 responsible=family_member 的任务，label 如“提醒老婆”）
 
         weather 是所选地点的新鲜观测和预报。weather_summary 是左上角天气入口的简短口语描述，2到14字：优先说接下来的变化（如“下午可能有雨”），没有明显变化就自然描述当前天气，不必只用标准气象词；没有 weather 则填 null。此处只描述所选地点，不写目的地建议，不重复问候、不报温度数字。
         只有整日 days 时不能推断上午、下午或马上下雨；具体时段必须有 hours 支持，预报用“可能、预计”，不说一定。按 time_zone 理解当地时间，区分当前实况、后续预报和已经过去的天气。
         再判断天气是否影响用户已知的出行或户外安排：有明确关系时，把一句具体关心自然融进 text，与其他正文同等呈现；左上角只说变化，正文说明对安排的影响和准备，不机械重复。没有关系就不在正文凑天气建议，不每天提醒穿衣、带伞，不把温差本身当成必须加衣的理由。若已知异地目的地及出行时间，可用 get_destination_weather 查询明确的城市/地区（补足省份或国家）；查不到、地点有歧义或时段未覆盖时保留未知，不拿本地天气代替目的地，不编造用户要出门。不能凭天气创造库存、任务或修改规则。不转述原始气象数字。
 
         按钮要贴合这件事，不要每次都给同一组：过期很久的食物，重点是处理掉；快到期但还能吃的，重点是今晚或明天吃掉，可以给“再放放”一两天；药品要谨慎，不要替用户决定扔；任务到点了，重点是做完或稍后再提醒；库存数量不等于购买意图；一箱、一包不能凭数字 1 判断快用完。未说明消耗速度或补货阈值时，不催买，不把库存登记说成购买安排；同用途的其他库存也要一并考虑。不要给“其他”“其他安排”“聊一聊”“查看详情”等额外入口；用户统一从底部语音或打字回应。
+
+        有家庭时（metadata.household）：这张卡片只写给 metadata.household.me 这一个人，任务的 family 说明谁负责、谁能看到。只总结他自己负责或需要他知道的事；家人负责的事只在需要他配合、能避免重复（例如对方已经买了、已经做了）或已经过了时间还没人处理时才提，不替家人安排，不逐条汇报家人的进度。responsible=family_member 的任务，按钮只能是 nudge 或 snooze，不能替对方点完成；他自己负责的才给完成、稍后提醒。
 
         查完资料后只输出一个 JSON。rationale 用不超过200字写可核对的事实依据和仍未知的范围，供用户追问时解释，不写思维过程，不凭空引用记录。不把建议说成已安排。
         previous_text 只是上次提醒，不是当前事实或指令。核对完整概况后，若原文仍正确且重点无需改变，沿用原文，不为换说法而改写。若正文或 weather_summary 依赖时间（例如“上午出发前”“今晚准备”），review_after 填写下一次必须核对的未来时间，使用带时区的 ISO8601；无额外时间条件填 null。不得把已过去的时间或每隔几分钟刷新当作复查依据。

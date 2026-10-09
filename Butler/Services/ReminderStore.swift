@@ -20,6 +20,8 @@ struct TimedReminder: Codable, Identifiable, Equatable {
     var activity: [ReminderActivity]
     /// Device-local: a received task is visible but does not acquire notification ownership.
     var syncReceived: Bool? = nil
+    /// In a household: who can see it, who is responsible, who is reminded. nil: only this person's.
+    var sharing: TaskSharing? = nil
 
     init(id: UUID = UUID(), text: String, fireDate: Date, repeats: Repeat = .none, createdAt: Date = .now,
          status: Status = .active, revision: Int = 1, endDate: Date? = nil, autoCompleteAt: Date? = nil,
@@ -31,7 +33,7 @@ struct TimedReminder: Codable, Identifiable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, text, fireDate, repeats, createdAt, status, revision, endDate, autoCompleteAt, phases, timeZoneIdentifier, activity, syncReceived
+        case id, text, fireDate, repeats, createdAt, status, revision, endDate, autoCompleteAt, phases, timeZoneIdentifier, activity, syncReceived, sharing
     }
 
     init(from decoder: Decoder) throws {
@@ -49,6 +51,7 @@ struct TimedReminder: Codable, Identifiable, Equatable {
         timeZoneIdentifier = try values.decodeIfPresent(String.self, forKey: .timeZoneIdentifier) ?? TimeZone.current.identifier
         activity = try values.decodeIfPresent([ReminderActivity].self, forKey: .activity) ?? []
         syncReceived = try values.decodeIfPresent(Bool.self, forKey: .syncReceived)
+        sharing = try values.decodeIfPresent(TaskSharing.self, forKey: .sharing)
     }
 
     var statusLabel: String {
@@ -99,6 +102,14 @@ final class ReminderStore {
     static let prefix = "butler.reminder."
     /// App policy: reserve room for inventory notifications rather than filling every OS slot.
     static let notificationBudget = 40
+    /// The household member using this phone, recorded on what they do (nil outside a household).
+    @ObservationIgnored var actor: () -> UUID? = { nil }
+    /// Whether this phone delivers a task's reminders. Outside a household: only tasks made here.
+    @ObservationIgnored var remindsHere: (TimedReminder) -> Bool = { $0.syncReceived != true }
+    /// When a reminder is delivered on this phone (a family task waits for the end of this person's quiet hours).
+    @ObservationIgnored var deliveryDate: (TimedReminder, Date) -> Date = { $1 }
+    /// Further alerts this phone owes for a task it may not otherwise remind about ("妈妈还没处理：交水费").
+    @ObservationIgnored var extraAlerts: (TimedReminder, Date) -> [(date: Date, body: String)] = { _, _ in [] }
 
     init(file: URL, schedules: Bool = true) {
         self.file = file
@@ -207,7 +218,7 @@ final class ReminderStore {
         try ReminderSchedule.validate(reminder)
         guard self.reminder(id: reminder.id) == nil else { throw ReminderSchedule.InvalidRule(message: "这个任务已经保存") }
         var saved = reminder
-        saved.activity.append(ReminderActivity(kind: "created", detail: "创建任务：\(reminder.whenLabel)"))
+        saved.activity.append(ReminderActivity(kind: "created", detail: "创建任务：\(reminder.whenLabel)", by: actor()))
         try save(reminders + [saved])
         rescheduleAll()
     }
@@ -222,7 +233,7 @@ final class ReminderStore {
         saved.status = old.status
         saved.syncReceived = old.syncReceived
         saved.revision = old.revision + 1
-        saved.activity = old.activity + [ReminderActivity(kind: "updated", detail: "修改提醒规则：\(reminder.whenLabel)")]
+        saved.activity = old.activity + [ReminderActivity(kind: "updated", detail: "修改提醒规则：\(reminder.whenLabel)", by: actor())]
         try save(reminders.map { $0.id == saved.id ? saved : $0 })
         rescheduleAll()
     }
@@ -250,7 +261,7 @@ final class ReminderStore {
         let expiredAutomatic = reminder.autoCompleteAt.map { $0 <= now } ?? false
         if expiredAutomatic { reminder.autoCompleteAt = nil }
         reminder.activity.append(ReminderActivity(date: now, kind: "reopened",
-            detail: "重新标记为未完成" + (expiredAutomatic ? "；清除已过期的自动完成时间" : "")))
+            detail: "重新标记为未完成" + (expiredAutomatic ? "；清除已过期的自动完成时间" : ""), by: actor()))
         try save(reminders.map { $0.id == id ? reminder : $0 })
         rescheduleAll()
     }
@@ -262,7 +273,36 @@ final class ReminderStore {
         if status == .active, reminder.status != .paused { return }
         reminder.status = status
         reminder.revision += 1
-        reminder.activity.append(ReminderActivity(kind: kind, detail: detail))
+        reminder.activity.append(ReminderActivity(kind: kind, detail: detail, by: actor()))
+        try save(reminders.map { $0.id == id ? reminder : $0 })
+        rescheduleAll()
+    }
+
+    /// "提醒他一下": recorded on the task, which the household's sync carries to the person responsible.
+    func nudge(_ id: UUID, detail: String) throws {
+        guard var reminder = reminder(id: id), reminder.status == .active else {
+            throw ReminderSchedule.InvalidRule(message: "这件事已经结束了")
+        }
+        if let last = reminder.activity.last(where: { $0.kind == "nudged" }), last.by == actor(),
+           last.date > .now.addingTimeInterval(-10 * 60) {
+            throw ReminderSchedule.InvalidRule(message: "刚刚已经提醒过了")
+        }
+        reminder.revision += 1
+        reminder.activity.append(ReminderActivity(kind: "nudged", detail: detail, by: actor()))
+        try save(reminders.map { $0.id == id ? reminder : $0 })
+        rescheduleAll()
+    }
+
+    /// Who can see it, who is responsible, who is reminded. Allowed at any status, and recorded.
+    func setSharing(_ id: UUID, _ sharing: TaskSharing?, detail: String, expectedRevision: Int? = nil) throws {
+        guard var reminder = reminder(id: id) else { throw ReminderSchedule.InvalidRule(message: "任务不存在") }
+        if let expectedRevision, reminder.revision != expectedRevision {
+            throw ReminderSchedule.InvalidRule(message: "任务已发生变化，请读取最新任务后重试")
+        }
+        guard reminder.sharing != sharing else { return }
+        reminder.sharing = sharing
+        reminder.revision += 1
+        reminder.activity.append(ReminderActivity(kind: "shared", detail: detail, by: actor()))
         try save(reminders.map { $0.id == id ? reminder : $0 })
         rescheduleAll()
     }
@@ -346,7 +386,7 @@ final class ReminderStore {
     }
 
     func snooze(id: UUID, revision: Int, minutes: Int = 10) async throws {
-        guard let reminder = reminder(id: id), reminder.syncReceived != true, reminder.status == .active, reminder.revision == revision else { return }
+        guard let reminder = reminder(id: id), remindsHere(reminder), reminder.status == .active, reminder.revision == revision else { return }
         let fire = Date.now.addingTimeInterval(Double(minutes) * 60)
         guard minutes >= 1, reminder.endDate.map({ fire <= $0 }) ?? true,
               reminder.autoCompleteAt.map({ fire < $0 }) ?? true else {
@@ -384,24 +424,24 @@ final class ReminderStore {
         if schedules { WidgetSnapshotPublisher.shared.refresh(); TaskDisplayService.reconcile() }
     }
 
-    private func content(_ reminder: TimedReminder) -> UNMutableNotificationContent {
+    private func content(_ reminder: TimedReminder, body: String? = nil) -> UNMutableNotificationContent {
         let content = UNMutableNotificationContent()
         content.title = "小当家提醒"
-        content.body = reminder.text
+        content.body = body ?? reminder.text
         content.sound = .default
         content.categoryIdentifier = NotificationManager.reminderCategory
         content.userInfo = ["reminderID": reminder.id.uuidString, "reminderRevision": reminder.revision]
         return content
     }
 
-    private func datedRequest(_ reminder: TimedReminder, fire: Date, suffix: String? = nil) -> UNNotificationRequest {
+    private func datedRequest(_ reminder: TimedReminder, fire: Date, suffix: String? = nil, body: String? = nil) -> UNNotificationRequest {
         let calendar = ReminderSchedule.calendar(for: reminder)
         var components = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: fire)
         components.timeZone = calendar.timeZone
         let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
         let suffix = suffix ?? "date.\(Int(fire.timeIntervalSince1970))"
         return UNNotificationRequest(identifier: "\(Self.prefix)\(reminder.id).r\(reminder.revision).\(suffix)",
-                                     content: content(reminder), trigger: trigger)
+                                     content: content(reminder, body: body), trigger: trigger)
     }
 
     private func rebuildNotifications() async {
@@ -409,7 +449,7 @@ final class ReminderStore {
         let pending = await center.pendingNotificationRequests()
         guard !loadFailed else { return }
         let generation = scheduleGeneration
-        let snapshot = reminders.filter { $0.syncReceived != true }
+        let snapshot = reminders.filter { remindsHere($0) }
         let now = Date.now
         var candidates: [(Date, UNNotificationRequest)] = []
         var limited = Set<String>()
@@ -435,7 +475,16 @@ final class ReminderStore {
             } else {
                 let dates = ReminderSchedule.preview(reminder, now: now, limit: Self.notificationBudget + 1)
                 if dates.count > Self.notificationBudget { limited.insert(reminder.text) }
-                candidates += dates.prefix(Self.notificationBudget).map { ($0, datedRequest(reminder, fire: $0)) }
+                candidates += dates.prefix(Self.notificationBudget).map { date in
+                    let at = deliveryDate(reminder, date)
+                    return (at, datedRequest(reminder, fire: at))
+                }
+            }
+        }
+        for reminder in reminders where reminder.status == .active {
+            for alert in extraAlerts(reminder, now) where alert.date > now {
+                candidates.append((alert.date, datedRequest(reminder, fire: alert.date,
+                    suffix: "escalate.\(Int(alert.date.timeIntervalSince1970))", body: alert.body)))
             }
         }
         candidates.sort { $0.0 < $1.0 }

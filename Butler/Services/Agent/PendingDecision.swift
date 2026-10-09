@@ -30,7 +30,7 @@ extension PendingChange {
     var inventoryPreview: LotFacts? {
         switch kind {
         case .setQuantity(let lot, _), .close(let lot, _), .setDate(let lot, _, _), .move(let lot, _), .tracking(let lot, _): lot
-        case .itemProfile(let lot, _): lot
+        case .itemProfile(let lot, _), .itemSharing(let lot, _, _): lot
         default: nil
         }
     }

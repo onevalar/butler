@@ -419,6 +419,8 @@ struct BriefActionRunner {
             return .done
         case (.completeTask, .task(let id)):
             return attempt { try reminders.complete(id) }
+        case (.nudge, .task(let id)):
+            return attempt { try HouseholdService.shared.nudge(id) }
         case (.remindLater(let minutes), .task(let id)):
             guard let task = reminders.reminder(id: id) else { return .failed("这个任务已经不在了。") }
             do {
