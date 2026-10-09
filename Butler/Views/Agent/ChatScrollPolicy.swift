@@ -3,6 +3,9 @@ import Observation
 
 /// Intent is changed by a native user scroll, never by content or keyboard layout alone.
 @Observable final class ChatScrollPolicy {
+    // No actor-bound cleanup; avoid an executor hop when a chat session releases its policy.
+    nonisolated deinit {}
+
     struct Geometry: Equatable, Sendable {
         var offset: CGFloat
         var contentHeight: CGFloat

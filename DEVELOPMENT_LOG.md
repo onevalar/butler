@@ -1,3 +1,10 @@
+## TestFlight 发布前整合与完整回归
+**Date:** 2026-10-10
+
+- 提交本机对话/库存修复，并合并远端4项家庭共享提交。确认卡冲突保留 TaskFamilyCardLine，同时保留精简回执、隐藏来源及统一确认状态；更新中文测试说明。
+- 完整回归发现 ChatScrollPolicy 隐式隔离析构经 swift_task_deinitOnExecutorImpl 触发 malloc 崩溃；对象没有需主线程清理的资源，补明确 nonisolated deinit，与 ChatReplyProgress/ButlerChat 既有生命周期处理一致。
+- 修复后完整744项测试，1项既有跳过、0失败。发布流程待 App Store Connect 重新登录后手动启动；代码推送本身不触发云构建。
+
 ## 确认卡与执行回执精简
 **Date:** 2026-10-08
 
