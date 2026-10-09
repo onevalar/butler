@@ -42,7 +42,7 @@ enum AccentChoice: String, CaseIterable, Identifiable {
 
     var accent: ButlerAccent {
         switch self {
-        case .glass: ButlerAccent(fill: .primary, onFill: Color(.systemBackground))
+        case .glass: ButlerAccent(fill: Color(uiColor: .label), onFill: Color(uiColor: .systemBackground))
         case .celadon: ButlerAccent(fill: Color(light: 0x0F766E, dark: 0x2BA89C), onFill: .white)
         case .ocean: ButlerAccent(fill: Color(light: 0x1D6FE0, dark: 0x4C94FF), onFill: .white)
         case .amber: ButlerAccent(fill: Color(light: 0xD9711A, dark: 0xF08A34), onFill: .white)

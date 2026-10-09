@@ -1,7 +1,8 @@
 import Foundation
+import Observation
 
 /// Intent is changed by a native user scroll, never by content or keyboard layout alone.
-struct ChatScrollPolicy {
+@Observable final class ChatScrollPolicy {
     struct Geometry: Equatable, Sendable {
         var offset: CGFloat
         var contentHeight: CGFloat
@@ -30,20 +31,33 @@ struct ChatScrollPolicy {
     private(set) var pending: Scroll?
     /// Session-local message anchor, not a pixel offset or synced reading receipt.
     private(set) var visibleTurnID: UUID?
-    private var active = false
-    private var phase = Phase.idle
-    private var geometry: Geometry?
+    @ObservationIgnored private var active = false
+    @ObservationIgnored private var phase = Phase.idle
+    @ObservationIgnored private var geometry: Geometry?
+    @ObservationIgnored private var bottomVisible = false
 
-    var showsReturnToLatest: Bool { active && !followingBottom }
+    private(set) var showsReturnToLatest = false
+
+    private func updateLatestVisibility() {
+        let show = active && !bottomVisible && !followingBottom && (geometry?.distanceFromBottom ?? 0) > 24
+        if showsReturnToLatest != show { showsReturnToLatest = show }
+    }
+
+    func bottomVisibilityChanged(_ visible: Bool) {
+        bottomVisible = visible
+        updateLatestVisibility()
+    }
 
     private var userIsScrolling: Bool {
         phase == .tracking || phase == .interacting || phase == .decelerating
     }
 
-    mutating func appear(validTurnIDs: Set<UUID> = []) {
+    func appear(validTurnIDs: Set<UUID> = []) {
+        defer { updateLatestVisibility() }
         active = true
         phase = .idle
         geometry = nil
+        bottomVisible = false
         cancelPending()
         if !followingBottom, let visibleTurnID, validTurnIDs.contains(visibleTurnID) {
             // The scroll-position binding restores this message without a bottom jump.
@@ -52,28 +66,31 @@ struct ChatScrollPolicy {
         sendToLatest(animated: false)
     }
 
-    mutating func disappear() {
+    func disappear() {
+        defer { updateLatestVisibility() }
         active = false
         phase = .idle
         geometry = nil
+        bottomVisible = false
         if followingBottom { visibleTurnID = nil }
         cancelPending()
     }
 
-    mutating func positionChanged(to id: UUID?) {
+    func positionChanged(to id: UUID?) {
         // Footer/picker layouts may have no message target. Keep the last known
         // message rather than erasing a bookmark with a transient nil callback.
         guard active, let id else { return }
-        visibleTurnID = id
+        if visibleTurnID != id { visibleTurnID = id }
     }
 
-    mutating func reconcileHistory(_ validTurnIDs: Set<UUID>) {
+    func reconcileHistory(_ validTurnIDs: Set<UUID>) {
         if validTurnIDs.isEmpty || visibleTurnID.map({ !validTurnIDs.contains($0) }) == true {
             sendToLatest(animated: false)
         }
     }
 
-    mutating func sendToLatest(animated: Bool = true) {
+    func sendToLatest(animated: Bool = true) {
+        defer { updateLatestVisibility() }
         followingBottom = true
         visibleTurnID = nil
         // An explicit button/send action supersedes momentum from the old drag.
@@ -82,7 +99,8 @@ struct ChatScrollPolicy {
         enqueue(animated ? .animated : .immediate)
     }
 
-    mutating func phaseChanged(to newPhase: Phase) {
+    func phaseChanged(to newPhase: Phase) {
+        defer { updateLatestVisibility() }
         guard active else { return }
         let wasUserScrolling = userIsScrolling
         phase = newPhase
@@ -98,7 +116,8 @@ struct ChatScrollPolicy {
         }
     }
 
-    mutating func geometryChanged(to new: Geometry) {
+    func geometryChanged(to new: Geometry) {
+        defer { updateLatestVisibility() }
         guard active else { return }
         let old = geometry
         geometry = new
@@ -107,7 +126,8 @@ struct ChatScrollPolicy {
            new.hasSameLayout(as: old), abs(new.offset - old.offset) > 0.5 {
             // Ignore simultaneous content/viewport changes (including interactive keyboard
             // dismissal). Programmatic animation and idle offset corrections aren't intent.
-            followingBottom = new.distanceFromBottom <= 24
+            let follows = new.distanceFromBottom <= 24
+            if followingBottom != follows { followingBottom = follows }
         }
 
         guard followingBottom, !userIsScrolling, new.distanceFromBottom > 1 else { return }
@@ -120,20 +140,21 @@ struct ChatScrollPolicy {
     }
 
     /// Consumed after one executor yield, so related state/layout notifications share a scroll.
-    mutating func takeScroll() -> Scroll? {
+    func takeScroll() -> Scroll? {
         guard active, followingBottom, !userIsScrolling else { return nil }
         defer { pending = nil }
         return pending
     }
 
-    private mutating func enqueue(_ scroll: Scroll) {
+    private func enqueue(_ scroll: Scroll) {
         guard active else { return }
         // Keyboard/composer layout must not acquire a second, custom animation.
         pending = pending == .immediate || scroll == .immediate ? .immediate : .animated
         revision += 1
     }
 
-    private mutating func cancelPending() {
+    private func cancelPending() {
+        guard pending != nil else { return }
         pending = nil
         revision += 1
     }

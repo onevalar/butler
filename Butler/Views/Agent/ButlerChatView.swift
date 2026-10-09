@@ -48,11 +48,12 @@ struct ButlerChatView: View {
     @State var hasImportedFiles = false
     @State private var pickedPhotos: [PhotosPickerItem] = []
     @State private var showingSettings = false
+    @State private var position = ScrollPosition(edge: .bottom)
     @FocusState var composing: Bool
 
     var body: some View {
         NavigationStack {
-            ScrollViewReader { proxy in
+            Group {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 14) {
                         if case .brief(let reminder) = chat.scope {
@@ -75,7 +76,8 @@ struct ButlerChatView: View {
                         if chat.scope == .general {
                             ShareInboxView(chat: chat, hasOtherWork: hasOtherWork || loadingAttachments, refreshID: inboxRefresh)
                         }
-                        Color.clear.frame(height: 1).padding(.bottom, 12).id("bottom")
+                        Color.clear.frame(height: 1).padding(.bottom, 12)
+                            .onScrollVisibilityChange { chat.scrollPolicy.bottomVisibilityChanged($0) }
                     }
                     .scrollTargetLayout()
                     .padding(.horizontal, 16).padding(.top, 12)
@@ -83,10 +85,10 @@ struct ButlerChatView: View {
                 .scrollDismissesKeyboard(.interactively)
                 .scrollEdgeEffectHidden(for: .bottom)
                 .defaultScrollAnchor(chat.scrollPolicy.followingBottom ? .bottom : .top, for: .initialOffset)
-                .scrollPosition(id: Binding(
-                    get: { chat.scrollPolicy.visibleTurnID },
-                    set: { chat.scrollPolicy.positionChanged(to: $0) }
-                ), anchor: .top)
+                .scrollPosition($position)
+                .onScrollTargetVisibilityChange(idType: UUID.self) { ids in
+                    chat.scrollPolicy.positionChanged(to: ids.first)
+                }
                 .onScrollGeometryChange(for: ChatScrollPolicy.Geometry.self) { geometry in
                     Self.scrollGeometry(geometry)
                 } action: { _, geometry in
@@ -104,23 +106,25 @@ struct ButlerChatView: View {
                     @unknown default: break
                     }
                 }
-                .onAppear { chat.scrollPolicy.appear(validTurnIDs: Set(chat.turns.map(\.id))) }
+                .onAppear {
+                    chat.scrollPolicy.appear(validTurnIDs: Set(chat.turns.map(\.id)))
+                    if !chat.scrollPolicy.followingBottom, let id = chat.scrollPolicy.visibleTurnID {
+                        position.scrollTo(id: id, anchor: .top)
+                    }
+                }
                 .onDisappear { chat.scrollPolicy.disappear() }
                 .task(id: chat.scrollPolicy.revision) { @MainActor in
                     // Coalesce layout notifications, not a guessed keyboard duration. A new
                     // request, user touch, or disappearance cancels this view-owned task.
                     await Task.yield()
-                    guard !Task.isCancelled, let scroll = chat.scrollPolicy.takeScroll() else { return }
-                    var transaction = Transaction(animation: scroll == .animated && !reduceMotion ? .default : nil)
-                    transaction.disablesAnimations = reduceMotion || scroll == .immediate
-                    withTransaction(transaction) { proxy.scrollTo("bottom", anchor: .bottom) }
+                    guard !Task.isCancelled, chat.scrollPolicy.takeScroll() != nil else { return }
+                    var transaction = Transaction(animation: nil)
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) { position.scrollTo(edge: .bottom) }
                 }
             }
             .background { ButlerBackground() }
-            // The latest button reserves its own space rather than covering a
-            // history paragraph or a confirmation button, including at large type.
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                VStack(spacing: 0) {
+            .overlay(alignment: .bottomTrailing) {
                     if chat.scrollPolicy.showsReturnToLatest {
                         HStack {
                             Spacer(minLength: 0)
@@ -135,9 +139,8 @@ struct ButlerChatView: View {
                         }
                         .padding(.horizontal, 16).padding(.vertical, 4)
                     }
-                    composer
-                }
             }
+            .safeAreaInset(edge: .bottom, spacing: 0) { composer }
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     VStack(spacing: 1) {
@@ -402,14 +405,13 @@ struct ButlerChatView: View {
                 HStack(spacing: 6) {
                     Spacer(minLength: 48)
                     ForEach(names, id: \.self) { name in
-                        if let image = UIImage(contentsOfFile: directory.appendingPathComponent(name).path) {
-                            Image(uiImage: image).resizable().scaledToFill()
-                                .frame(width: 110, height: 110)
-                                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        }
+                        ChatAttachmentThumbnail(url: directory.appendingPathComponent(name))
+                            .frame(width: 110, height: 110)
+                            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                     }
                 }
             }
+            if turn.question != "确认操作" || turn.confirmationIDs?.isEmpty != false {
             HStack {
                 Spacer(minLength: 56)
                 Text(turn.question)
@@ -417,6 +419,7 @@ struct ButlerChatView: View {
                     .padding(.horizontal, 14).padding(.vertical, 9)
                     .background(accent.fill, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                     .textSelection(.enabled)
+            }
             }
             if let collection = turn.collection, let onOpenLot {
                 InventoryResultView(collection: collection, onOpen: onOpenLot,
@@ -436,12 +439,22 @@ struct ButlerChatView: View {
             if let results = turn.confirmationResults, !results.isEmpty {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(results.enumerated()), id: \.element.id) { index, result in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(result.title).font(.subheadline.weight(.semibold))
-                            Text(result.state.label).font(.caption.weight(.semibold))
-                                .foregroundStyle(result.state == .failed ? Color.red : .secondary)
-                            Text(result.message).font(.footnote).textSelection(.enabled)
-                            proposalSource(result.requestTurnID)
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: result.state == .succeeded ? "checkmark.circle.fill" :
+                                result.state == .failed ? "xmark.circle" : "info.circle")
+                                .foregroundStyle(result.state == .failed ? Color.red :
+                                    result.state == .needsVerification ? Color.orange : Color.secondary)
+                                .accessibilityLabel(result.state.label)
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(result.title).font(.subheadline.weight(.medium))
+                                if result.state != .succeeded {
+                                    Text(result.state.label).font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                                }
+                                if let detail = ConfirmationPresentation.detail(result.message, title: result.title),
+                                   detail != result.state.label {
+                                    Text(detail).font(.footnote).foregroundStyle(.secondary).textSelection(.enabled)
+                                }
+                            }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(14)
@@ -464,13 +477,6 @@ struct ButlerChatView: View {
         }
     }
 
-    private func proposalSource(_ id: UUID?) -> some View {
-        let text: String
-        if let id, let source = chat.turns.first(where: { $0.id == id }) { text = "来源请求：" + source.question }
-        else { text = id == nil ? "旧提案：未记录来源请求" : "来源请求当前不可用" }
-        return Text(text).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-    }
-
     private func color(for change: PendingChange) -> Color {
         switch change.kind {
         case .reminder, .cancelReminder, .taskPlan, .taskAction: .blue
@@ -487,14 +493,12 @@ struct ButlerChatView: View {
                 HStack(alignment: .center, spacing: 12) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("\(index + 1). \(change.title)").font(.body.weight(.medium))
-                        if let detail = change.detail {
+                        if let detail = ConfirmationPresentation.detail(change.detail, title: change.title) {
                             Text(detail).font(.subheadline).foregroundStyle(.secondary)
                         }
-                        Text("待你确认 · 尚未执行").font(.caption).foregroundStyle(.secondary)
-                        proposalSource(change.requestTurnID)
                         switch change.check {
                         case .passed:
-                            Label("Jev 已核对", systemImage: "checkmark.seal").font(.caption).foregroundStyle(.blue)
+                            EmptyView()
                         case .concern(let concern):
                             Label("Jev 提醒：\(concern)", systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.red)
                         case nil:
@@ -513,8 +517,7 @@ struct ButlerChatView: View {
                 .padding(.horizontal, 18).padding(.vertical, 12)
                 if index < pending.count - 1 { RowDivider(inset: 18) }
             }
-            Text(blocked ? "正在处理，请稍后核对确认；卡片中的待确认项尚未执行。"
-                 : "可点确认，也可以说“确认”或“确认第2项”")
+            Text(blocked ? "正在处理 · 尚未执行" : "待确认 · 确认后执行")
                 .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 18).padding(.top, 10)
             HStack(spacing: 10) {
                 Button("取消") { chat.discard(ids: Set(pending.map(\.id))) }

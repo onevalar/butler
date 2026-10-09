@@ -234,8 +234,8 @@ final class ChineseInventoryParserTests: XCTestCase {
         let facts = LotFacts(lot: lot, product: product)
         XCTAssertFalse(facts.needsDate)
         XCTAssertNil(facts.governingDate, "quantity-only items never drive date reminders")
-        XCTAssertTrue(facts.isRunningLow)
-        XCTAssertEqual(facts.dateStatusLabel, "只剩 1 包")
+        XCTAssertFalse(facts.isRunningLow)
+        XCTAssertEqual(facts.dateStatusLabel, "剩 1 包")
     }
 
     func testPackagedFreshFoodIsNeverGivenAGuessedDate() throws {

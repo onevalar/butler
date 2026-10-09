@@ -38,3 +38,20 @@ struct ConfirmationResult: Codable, Equatable, Identifiable {
         return value
     }
 }
+
+/// Removes only an exact repeated title, never an execution warning or a distinct result.
+enum ConfirmationPresentation {
+    static func detail(_ message: String?, title: String) -> String? {
+        guard var text = message?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
+        if text.hasPrefix("✓") || text.hasPrefix("✗") {
+            text = String(text.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text == title { return nil }
+        for separator in ["：", ":", " · ", "\n"] where !title.isEmpty && text.hasPrefix(title + separator) {
+            text = String(text.dropFirst(title.count + separator.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            break
+        }
+        return text.isEmpty ? nil : text
+    }
+}

@@ -13,13 +13,17 @@ struct ShareInboxView: View {
     @State private var expanded = true
     @State private var importing: UUID?
 
+    private var pendingRecords: [ShareInbox.Record] {
+        records.filter { !chat.receivedShareIDs.contains($0.id) }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if !records.isEmpty {
+            if !pendingRecords.isEmpty {
                 DisclosureGroup(isExpanded: $expanded) {
                     Text("内容只保存在本机。加入草稿、核对并发送后，才会交给当前模型；不会直接修改任务或库存。")
                         .font(.caption).foregroundStyle(.secondary)
-                    ForEach(records.reversed()) { record in
+                    ForEach(pendingRecords.reversed()) { record in
                         VStack(alignment: .leading, spacing: 8) {
                             Text(record.createdAt, format: .dateTime.month().day().hour().minute())
                                 .font(.caption).foregroundStyle(.secondary)
@@ -50,7 +54,7 @@ struct ShareInboxView: View {
                         .padding(.vertical, 8)
                     }
                 } label: {
-                    let pending = records.filter { !chat.receivedShareIDs.contains($0.id) }.count
+                    let pending = pendingRecords.count
                     Label("分享资料 · \(pending) 条待处理", systemImage: "tray")
                 }
             }

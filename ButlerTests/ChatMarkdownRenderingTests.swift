@@ -7,6 +7,21 @@ import XCTest
 /// Run on an iOS simulator; the portable chat script cannot render SwiftUI.
 @MainActor
 final class ChatMarkdownRenderingTests: XCTestCase {
+    func testGlassAccentFillDoesNotInheritBubbleForeground() throws {
+        for scheme in [ColorScheme.light, .dark] {
+            func snapshot(_ foreground: Color) throws -> Data {
+                let view = Rectangle().fill(AccentChoice.glass.accent.fill)
+                    .frame(width: 24, height: 24)
+                    .foregroundStyle(foreground)
+                    .environment(\.colorScheme, scheme)
+                let renderer = ImageRenderer(content: view)
+                return try XCTUnwrap(renderer.uiImage?.pngData())
+            }
+            XCTAssertEqual(try snapshot(.white), try snapshot(.red),
+                           "The bubble/button background must not resolve through inherited foreground style")
+        }
+    }
+
     func testStrongAndEmphasisRenderFormattingInsteadOfDelimiters() throws {
         let bold = try render("**牛奶🥛**")
         XCTAssertEqual(bold.pngData(), try render("__牛奶🥛__").pngData())

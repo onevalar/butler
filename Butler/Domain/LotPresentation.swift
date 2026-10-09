@@ -47,8 +47,9 @@ struct LotFacts: Identifiable, Sendable, Codable {
 
     /// No date of any kind: Butler must ask instead of guessing.
     var needsDate: Bool { governingDate == nil && !quantityOnly }
-    /// A quantity-only item that is about to run out.
-    var isRunningLow: Bool { quantityOnly && !isDurable && quantity <= 1 }
+    /// A positive count alone cannot establish shortage: one box may contain many units.
+    /// Until a user-defined threshold exists, only an explicitly empty stock is certain.
+    var isRunningLow: Bool { quantityOnly && !isDurable && quantity <= 0 }
     /// The user said "冰箱" without saying which compartment.
     var needsCompartment: Bool { storageLocation == StorageLocation.ambiguousFridge }
 

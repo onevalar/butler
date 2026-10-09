@@ -107,7 +107,7 @@ enum HomeList {
                 let when = offset <= 0 ? "今天到期" : offset == 1 ? "明天到期" : offset == 2 ? "后天到期" : "\(offset) 天后到期"
                 subtitle = lot.governingDateKind == .plannedUseBy ? "该吃完了 · \(amount)\(place)" : "\(when) · \(amount)\(place)"
             case .lowStock:
-                subtitle = "只剩 \(amount)\(place) · 记得买"
+                subtitle = "剩 \(amount)\(place)"
             default: break
             }
         } else if entry.kind == .reminder, subtitle == nil {

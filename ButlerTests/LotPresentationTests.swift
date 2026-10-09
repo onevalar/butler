@@ -14,6 +14,20 @@ final class LotPresentationTests: XCTestCase {
 
     private func day(_ offset: Int) -> Date { calendar.date(byAdding: .day, value: offset, to: now)! }
 
+    func testPositiveStockDoesNotInventShortageOrPurchaseIntent() {
+        let product = CatalogProduct(canonicalName: "瓶装水", categoryRawValue: "household")
+        for unit in ["箱", "包", "瓶"] {
+            let lot = InventoryLot(productID: product.id, quantity: 1, unit: unit)
+            let facts = LotFacts(lot: lot, product: product, now: now, calendar: calendar)
+            XCTAssertFalse(facts.isRunningLow, unit)
+            XCTAssertNil(InventoryCatalog.status(for: facts))
+            let agenda = HomeAgenda.build(lots: [facts], reminders: [], events: [], now: now, calendar: calendar)
+            XCTAssertTrue(agenda.needsAttention.isEmpty)
+            XCTAssertTrue(HomeList.build(day: agenda.today, agenda: agenda, facts: [facts], now: now).rows.isEmpty)
+            XCTAssertTrue(BriefCandidates.make(facts: [facts], agenda: agenda, now: now).isEmpty)
+        }
+    }
+
     func testGlyphPrefersSpecificWordsThenMedicineThenFirstCharacter() {
         XCTAssertEqual(LotGlyph.glyph(for: "简爱原味酸奶", isMedicine: false), "酸")
         XCTAssertEqual(LotGlyph.glyph(for: "光明鲜牛奶", isMedicine: false), "奶")

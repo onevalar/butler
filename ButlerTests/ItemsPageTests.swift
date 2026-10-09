@@ -39,7 +39,7 @@ final class ItemsPageTests: XCTestCase {
         XCTAssertTrue(food.pressing, "something is already past its date: red badge")
         XCTAssertEqual(food.preview, "土鸡蛋 · 红枣酸奶 · 速冻水饺")
         let household = try XCTUnwrap(groups.first { $0.title == "日用品" })
-        XCTAssertEqual(household.urgent, 1, "one bottle of water left")
+        XCTAssertEqual(household.urgent, 0, "a positive count does not establish shortage")
         let tools = try XCTUnwrap(groups.first { $0.title == "工具" })
         XCTAssertEqual(tools.urgent, 0, "tools never run low")
     }
@@ -81,12 +81,13 @@ final class ItemsPageTests: XCTestCase {
         let forward = InventoryCatalog.items([first, second], order: .name).map(\.id)
         XCTAssertEqual(forward.count, 2)
         XCTAssertEqual(forward, InventoryCatalog.items([second, first], order: .name).map(\.id))
-        XCTAssertEqual(InventoryCatalog.items(home).first?.name, "七鲜饮用纯净水")
+        XCTAssertEqual(InventoryCatalog.items(home).first?.name, "土鸡蛋")
     }
 
     func testCatalogStatusDoesNotInventExpiryForQuantityOnlyOrDurableThings() {
         XCTAssertNil(InventoryCatalog.status(for: lot("饮用水", quantity: 6, category: .household)))
-        XCTAssertEqual(InventoryCatalog.status(for: lot("饮用水", quantity: 1, category: .household)), "快用完了")
+        XCTAssertNil(InventoryCatalog.status(for: lot("饮用水", quantity: 1, category: .household)))
+        XCTAssertEqual(InventoryCatalog.status(for: lot("饮用水", quantity: 0, category: .household)), "已用完")
         XCTAssertNil(InventoryCatalog.status(for: lot("螺丝刀", quantity: 1, category: .tools)))
         XCTAssertEqual(InventoryCatalog.status(for: lot("牛奶", days: 1, category: .food)), "明天到期")
         XCTAssertEqual(InventoryCatalog.status(for: lot("牛奶", category: .food)), "未记录日期")

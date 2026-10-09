@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import XCTest
 @testable import Butler
 
@@ -11,7 +12,7 @@ final class ChatScrollPolicyTests: XCTestCase {
     }
 
     @MainActor private func atBottom() -> ChatScrollPolicy {
-        var policy = ChatScrollPolicy()
+        let policy = ChatScrollPolicy()
         policy.appear()
         policy.geometryChanged(to: geometry())
         XCTAssertEqual(policy.takeScroll(), .immediate)
@@ -19,7 +20,7 @@ final class ChatScrollPolicyTests: XCTestCase {
     }
 
     @MainActor private func readingOlder() -> ChatScrollPolicy {
-        var policy = atBottom()
+        let policy = atBottom()
         policy.phaseChanged(to: .tracking)
         policy.phaseChanged(to: .interacting)
         policy.geometryChanged(to: geometry(offset: 200))
@@ -29,8 +30,44 @@ final class ChatScrollPolicyTests: XCTestCase {
         return policy
     }
 
+    @MainActor func testVisibleFooterHidesJumpDespiteLazyHeightEstimate() async {
+        let policy = readingOlder()
+        policy.bottomVisibilityChanged(true)
+        XCTAssertFalse(policy.showsReturnToLatest)
+        policy.geometryChanged(to: geometry(offset: 200, content: 1600))
+        XCTAssertFalse(policy.showsReturnToLatest)
+        policy.bottomVisibilityChanged(false)
+        XCTAssertTrue(policy.showsReturnToLatest)
+    }
+
+    @MainActor func testScrollSamplesDoNotInvalidateUnchangedPresentation() async {
+        let policy = readingOlder()
+        policy.phaseChanged(to: .interacting)
+        let invalidated = expectation(description: "No per-pixel presentation updates")
+        invalidated.isInverted = true
+        withObservationTracking {
+            _ = policy.followingBottom
+            _ = policy.showsReturnToLatest
+            _ = policy.revision
+        } onChange: { invalidated.fulfill() }
+        for offset in 210...300 { policy.geometryChanged(to: geometry(offset: CGFloat(offset))) }
+        await fulfillment(of: [invalidated], timeout: 0.1)
+    }
+
+    @MainActor func testLatestButtonUsesActualDistanceAfterLayoutChanges() async {
+        let policy = readingOlder()
+        XCTAssertTrue(policy.showsReturnToLatest)
+        policy.geometryChanged(to: geometry(offset: 600))
+        XCTAssertFalse(policy.showsReturnToLatest)
+        XCTAssertFalse(policy.followingBottom, "Do not change reading intent just because content resized")
+        policy.geometryChanged(to: geometry(offset: 0, content: 200, viewport: 600))
+        XCTAssertFalse(policy.showsReturnToLatest, "Short content has no hidden latest message")
+        policy.geometryChanged(to: geometry(offset: 0, content: 1200, viewport: 600))
+        XCTAssertTrue(policy.showsReturnToLatest)
+    }
+
     @MainActor func testInitialShortContentFollowsWhenItBecomesScrollable() async {
-        var policy = ChatScrollPolicy()
+        let policy = ChatScrollPolicy()
         policy.appear()
         policy.geometryChanged(to: geometry(offset: -44, content: 150, top: 44, bottom: 80))
         XCTAssertEqual(policy.takeScroll(), .immediate)
@@ -41,7 +78,7 @@ final class ChatScrollPolicyTests: XCTestCase {
     }
 
     @MainActor func testGrowthAndRelatedUpdatesCoalesceWithoutChangingIntent() async {
-        var policy = atBottom()
+        let policy = atBottom()
         policy.geometryChanged(to: geometry(content: 1_250))
         policy.geometryChanged(to: geometry(content: 1_400))
         policy.geometryChanged(to: geometry(content: 1_500))
@@ -51,7 +88,7 @@ final class ChatScrollPolicyTests: XCTestCase {
     }
 
     @MainActor func testReadingOlderSurvivesContentKeyboardAndRotationChanges() async {
-        var policy = readingOlder()
+        let policy = readingOlder()
         policy.geometryChanged(to: geometry(offset: 200, content: 1_600))
         policy.geometryChanged(to: geometry(offset: 200, content: 1_600, viewport: 300))
         policy.geometryChanged(to: geometry(offset: 250, content: 1_800, viewport: 500, width: 844))
@@ -60,7 +97,7 @@ final class ChatScrollPolicyTests: XCTestCase {
     }
 
     @MainActor func testAutomaticOffsetChangesAndAnimationAreNotUserIntent() async {
-        var policy = atBottom()
+        let policy = atBottom()
         policy.geometryChanged(to: geometry(offset: 200))
         XCTAssertTrue(policy.followingBottom)
         XCTAssertNil(policy.takeScroll())
@@ -72,7 +109,7 @@ final class ChatScrollPolicyTests: XCTestCase {
     }
 
     @MainActor func testAutomaticArrivalAtBottomDoesNotResumeReadingUser() async {
-        var policy = readingOlder()
+        let policy = readingOlder()
         policy.geometryChanged(to: geometry(offset: 600))
         policy.geometryChanged(to: geometry(offset: 600, content: 1_500))
         XCTAssertFalse(policy.followingBottom)
@@ -80,7 +117,7 @@ final class ChatScrollPolicyTests: XCTestCase {
     }
 
     @MainActor func testUserReturnToBottomResumesFollowingIncludingDeceleration() async {
-        var policy = readingOlder()
+        let policy = readingOlder()
         policy.phaseChanged(to: .interacting)
         policy.geometryChanged(to: geometry(offset: 500))
         policy.phaseChanged(to: .decelerating)
@@ -94,7 +131,7 @@ final class ChatScrollPolicyTests: XCTestCase {
     }
 
     @MainActor func testTouchCancelsQueuedFollowAndDragAwayWins() async {
-        var policy = atBottom()
+        let policy = atBottom()
         policy.geometryChanged(to: geometry(content: 1_500))
         let queuedRevision = policy.revision
         policy.phaseChanged(to: .tracking)
@@ -126,7 +163,7 @@ final class ChatScrollPolicyTests: XCTestCase {
     }
 
     @MainActor func testRapidKeyboardAndComposerLayoutUsesOneImmediateCorrection() async {
-        var policy = atBottom()
+        let policy = atBottom()
         policy.geometryChanged(to: geometry(content: 1_400))
         policy.geometryChanged(to: geometry(content: 1_400, viewport: 300, bottom: 60))
         policy.geometryChanged(to: geometry(content: 1_400, viewport: 580, bottom: 20))
@@ -137,7 +174,7 @@ final class ChatScrollPolicyTests: XCTestCase {
     }
 
     @MainActor func testSendExplicitlyResumesFollowingBeforeAndAfterLayout() async {
-        var policy = readingOlder()
+        let policy = readingOlder()
         policy.sendToLatest()
         XCTAssertTrue(policy.followingBottom)
         XCTAssertEqual(policy.takeScroll(), .animated)
@@ -146,7 +183,7 @@ final class ChatScrollPolicyTests: XCTestCase {
     }
 
     @MainActor func testDisappearInvalidatesWorkAndReappearanceStartsAtBottom() async {
-        var policy = atBottom()
+        let policy = atBottom()
         policy.geometryChanged(to: geometry(content: 1_500))
         let queuedRevision = policy.revision
         policy.disappear()
@@ -169,7 +206,7 @@ final class ChatScrollPolicyTests: XCTestCase {
 
     @MainActor func testReadingAnchorSurvivesReopenAndHiddenCallbacksCannotReplaceIt() async {
         let original = UUID(), unrelated = UUID()
-        var policy = readingOlder()
+        let policy = readingOlder()
         policy.positionChanged(to: original)
         policy.positionChanged(to: nil)
         XCTAssertEqual(policy.visibleTurnID, original)
@@ -181,14 +218,14 @@ final class ChatScrollPolicyTests: XCTestCase {
         policy.appear(validTurnIDs: [original, unrelated])
         XCTAssertEqual(policy.visibleTurnID, original)
         XCTAssertFalse(policy.followingBottom)
-        XCTAssertTrue(policy.showsReturnToLatest)
+        XCTAssertFalse(policy.showsReturnToLatest, "Wait for measured viewport after reopening")
         policy.geometryChanged(to: geometry(offset: 180, content: 2_400, viewport: 300, bottom: 90))
         XCTAssertNil(policy.takeScroll(), "Restoring history must not enqueue a competing bottom scroll")
     }
 
     @MainActor func testLatestModeDoesNotRestoreOldVisibleMessageAfterReopen() async {
         let visible = UUID()
-        var policy = atBottom()
+        let policy = atBottom()
         policy.positionChanged(to: visible)
         policy.disappear()
         XCTAssertNil(policy.visibleTurnID)
@@ -200,7 +237,7 @@ final class ChatScrollPolicyTests: XCTestCase {
 
     @MainActor func testHistoryReplacementResetsOnlyMissingAnchorIncludingWhenHidden() async {
         let anchor = UUID(), other = UUID()
-        var policy = readingOlder()
+        let policy = readingOlder()
         policy.positionChanged(to: anchor)
         policy.reconcileHistory([other, anchor])
         XCTAssertEqual(policy.visibleTurnID, anchor)
@@ -232,7 +269,7 @@ final class ChatScrollPolicyTests: XCTestCase {
     }
 
     @MainActor func testReturnToLatestClearsBookmarkAndQueuesOnlyOneJump() async {
-        var policy = readingOlder()
+        let policy = readingOlder()
         policy.positionChanged(to: UUID())
         XCTAssertTrue(policy.showsReturnToLatest)
         policy.sendToLatest()
@@ -245,7 +282,7 @@ final class ChatScrollPolicyTests: XCTestCase {
     }
 
     @MainActor func testExplicitJumpOverridesOldMomentumButNewTouchStillCancelsIt() async {
-        var policy = readingOlder()
+        let policy = readingOlder()
         policy.phaseChanged(to: .decelerating)
         policy.sendToLatest()
         XCTAssertEqual(policy.takeScroll(), .animated, "The latest button must work while the old scroll coasts")
@@ -260,7 +297,7 @@ final class ChatScrollPolicyTests: XCTestCase {
     }
 
     @MainActor func testUserReturnThresholdDistinguishes24From25Points() async {
-        var policy = readingOlder()
+        let policy = readingOlder()
         policy.phaseChanged(to: .interacting)
         policy.geometryChanged(to: geometry(offset: 575)) // 25 points away.
         XCTAssertFalse(policy.followingBottom)

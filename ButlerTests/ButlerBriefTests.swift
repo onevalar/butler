@@ -28,13 +28,21 @@ final class ButlerBriefTests: XCTestCase {
         return store
     }
 
+    func testLocalInventoryNoticeDoesNotTellUserToBuy() {
+        let candidate = BriefCandidate(target: .lot(UUID()), kind: .lowStock, name: "水", detail: "数量为零",
+            quantity: 0, unit: "瓶", daysLeft: nil, location: nil, isMedicine: false)
+        let brief = BriefLocal.compose(candidates: [candidate], lotCount: 1, basis: "", now: at(9))
+        XCTAssertFalse(brief.text.contains("买"))
+        XCTAssertTrue(brief.text.contains("0 瓶"))
+    }
+
     // MARK: Candidates
 
     func testCandidatesAreOrderedByHowPressingTheyAreAndSnoozedOnesLeaveTheSentence() throws {
         let now = at(9)
         let eggs = lot("土鸡蛋", package: day(-4, from: now), place: "冷藏", now: now)
         let yogurt = lot("红枣酸奶", package: day(2, from: now), now: now)
-        let water = lot("七鲜饮用纯净水", quantity: 1, category: "household", now: now)
+        let water = lot("七鲜饮用纯净水", quantity: 0, category: "household", now: now)
         let due = TimedReminder(text: "热剩饭", fireDate: at(8), createdAt: day(-1, from: now))
         let agenda = HomeAgenda.build(lots: [yogurt, water, eggs], reminders: [due], events: [], now: now)
 
@@ -489,7 +497,7 @@ final class ButlerBriefTests: XCTestCase {
         let now = at(10)
         let eggs = lot("土鸡蛋", quantity: 6, package: day(-4, from: now), place: "冷藏", now: now)
         let yogurt = lot("红枣酸奶", package: day(2, from: now), place: "冷藏", now: now)
-        let water = lot("七鲜饮用纯净水", quantity: 1, category: "household", place: "卫生间", now: now)
+        let water = lot("七鲜饮用纯净水", quantity: 0, category: "household", place: "卫生间", now: now)
         let pending = TimedReminder(text: "热剩饭", fireDate: at(9), createdAt: day(-1, from: now))
         let noon = TimedReminder(text: "取快递", fireDate: at(15))
         let medicine = TimedReminder(text: "吃药", fireDate: at(21), repeats: .daily, createdAt: day(-3, from: now))
@@ -502,7 +510,7 @@ final class ButlerBriefTests: XCTestCase {
         XCTAssertTrue(list.rows.first?.isAlert ?? false)
         XCTAssertEqual(list.rows[1].action, "查看")
         XCTAssertEqual(list.rows[2].subtitle, "后天到期 · 2 瓶 · 冷藏")
-        XCTAssertEqual(list.rows[3].subtitle, "只剩 1 瓶 · 卫生间 · 记得买")
+        XCTAssertEqual(list.rows[3].subtitle, "剩 0 瓶 · 卫生间")
         XCTAssertEqual(list.rows[4].lead, "15:00")
         XCTAssertEqual(list.rows[5].lead, "21:00")
     }

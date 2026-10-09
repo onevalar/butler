@@ -3,6 +3,14 @@ import XCTest
 @testable import Butler
 
 final class ChatConfirmationTests: XCTestCase {
+    func testPresentationRemovesRepeatedTitleButPreservesDistinctEvidence() {
+        XCTAssertNil(ConfirmationPresentation.detail("✓ 新增 水 ×4 箱", title: "新增 水 ×4 箱"))
+        XCTAssertNil(ConfirmationPresentation.detail("新增 水 ×4 箱", title: "新增 水 ×4 箱"))
+        XCTAssertEqual(ConfirmationPresentation.detail("✗ 修改水数量：保存失败，请重试", title: "修改水数量"), "保存失败，请重试")
+        XCTAssertEqual(ConfirmationPresentation.detail("已保存，但系统通知未授权", title: "新增提醒"), "已保存，但系统通知未授权")
+        XCTAssertEqual(ConfirmationPresentation.detail("水数量：已改为5瓶", title: "水"), "水数量：已改为5瓶")
+    }
+
     @MainActor func testLateResultsUpdateExecutionIdentityAndEachOriginalRequestNotNewestTurn() async throws {
         let a = ChatTurn(question: "买纸巾"), b = ChatTurn(question: "记偏好")
         let execution = ChatTurn(question: "确认操作")

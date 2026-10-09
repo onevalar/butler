@@ -52,7 +52,7 @@ enum InventoryCatalog {
         if lot.isDurable {
             return lot.profile?.availability == nil || lot.profile?.availability == "ready" ? nil : lot.profile?.availabilityLabel
         }
-        if lot.quantityOnly { return lot.isRunningLow ? "快用完了" : nil }
+        if lot.quantityOnly { return lot.isRunningLow ? "已用完" : nil }
         guard let days = lot.daysLeft, let date = lot.governingDate else { return "未记录日期" }
         if days < 0 { return lot.dateStatusLabel }
         let ending: String

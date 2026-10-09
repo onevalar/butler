@@ -81,8 +81,7 @@ struct InventoryItemCard: View {
     }
 }
 
-/// Light cards need a tonal boundary against the near-white page; white-on-white
-/// glass highlights alone disappear. Keep the established dark treatment intact.
+/// Keep the translucent white surface; a neutral edge supplies contrast without a colored fill.
 private struct InventoryCardSurface: ViewModifier {
     @Environment(\.colorScheme) private var scheme
 
@@ -92,9 +91,8 @@ private struct InventoryCardSurface: ViewModifier {
         } else {
             let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
             content
-                .background(LinearGradient(colors: [Color(hex: 0xEDF0F4), Color(hex: 0xE4E8EE)],
-                                           startPoint: .topLeading, endPoint: .bottomTrailing).opacity(0.90), in: shape)
-                .overlay(shape.strokeBorder(Color(hex: 0x94A0B0).opacity(0.28), lineWidth: 0.75))
+                .background(Color.white.opacity(0.34), in: shape)
+                .overlay(shape.strokeBorder(Color.black.opacity(0.10), lineWidth: 0.75))
                 .shadow(color: Color.black.opacity(0.045), radius: 10, y: 4)
         }
     }
