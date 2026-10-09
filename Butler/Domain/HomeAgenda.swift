@@ -94,7 +94,8 @@ struct HomeAgenda {
     }
 
     static func build(lots: [LotFacts], reminders: [TimedReminder], events: [CalendarEventInfo],
-                      now: Date = .now, dayCount: Int = 7, calendar: Calendar = .current, additionalDays: [Date] = []) -> HomeAgenda {
+                      now: Date = .now, dayCount: Int = 7, calendar: Calendar = .current, additionalDays: [Date] = [],
+                      household: HouseholdNames = .none) -> HomeAgenda {
         let today = calendar.startOfDay(for: now)
         let days = (0..<dayCount).compactMap { calendar.date(byAdding: .day, value: $0, to: today) }
         let displayedDays = Array(Set(days + additionalDays.map { calendar.startOfDay(for: $0) })).sorted()
@@ -142,7 +143,8 @@ struct HomeAgenda {
             for date in dates {
                 let day = calendar.startOfDay(for: date)
                 guard day <= today else { continue }
-                let detail = completion.map { "已完成 · \($0.monthDay) \($0.clockTime) 完成" } ?? "已完成"
+                let who = household.completedBy(reminder).map { " · \($0)" } ?? ""
+                let detail = (completion.map { "已完成 · \($0.monthDay) \($0.clockTime) 完成" } ?? "已完成") + who
                 byDay[day, default: []].append(AgendaEntry(
                     id: "completed-\(reminder.id)-\(date.timeIntervalSince1970)", kind: .reminder,
                     title: reminder.text, subtitle: detail, day: day, start: date,
@@ -157,7 +159,8 @@ struct HomeAgenda {
                ReminderSchedule.preview(reminder, now: today.addingTimeInterval(-0.001), limit: 1).isEmpty {
                 byDay[today, default: []].append(AgendaEntry(
                     id: "pending-\(reminder.id)", kind: .reminder, title: reminder.text,
-                    subtitle: "\(reminder.fireDate.monthDay) 的任务 · 尚未完成", day: today, start: nil, end: nil,
+                    subtitle: ["\(reminder.fireDate.monthDay) 的任务 · 尚未完成", household.rowLabel(reminder.sharing)]
+                        .compactMap { $0 }.joined(separator: " · "), day: today, start: nil, end: nil,
                     target: .reminder(reminder.id)))
             }
             var taskDays = displayedDays
@@ -175,9 +178,10 @@ struct HomeAgenda {
                         case .none: nil
                         }
                     }
+                    let labels = [repeatLabel, household.rowLabel(reminder.sharing)].compactMap { $0 }
                     byDay[day, default: []].append(AgendaEntry(
                         id: "reminder-\(reminder.id)-\(start.timeIntervalSince1970)", kind: .reminder, title: reminder.text,
-                        subtitle: repeatLabel, day: day, start: start, end: start.addingTimeInterval(30 * 60),
+                        subtitle: labels.isEmpty ? nil : labels.joined(separator: " · "), day: day, start: start, end: start.addingTimeInterval(30 * 60),
                         target: .reminder(reminder.id), isRoutine: reminder.repeats == .daily && reminder.phases == nil))
                 }
             }

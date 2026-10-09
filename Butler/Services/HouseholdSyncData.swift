@@ -1,5 +1,6 @@
 import Foundation
 import SwiftData
+import UserNotifications
 
 /// What goes through the household zone: shared things (with who can see them and who recorded them)
 /// and the people in the household. Personal things and everything else stay in this device's own sync.
@@ -11,6 +12,9 @@ import SwiftData
 
     let base: ButlerSyncData
     let store: HouseholdStore
+    /// Tells this person what others did that concerns them: a task given to them, one they made that
+    /// someone else finished. Posted at once, not at the task's time.
+    var announce: (_ title: String, _ body: String, _ task: UUID) -> Void = HouseholdSyncData.post
 
     init(base: ButlerSyncData, store: HouseholdStore) {
         self.base = base
@@ -27,6 +31,12 @@ import SwiftData
             result[.init(kind: .inventory, id: id)] = try SyncRecord.encode(SharedInventory(inventory: inventory, sharing: sharing))
         }
         for member in store.members { result[.init(kind: .member, id: member.id)] = try SyncRecord.encode(member) }
+        if store.state != nil {
+            for task in try base.tasks.tasksForSync() where task.sharing?.isShared == true {
+                result[.init(kind: .task, id: task.id)] = try SyncRecord.encode(ButlerSyncData.portable(task))
+            }
+            for (id, task) in store.hiddenTasks { result[.init(kind: .task, id: id)] = try SyncRecord.encode(task) }
+        }
         return result
     }
 
@@ -57,10 +67,58 @@ import SwiftData
             } else {
                 store.removeMember(key.id)
             }
+        case .task:
+            let old = base.tasks.reminder(id: key.id)
+            if let payload {
+                var value = try JSONDecoder().decode(TimedReminder.self, from: payload)
+                guard value.id == key.id, let sharing = value.sharing, sharing.isShared else {
+                    throw SyncFailure("家庭任务记录无效，未修改本机。")
+                }
+                if let me = store.state?.me, !sharing.canSee(me) {
+                    // Not for this person: kept aside, out of lists, reminders and the model.
+                    if old != nil { try base.tasks.receiveSyncedTask(key.id, value: nil) }
+                    store.setHiddenTask(value, id: key.id)
+                } else {
+                    if store.hiddenTasks[key.id] != nil { store.setHiddenTask(nil, id: key.id) }
+                    value.revision = try base.nextRevision()
+                    try base.tasks.receiveSyncedTask(key.id, value: value)
+                    tell(old: old, new: value)
+                }
+            } else {
+                // Made personal by its creator, or deleted.
+                if old != nil { try base.tasks.receiveSyncedTask(key.id, value: nil) }
+                if store.hiddenTasks[key.id] != nil { store.setHiddenTask(nil, id: key.id) }
+            }
         default:
-            throw SyncFailure("家庭同步只包含共享的物品和成员。")
+            throw SyncFailure("家庭同步只包含共享的物品、任务和成员。")
         }
         WidgetSnapshotPublisher.shared.refresh()
         NotificationCenter.default.post(name: .init("butlerBriefSourcesChanged"), object: nil)
+    }
+
+    /// A task that now reminds this person and was given by someone else; one this person made, finished by someone else.
+    private func tell(old: TimedReminder?, new: TimedReminder) {
+        guard let me = store.state?.me, let sharing = new.sharing else { return }
+        let names = store.names
+        let remindedBefore = old.map { $0.status == .active && $0.sharing?.reminded.contains(me) == true } ?? false
+        let by = new.activity.last?.by ?? sharing.createdBy
+        if new.status == .active, sharing.reminded.contains(me), !remindedBefore, by != me {
+            announce("\(names.name(by) ?? "家人")交给你一件事", "\(new.text) · \(new.whenLabel)", new.id)
+        }
+        if new.status == .completed, old?.status != .completed, sharing.createdBy == me,
+           let done = new.activity.last(where: { $0.kind == "completed" })?.by, done != me {
+            announce("\(names.name(done) ?? "家人")完成了", new.text, new.id)
+        }
+    }
+
+    static func post(_ title: String, _ body: String, _ task: UUID) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        content.userInfo = ["reminderID": task.uuidString]
+        let request = UNNotificationRequest(identifier: "butler.household.\(task.uuidString).\(UUID().uuidString)",
+                                            content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request) { _ in }
     }
 }

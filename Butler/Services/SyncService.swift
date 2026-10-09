@@ -68,8 +68,9 @@ import UIKit
 
     /// Only already-enabled sources needed by the brief; no photo transfers or permission prompts.
     func refreshForBrief() async {
-        guard UIApplication.shared.isProtectedDataAvailable,
-              let store, store.enabled, !store.busy, job == nil else { return }
+        guard UIApplication.shared.isProtectedDataAvailable else { return }
+        await HouseholdService.shared.sync()
+        guard let store, store.enabled, !store.busy, job == nil else { return }
         let refresh = Task { [weak self] in
             try? await store.synchronize()
             guard !Task.isCancelled, store.enabled else { return }

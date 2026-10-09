@@ -15,6 +15,8 @@ import SwiftData
     private let revisionFile: URL
     /// Products that travel through the household zone instead; this device's own sync leaves them out.
     var householdProducts: () -> Set<UUID> = { [] }
+    /// Tasks shared in the household travel through its zone too.
+    var householdTasks: () -> Set<UUID> = { [] }
     init(container: ModelContainer, notes: LocalMemoryStore, tasks: ReminderStore, revisionFile: URL) {
         self.container = container; self.notes = notes; self.tasks = tasks; self.revisionFile = revisionFile
     }
@@ -41,7 +43,10 @@ import SwiftData
             var value = note; value.revision = 0
             result[.init(kind: .note, id: note.id)] = try SyncRecord.encode(value)
         }
-        for task in try tasks.tasksForSync() { result[.init(kind: .task, id: task.id)] = try SyncRecord.encode(Self.portable(task)) }
+        let sharedTasks = householdTasks()
+        for task in try tasks.tasksForSync() where !sharedTasks.contains(task.id) {
+            result[.init(kind: .task, id: task.id)] = try SyncRecord.encode(Self.portable(task))
+        }
         return result
     }
     /// Each product with its batches and defaults, in the portable form both syncs use.
@@ -95,6 +100,7 @@ import SwiftData
     func replace(_ key: SyncRecord.Key, expected: Data?, with payload: Data?) throws {
         // The household zone owns shared things; this device's own sync never overwrites them.
         if key.kind == .inventory, householdProducts().contains(key.id) { return }
+        if key.kind == .task, householdTasks().contains(key.id) { return }
         guard try snapshot()[key] == expected else { throw SyncFailure("本机资料刚发生变化，未覆盖。") }
         let revision = try nextRevision()
         switch key.kind {

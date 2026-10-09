@@ -444,7 +444,8 @@ struct ContentView: View {
         let extraDays = months.flatMap { HomeAgenda.browsingDays(around: $0) }
             + (overviewInterval.map { AgendaWindow.days(in: $0, calendar: calendar) } ?? [])
         let built = HomeAgenda.build(lots: facts, reminders: reminders.reminders, events: calendarFeed.events,
-                                     now: agendaNow, dayCount: 366, additionalDays: extraDays)
+                                     now: agendaNow, dayCount: 366, additionalDays: extraDays,
+                                     household: HouseholdStore.shared.names)
         agendaCache.key = key
         agendaCache.agenda = built
         return built

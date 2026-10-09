@@ -5,11 +5,15 @@ import XCTest
 
 /// Two phones in one household, over a fake CloudKit zone.
 @MainActor final class HouseholdSyncTests: XCTestCase {
+    final class Said { var lines: [String] = [] }
+
     struct Phone {
         let base: ButlerSyncData
         let household: HouseholdStore
         let sync: SyncStore
+        let said: Said
         var container: ModelContainer { base.container }
+        var tasks: ReminderStore { base.tasks }
     }
 
     private let owner = UUID(), member = UUID()
@@ -26,10 +30,13 @@ import XCTest
         let household = HouseholdStore(directory: dir.appendingPathComponent("household"))
         let state = HouseholdState(id: UUID(), name: "我们家", role: role, zoneName: "z", zoneOwner: "o", me: me, joinedAt: .now)
         household.begin(state, me: HouseholdMember(id: me, name: name, isOwner: role == .owner, joinedAt: .now))
-        base.householdProducts = { household.householdProducts(container: base.container) }
+        HouseholdService.wire(base, household)
+        let said = Said()
+        let local = HouseholdSyncData(base: base, store: household)
+        local.announce = { title, body, _ in said.lines.append("\(title)：\(body)") }
         let sync = SyncStore(file: dir.appendingPathComponent("household.json"),
-                             local: HouseholdSyncData(base: base, store: household), transport: cloud, kinds: [.inventory, .member])
-        return Phone(base: base, household: household, sync: sync)
+                             local: local, transport: cloud, kinds: HouseholdService.kinds)
+        return Phone(base: base, household: household, sync: sync, said: said)
     }
 
     @discardableResult
@@ -146,5 +153,124 @@ import XCTest
     func testMemberIDIsTheSameOnEveryDeviceOfOnePerson() {
         XCTAssertEqual(HouseholdMember.id(forUser: "_abc"), HouseholdMember.id(forUser: "_abc"))
         XCTAssertNotEqual(HouseholdMember.id(forUser: "_abc"), HouseholdMember.id(forUser: "_abd"))
+    }
+
+    // MARK: Tasks
+
+    private func pair() async throws -> (FakeSyncCloud, Phone, Phone) {
+        let cloud = FakeSyncCloud()
+        let mine = try phone(cloud, me: owner, role: .owner, name: "老公")
+        let theirs = try phone(cloud, me: member, role: .member, name: "老婆")
+        try await mine.sync.setEnabled(true); try await mine.sync.synchronize()
+        try await theirs.sync.setEnabled(true); try await theirs.sync.synchronize(); try await mine.sync.synchronize()
+        return (cloud, mine, theirs)
+    }
+
+    private func roundTrip(_ from: Phone, _ to: Phone) async throws {
+        try await from.sync.synchronize(); try await to.sync.synchronize()
+    }
+
+    private func task(_ text: String, _ sharing: TaskSharing?) -> TimedReminder {
+        var value = TimedReminder(text: text, fireDate: .now.addingTimeInterval(3600 * 5))
+        value.sharing = sharing
+        return value
+    }
+
+    func testAnAssignedTaskReachesThatPersonAndOnlyTheirPhoneReminds() async throws {
+        let (_, mine, theirs) = try await pair()
+        let bills = task("交水费", TaskSharing(scope: .household, createdBy: owner, assignee: member))
+        try mine.tasks.add(bills)
+        try mine.tasks.add(task("体检", TaskSharing(scope: .personal, createdBy: owner)))
+        try await roundTrip(mine, theirs)
+
+        XCTAssertEqual(theirs.tasks.reminders.map(\.text), ["交水费"], "the private check-up stays on the owner's phone")
+        let received = try XCTUnwrap(theirs.tasks.reminder(id: bills.id))
+        XCTAssertTrue(theirs.tasks.remindsHere(received), "the person responsible is reminded")
+        XCTAssertFalse(mine.tasks.remindsHere(try XCTUnwrap(mine.tasks.reminder(id: bills.id))), "the one who gave it is not")
+        XCTAssertEqual(theirs.said.lines, ["老公交给你一件事：交水费 · \(received.whenLabel)"])
+        XCTAssertEqual(theirs.household.names.rowLabel(received.sharing), "老公交给你")
+        XCTAssertEqual(mine.household.names.rowLabel(bills.sharing), "交给老婆")
+    }
+
+    func testFinishingIsRecordedWithWhoAndTheCreatorIsTold() async throws {
+        let (_, mine, theirs) = try await pair()
+        let bills = task("交水费", TaskSharing(scope: .household, createdBy: owner, assignee: member))
+        try mine.tasks.add(bills)
+        try await roundTrip(mine, theirs)
+        try theirs.tasks.complete(bills.id)
+        try await roundTrip(theirs, mine)
+
+        let done = try XCTUnwrap(mine.tasks.reminder(id: bills.id))
+        XCTAssertEqual(done.status, .completed, "it is not removed, it is finished")
+        XCTAssertEqual(mine.household.names.completedBy(done), "老婆完成")
+        XCTAssertEqual(mine.said.lines, ["老婆完成了：交水费"])
+        XCTAssertNil(theirs.household.names.completedBy(try XCTUnwrap(theirs.tasks.reminder(id: bills.id))), "not said about oneself")
+
+        // Anyone who can see it can reopen it, and that is recorded too.
+        try mine.tasks.reopen(bills.id)
+        try await roundTrip(mine, theirs)
+        let reopened = try XCTUnwrap(theirs.tasks.reminder(id: bills.id))
+        XCTAssertEqual(reopened.status, .active)
+        XCTAssertEqual(reopened.activity.last?.by, owner)
+    }
+
+    func testATaskHiddenFromSomeoneNeverReachesTheirListsAndComesBackWhenShown() async throws {
+        let (_, mine, theirs) = try await pair()
+        let surprise = task("订生日蛋糕", TaskSharing(scope: .household, hiddenFrom: [member], createdBy: owner))
+        try mine.tasks.add(surprise)
+        try await roundTrip(mine, theirs)
+        XCTAssertNil(theirs.tasks.reminder(id: surprise.id))
+        XCTAssertNotNil(theirs.household.hiddenTasks[surprise.id], "kept aside so syncing does not delete it")
+        try await theirs.sync.synchronize(); try await mine.sync.synchronize()
+        XCTAssertNotNil(mine.tasks.reminder(id: surprise.id), "the other phone's sync did not remove it")
+
+        try mine.tasks.setSharing(surprise.id, TaskSharing(scope: .household, createdBy: owner), detail: "改为全家可见")
+        try await roundTrip(mine, theirs)
+        XCTAssertNotNil(theirs.tasks.reminder(id: surprise.id))
+        XCTAssertNil(theirs.household.hiddenTasks[surprise.id])
+    }
+
+    func testMakingATaskPersonalTakesItOffTheOtherPhoneAndIntoTheOwnSync() async throws {
+        let (_, mine, theirs) = try await pair()
+        let shopping = task("周六买菜", TaskSharing(scope: .household, createdBy: owner))
+        try mine.tasks.add(shopping)
+        XCTAssertNil(try mine.base.snapshot()[.init(kind: .task, id: shopping.id)], "own sync leaves shared tasks to the household")
+        try await roundTrip(mine, theirs)
+        XCTAssertNotNil(theirs.tasks.reminder(id: shopping.id))
+
+        try mine.tasks.setSharing(shopping.id, TaskSharing(scope: .personal, createdBy: owner), detail: "改为只有老公")
+        try await roundTrip(mine, theirs)
+        XCTAssertNil(theirs.tasks.reminder(id: shopping.id))
+        XCTAssertNotNil(try mine.base.snapshot()[.init(kind: .task, id: shopping.id)])
+    }
+
+    func testWhoIsResponsibleAndRemindedCannotBeLeftOutOfWhoCanSee() {
+        let given = TaskSharing(scope: .personal, createdBy: owner, assignee: member).normalized()
+        XCTAssertEqual(given.scope, .people)
+        XCTAssertTrue(given.canSee(member))
+        XCTAssertEqual(given.reminded, [member])
+        let hidden = TaskSharing(scope: .household, hiddenFrom: [member], createdBy: owner, notify: [member]).normalized()
+        XCTAssertTrue(hidden.hiddenFrom.isEmpty, "someone reminded can see it")
+        XCTAssertEqual(TaskSharing(scope: .household, createdBy: owner).reminded, [owner], "nobody responsible: the one who wrote it down")
+    }
+
+    func testTheCardLineSaysTheDecisionInOneLine() {
+        let names = HouseholdNames(me: owner, names: [owner: "老公", member: "老婆"])
+        XCTAssertEqual(names.summary(TaskSharing(scope: .household, createdBy: owner, assignee: member)), "全家可见 · 交给老婆")
+        XCTAssertEqual(names.summary(TaskSharing(scope: .personal, createdBy: owner)), "只有你")
+        XCTAssertEqual(names.summary(TaskSharing(scope: .household, hiddenFrom: [member], createdBy: owner)), "全家可见，不给老婆看")
+        XCTAssertEqual(names.summary(TaskSharing(scope: .household, createdBy: owner, notify: [owner, member])), "全家可见 · 提醒你、老婆")
+        XCTAssertEqual(names.thirdPerson.summary(TaskSharing(scope: .people, people: [member], createdBy: owner, assignee: member)),
+                       "老公、老婆可见 · 交给老婆", "records read the same on every phone")
+    }
+
+    func testTheDiaryTellsWhatTheFamilyDid() {
+        let names = HouseholdNames(me: owner, names: [owner: "老公", member: "老婆"])
+        var bills = task("交水费", TaskSharing(scope: .household, createdBy: owner, assignee: member))
+        bills.activity = [ReminderActivity(kind: "created", detail: "创建", by: owner),
+                          ReminderActivity(kind: "completed", detail: "完成", by: member)]
+        let diary = DiaryDay.build(from: [], tasks: [bills], household: names)
+        XCTAssertEqual(diary.first?.family, ["老婆完成了 交水费"])
+        XCTAssertEqual(diary.first?.headline, "家里：家人完成了 1 件事")
     }
 }

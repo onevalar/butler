@@ -15,6 +15,8 @@ struct ReminderActivity: Codable, Equatable, Identifiable {
     var date = Date()
     var kind: String
     var detail: String
+    /// The household member who did it (nil outside a household).
+    var by: UUID? = nil
 }
 
 /// Pure scheduling shared by the agenda, plan preview and notification delivery.

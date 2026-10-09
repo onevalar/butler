@@ -1,6 +1,6 @@
 # 家庭共享（多人共用）设计
 
-用户确认的方案（2026-10-09）。实现分三步：① 共享物品（已完成）② 共享与指派任务 ③ 管家多人化。
+用户确认的方案（2026-10-09）。实现分三步：① 共享物品（已完成）② 共享与指派任务（已完成）③ 管家多人化。
 
 ## 已确定的原则
 - 全家都是 iPhone：用 iCloud 共享（CKShare 整区共享），不自建服务器、不注册账号。创建者的 iCloud 存家庭资料；家人用自己的 Apple ID 加入；一个人只加入一个家庭；只有创建者能邀请；退出或解散时每个人保留一份当时的东西。
@@ -20,6 +20,17 @@
 - 邀请用系统 `UICloudSharingController`；接受邀请经 `ButlerSceneDelegate`（Info.plist `CKSharingSupported`）。
 - 对话工具 `propose_item_sharing` 修改谁能看到，确认后生效；`current_context.household` 告诉模型家里有谁、当前是谁。
 
+## 第二步（共享与指派任务）的实现
+- 任务带 `TaskSharing`：范围（personal / household / people）、对谁隐藏、创建者、负责人、提醒谁（空=负责人，没人负责就是创建者）。交给别人或提醒别人的任务自动对对方可见（`normalized()`）。
+- 非 personal 的任务走家庭区（记录种类 `task`），本人私有同步不再携带。看不到的任务放在 `HouseholdStore.hiddenTasks`，不进列表、提醒和模型，但仍原样参与同步，避免被误删。
+- 每部手机只排“提醒名单里有我”的家庭任务（`ReminderStore.remindsHere`）；有人完成后状态同步过来，其他手机的提醒自然撤掉。
+- 操作记录 `ReminderActivity.by` 记下是谁做的；完成不删除，首页已完成显示“· 妈妈完成”，任务页有“家人”区（谁能看到 / 谁负责 / 到点提醒 / 谁记的），可以改回，改动写进“做过什么”（用第三人称写，所有人读起来一致）。
+- 收到别人交给自己的事立即本地通知“老公交给你一件事”；自己创建的事被别人完成时通知“老婆完成了”。
+- 家庭区变化通过 CloudKit 订阅静默推送唤醒手机同步（`aps-environment` + `remote-notification`），App 关着也能收到指派。
+- 对话：`propose_reminder` / `propose_task_plan` 带 `family`，管家按句子 > 家庭规则 > 内容判断直接给结论；`propose_task_sharing` 修改；确认卡片上一行“全家可见 · 交给妈妈”可点开直接改，改动会告诉管家以便提议记成规则。
+- 管家日记加入家人做的事（“老婆完成了 交水费”）。
+- 尚未做（第三步）：规则列表页、没人处理时提醒下一个人、免打扰时段、按人生成首页提醒、“提醒他一下”、共享模型开关。
+
 ## 验收注意
-- 需要两个不同 Apple ID 的 iPhone 实测邀请、加入、同步、退出、解散。模拟器未登录 iCloud，只能验证界面。
+- 需要两个不同 Apple ID 的 iPhone 实测邀请、加入、同步、指派、完成回执、推送、退出、解散。模拟器未登录 iCloud，只能验证界面。
 - 调试安装用 CloudKit 开发环境，TestFlight/App Store 用生产环境，两边不能互通；正式测试前须在 CloudKit Console 把开发环境的结构部署到生产环境。

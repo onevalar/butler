@@ -43,7 +43,7 @@ final class ContextToolsTests: XCTestCase {
     func testAllNewToolSchemasAreStrictIncludingNestedObjects() throws {
         let schemas = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(("[" + ButlerTools.contextTools + "]").utf8)) as? [[String: Any]])
         XCTAssertEqual(Set(schemas.compactMap { $0["name"] as? String }),
-                       Set(["get_current_context", "get_settings", "propose_settings", "get_tasks", "propose_task_plan", "propose_task_action"]))
+                       Set(["get_current_context", "get_settings", "propose_settings", "get_tasks", "propose_task_plan", "propose_task_action", "propose_task_sharing"]))
         func inspect(_ value: Any) {
             if let object = value as? [String: Any] {
                 if object["type"] as? String == "object" {

@@ -111,7 +111,8 @@ final class BriefRefreshController {
             let facts = try model.tools.activeFacts()
             let tasks = try reminders.taskSnapshot()
             // Calendar display access is separate from permission to send events to the model.
-            let agenda = HomeAgenda.build(lots: facts, reminders: tasks, events: [], now: now, dayCount: 7)
+            let agenda = HomeAgenda.build(lots: facts, reminders: tasks, events: [], now: now, dayCount: 7,
+                                          household: HouseholdStore.shared.names)
             let candidates = BriefCandidates.make(facts: facts, agenda: agenda, now: now,
                 snoozed: BriefSnoozes.active(now: now))
             service.update(candidates: candidates, lotCount: facts.count,

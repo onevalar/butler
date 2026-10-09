@@ -46,7 +46,8 @@ struct DiaryStrip: View {
     let turns: [ChatTurn]
 
     var body: some View {
-        let diary = DiaryDay.build(from: turns)
+        let diary = DiaryDay.build(from: turns, tasks: ReminderStore.openOnDevice().reminders,
+                                   household: HouseholdStore.shared.names)
         if diary.isEmpty {
             Text("还没有日记。每天和我说过的事、帮你记下的东西，会按天留在这里。")
                 .font(.subheadline).foregroundStyle(.secondary)
@@ -87,10 +88,16 @@ private struct DiaryCard: View {
             Text(day.headline).font(.headline).lineLimit(2)
             if !day.lines.isEmpty {
                 Text(day.lines.prefix(4).joined(separator: "；") + (day.lines.count > 4 ? "；等 \(day.lines.count) 项" : ""))
-                    .font(.subheadline).foregroundStyle(.secondary).lineLimit(4)
+                    .font(.subheadline).foregroundStyle(.secondary).lineLimit(day.family.isEmpty ? 4 : 2)
+            }
+            if !day.family.isEmpty {
+                Label {
+                    Text(day.family.prefix(3).joined(separator: "；") + (day.family.count > 3 ? "；等 \(day.family.count) 件" : ""))
+                } icon: { Image(systemName: "person.2") }
+                    .font(.subheadline).foregroundStyle(.secondary).lineLimit(day.lines.isEmpty ? 4 : 2)
             }
             Spacer(minLength: 0)
-            Text("聊了 \(day.conversations) 次").font(.caption).foregroundStyle(.tertiary)
+            Text(day.conversations > 0 ? "聊了 \(day.conversations) 次" : "来自家人").font(.caption).foregroundStyle(.tertiary)
         }
         .padding(16)
         .frame(width: 232, height: 196, alignment: .topLeading)

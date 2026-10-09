@@ -20,6 +20,8 @@ struct TimedReminder: Codable, Identifiable, Equatable {
     var activity: [ReminderActivity]
     /// Device-local: a received task is visible but does not acquire notification ownership.
     var syncReceived: Bool? = nil
+    /// In a household: who can see it, who is responsible, who is reminded. nil: only this person's.
+    var sharing: TaskSharing? = nil
 
     init(id: UUID = UUID(), text: String, fireDate: Date, repeats: Repeat = .none, createdAt: Date = .now,
          status: Status = .active, revision: Int = 1, endDate: Date? = nil, autoCompleteAt: Date? = nil,
@@ -31,7 +33,7 @@ struct TimedReminder: Codable, Identifiable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, text, fireDate, repeats, createdAt, status, revision, endDate, autoCompleteAt, phases, timeZoneIdentifier, activity, syncReceived
+        case id, text, fireDate, repeats, createdAt, status, revision, endDate, autoCompleteAt, phases, timeZoneIdentifier, activity, syncReceived, sharing
     }
 
     init(from decoder: Decoder) throws {
@@ -49,6 +51,7 @@ struct TimedReminder: Codable, Identifiable, Equatable {
         timeZoneIdentifier = try values.decodeIfPresent(String.self, forKey: .timeZoneIdentifier) ?? TimeZone.current.identifier
         activity = try values.decodeIfPresent([ReminderActivity].self, forKey: .activity) ?? []
         syncReceived = try values.decodeIfPresent(Bool.self, forKey: .syncReceived)
+        sharing = try values.decodeIfPresent(TaskSharing.self, forKey: .sharing)
     }
 
     var statusLabel: String {
@@ -99,6 +102,10 @@ final class ReminderStore {
     static let prefix = "butler.reminder."
     /// App policy: reserve room for inventory notifications rather than filling every OS slot.
     static let notificationBudget = 40
+    /// The household member using this phone, recorded on what they do (nil outside a household).
+    @ObservationIgnored var actor: () -> UUID? = { nil }
+    /// Whether this phone delivers a task's reminders. Outside a household: only tasks made here.
+    @ObservationIgnored var remindsHere: (TimedReminder) -> Bool = { $0.syncReceived != true }
 
     init(file: URL, schedules: Bool = true) {
         self.file = file
@@ -207,7 +214,7 @@ final class ReminderStore {
         try ReminderSchedule.validate(reminder)
         guard self.reminder(id: reminder.id) == nil else { throw ReminderSchedule.InvalidRule(message: "这个任务已经保存") }
         var saved = reminder
-        saved.activity.append(ReminderActivity(kind: "created", detail: "创建任务：\(reminder.whenLabel)"))
+        saved.activity.append(ReminderActivity(kind: "created", detail: "创建任务：\(reminder.whenLabel)", by: actor()))
         try save(reminders + [saved])
         rescheduleAll()
     }
@@ -222,7 +229,7 @@ final class ReminderStore {
         saved.status = old.status
         saved.syncReceived = old.syncReceived
         saved.revision = old.revision + 1
-        saved.activity = old.activity + [ReminderActivity(kind: "updated", detail: "修改提醒规则：\(reminder.whenLabel)")]
+        saved.activity = old.activity + [ReminderActivity(kind: "updated", detail: "修改提醒规则：\(reminder.whenLabel)", by: actor())]
         try save(reminders.map { $0.id == saved.id ? saved : $0 })
         rescheduleAll()
     }
@@ -250,7 +257,7 @@ final class ReminderStore {
         let expiredAutomatic = reminder.autoCompleteAt.map { $0 <= now } ?? false
         if expiredAutomatic { reminder.autoCompleteAt = nil }
         reminder.activity.append(ReminderActivity(date: now, kind: "reopened",
-            detail: "重新标记为未完成" + (expiredAutomatic ? "；清除已过期的自动完成时间" : "")))
+            detail: "重新标记为未完成" + (expiredAutomatic ? "；清除已过期的自动完成时间" : ""), by: actor()))
         try save(reminders.map { $0.id == id ? reminder : $0 })
         rescheduleAll()
     }
@@ -262,7 +269,21 @@ final class ReminderStore {
         if status == .active, reminder.status != .paused { return }
         reminder.status = status
         reminder.revision += 1
-        reminder.activity.append(ReminderActivity(kind: kind, detail: detail))
+        reminder.activity.append(ReminderActivity(kind: kind, detail: detail, by: actor()))
+        try save(reminders.map { $0.id == id ? reminder : $0 })
+        rescheduleAll()
+    }
+
+    /// Who can see it, who is responsible, who is reminded. Allowed at any status, and recorded.
+    func setSharing(_ id: UUID, _ sharing: TaskSharing?, detail: String, expectedRevision: Int? = nil) throws {
+        guard var reminder = reminder(id: id) else { throw ReminderSchedule.InvalidRule(message: "任务不存在") }
+        if let expectedRevision, reminder.revision != expectedRevision {
+            throw ReminderSchedule.InvalidRule(message: "任务已发生变化，请读取最新任务后重试")
+        }
+        guard reminder.sharing != sharing else { return }
+        reminder.sharing = sharing
+        reminder.revision += 1
+        reminder.activity.append(ReminderActivity(kind: "shared", detail: detail, by: actor()))
         try save(reminders.map { $0.id == id ? reminder : $0 })
         rescheduleAll()
     }
@@ -346,7 +367,7 @@ final class ReminderStore {
     }
 
     func snooze(id: UUID, revision: Int, minutes: Int = 10) async throws {
-        guard let reminder = reminder(id: id), reminder.syncReceived != true, reminder.status == .active, reminder.revision == revision else { return }
+        guard let reminder = reminder(id: id), remindsHere(reminder), reminder.status == .active, reminder.revision == revision else { return }
         let fire = Date.now.addingTimeInterval(Double(minutes) * 60)
         guard minutes >= 1, reminder.endDate.map({ fire <= $0 }) ?? true,
               reminder.autoCompleteAt.map({ fire < $0 }) ?? true else {
@@ -409,7 +430,7 @@ final class ReminderStore {
         let pending = await center.pendingNotificationRequests()
         guard !loadFailed else { return }
         let generation = scheduleGeneration
-        let snapshot = reminders.filter { $0.syncReceived != true }
+        let snapshot = reminders.filter { remindsHere($0) }
         let now = Date.now
         var candidates: [(Date, UNNotificationRequest)] = []
         var limited = Set<String>()

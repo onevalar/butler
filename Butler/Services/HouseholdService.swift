@@ -2,6 +2,7 @@ import CloudKit
 import Foundation
 import Observation
 import SwiftData
+import UIKit
 
 /// Creating, joining, syncing and leaving the household. The household's things live in one CloudKit zone
 /// in the creator's iCloud, shared with the family through a zone-wide `CKShare`.
@@ -39,11 +40,12 @@ final class HouseholdService {
         self.container = container
         self.base = base
         self.root = root
-        base.householdProducts = { [weak base] in
-            guard let base else { return [] }
-            return HouseholdStore.shared.householdProducts(container: base.container)
+        Self.wire(base, store)
+        if let state = store.state {
+            makeSyncStore(state)
+            base.tasks.rescheduleAll()
+            Task { await subscribe() }
         }
-        if let state = store.state { makeSyncStore(state) }
         if let invite = pendingInvite {
             pendingInvite = nil
             Task { await accept(invite) }
@@ -54,7 +56,27 @@ final class HouseholdService {
         guard let base, let root else { return }
         syncStore = SyncStore(file: root.appendingPathComponent("household-\(state.id.uuidString).json"),
                               local: HouseholdSyncData(base: base, store: store),
-                              transport: CloudKitSyncTransport(household: state), kinds: [.inventory, .member])
+                              transport: CloudKitSyncTransport(household: state), kinds: Self.kinds)
+    }
+
+    static let kinds: Set<SyncRecord.Kind> = [.inventory, .member, .task]
+
+    /// Connects this device's own data to the household: which things and tasks travel through the household,
+    /// who is acting, and which tasks this phone reminds about.
+    static func wire(_ base: ButlerSyncData, _ store: HouseholdStore) {
+        base.householdProducts = { [weak base, weak store] in
+            guard let base, let store else { return [] }
+            return store.householdProducts(container: base.container)
+        }
+        base.householdTasks = { [weak base, weak store] in
+            guard let base, store?.state != nil else { return [] }
+            return Set(base.tasks.reminders.filter { $0.sharing?.isShared == true }.map(\.id))
+        }
+        base.tasks.actor = { [weak store] in store?.state?.me }
+        base.tasks.remindsHere = { [weak store] task in
+            if let me = store?.state?.me, let sharing = task.sharing, sharing.isShared { return sharing.reminded.contains(me) }
+            return task.syncReceived != true
+        }
     }
 
     private var zoneID: CKRecordZone.ID? {
@@ -91,6 +113,7 @@ final class HouseholdService {
         makeSyncStore(state)
         try await syncStore?.setEnabled(true)
         await sync()
+        await subscribe()
         return summary
     }
 
@@ -137,6 +160,7 @@ final class HouseholdService {
             await sync()
             summary = finishJoining(container)
             await sync()
+            await subscribe()
         } catch {
             notice = "没能加入家庭：\(error.localizedDescription)"
             ChatDiagnostics.log("household accept failed: \(error)")
@@ -226,8 +250,44 @@ final class HouseholdService {
             guard !zones.contains(where: { $0.zoneID == zoneID }) else { return false }
         } catch { return false }
         notice = "你已不在「\(store.state?.name ?? "家庭")」里了，家里的东西作为你自己的保留在这台手机上。"
+        if let state = store.state { await unsubscribe(state) }
         endLocally()
         return true
+    }
+
+    // MARK: Push
+
+    private var subscriptionID: String? { store.state.map { "household-\($0.id.uuidString)" } }
+
+    /// Asks iCloud to wake this phone when anyone changes the household, once per household.
+    private func subscribe() async {
+        guard let state = store.state, let zoneID, let id = subscriptionID else { return }
+        UIApplication.shared.registerForRemoteNotifications()
+        let key = "household.subscribed.\(id)"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        let info = CKSubscription.NotificationInfo()
+        info.shouldSendContentAvailable = true
+        do {
+            if state.role == .owner {
+                let subscription = CKRecordZoneSubscription(zoneID: zoneID, subscriptionID: id)
+                subscription.notificationInfo = info
+                _ = try await cloud.privateCloudDatabase.modifySubscriptions(saving: [subscription], deleting: [])
+            } else {
+                let subscription = CKDatabaseSubscription(subscriptionID: id)
+                subscription.notificationInfo = info
+                _ = try await cloud.sharedCloudDatabase.modifySubscriptions(saving: [subscription], deleting: [])
+            }
+            UserDefaults.standard.set(true, forKey: key)
+        } catch {
+            ChatDiagnostics.log("household subscribe failed: \(error)")
+        }
+    }
+
+    private func unsubscribe(_ state: HouseholdState) async {
+        let id = "household-\(state.id.uuidString)"
+        UserDefaults.standard.removeObject(forKey: "household.subscribed.\(id)")
+        let database = state.role == .owner ? cloud.privateCloudDatabase : cloud.sharedCloudDatabase
+        _ = try? await database.modifySubscriptions(saving: [], deleting: [id])
     }
 
     // MARK: Leave
@@ -242,6 +302,7 @@ final class HouseholdService {
         } else {
             _ = try await cloud.sharedCloudDatabase.modifyRecords(saving: [], deleting: [shareID])
         }
+        await unsubscribe(state)
         endLocally()
     }
 
@@ -252,5 +313,7 @@ final class HouseholdService {
         }
         syncStore = nil
         store.end()
+        // Tasks this phone was not reminding about stay as records; what it reminds about is decided again.
+        base?.tasks.rescheduleAll()
     }
 }

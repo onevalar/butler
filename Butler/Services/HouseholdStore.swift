@@ -22,6 +22,7 @@ final class HouseholdStore {
         members = load("members.json") ?? []
         sharing = load("sharing.json") ?? [:]
         staged = load("staged.json") ?? []
+        hiddenTasks = load("hidden-tasks.json") ?? [:]
     }
 
     nonisolated deinit {}
@@ -30,6 +31,29 @@ final class HouseholdStore {
     var isOwner: Bool { state?.role == .owner }
 
     func member(_ id: UUID?) -> HouseholdMember? { id.flatMap { id in members.first { $0.id == id } } }
+
+    /// Names as this person sees them, for task labels.
+    var names: HouseholdNames {
+        guard let state else { return .none }
+        return HouseholdNames(me: state.me, names: Dictionary(members.map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a }))
+    }
+
+    /// "老公", "妈妈": exact name first, then a name containing the other.
+    func member(named raw: String) -> HouseholdMember? {
+        let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return nil }
+        if ["我", "自己", "我自己"].contains(name) { return me }
+        return members.first { $0.name == name } ?? members.first { $0.name.contains(name) || name.contains($0.name) }
+    }
+
+    /// Household tasks this person cannot see: kept aside so they never reach lists, reminders or the model,
+    /// and still travel through the household's sync unchanged.
+    private(set) var hiddenTasks: [UUID: TimedReminder] = [:]
+
+    func setHiddenTask(_ task: TimedReminder?, id: UUID) {
+        hiddenTasks[id] = task
+        save(hiddenTasks, "hidden-tasks.json")
+    }
 
     /// The things that go through the household zone. Things not yet sorted are sorted first, so a thing never
     /// passes through this device's own sync and then the household's.
@@ -101,7 +125,8 @@ final class HouseholdStore {
         members = []
         staged = []
         sharing = [:]
-        for name in ["state.json", "members.json", "sharing.json", "staged.json"] {
+        hiddenTasks = [:]
+        for name in ["state.json", "members.json", "sharing.json", "staged.json", "hidden-tasks.json"] {
             try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
         }
     }

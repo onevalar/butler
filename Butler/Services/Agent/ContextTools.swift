@@ -23,10 +23,14 @@ extension ButlerTools {
             tool("get_settings", "读取可修改配置、当前值和允许的值；不返回密钥。", [:]),
             tool("propose_settings", "提出设置修改，确认后才生效。value使用get_settings中的格式，先读再改；系统权限不能通过这个工具授权。", ["changes": ["type": "array", "minItems": 1, "maxItems": 9, "items": object(["key": string, "value": string])]]),
             tool("get_tasks", "读取任务和规则、revision、历史活动及未来提醒预览。id为null列出任务（含已完成/取消）；具体任务用id读取。", ["id": optionalString]),
-            tool("propose_task_plan", "创建或替换任务提醒规则，确认后生效。id=null创建；修改先get_tasks，传id和expected_revision。时间为指定time_zone的YYYY-MM-DD HH:mm。phases是独立阶段规则的并集：各自从start起按一次/每天/每周或interval_minutes执行，不会因下一阶段开始而自动停止；分段需求必须给前段明确的end或max_occurrences。同一时刻去重。max_occurrences包含首次，按阶段开始累计，不是从当前重新计数。interval_minutes不能与daily/weekly并用，且必须有阶段或全局截止/次数。end和end_time为最后允许提醒的时间（含）。不要把停止提醒说成任务完成；auto_complete_at只在用户明确要求自动完成时设置，到该时刻不再提醒。未知关键时间/次数应询问。", [
+            tool("propose_task_plan", "创建或替换任务提醒规则，确认后生效。id=null创建；修改先get_tasks，传id和expected_revision。时间为指定time_zone的YYYY-MM-DD HH:mm。phases是独立阶段规则的并集：各自从start起按一次/每天/每周或interval_minutes执行，不会因下一阶段开始而自动停止；分段需求必须给前段明确的end或max_occurrences。同一时刻去重。max_occurrences包含首次，按阶段开始累计，不是从当前重新计数。interval_minutes不能与daily/weekly并用，且必须有阶段或全局截止/次数。end和end_time为最后允许提醒的时间（含）。不要把停止提醒说成任务完成；auto_complete_at只在用户明确要求自动完成时设置，到该时刻不再提醒。未知关键时间/次数应询问。" + TaskFamilyArgs.guidance, [
                 "id": optionalString, "expected_revision": optionalInt, "text": string, "time_zone": string,
                 "end_time": optionalString, "auto_complete_at": optionalString,
-                "phases": ["type": "array", "minItems": 1, "maxItems": 12, "items": phase]
+                "phases": ["type": "array", "minItems": 1, "maxItems": 12, "items": phase],
+                "family": TaskFamilyArgs.schema
+            ]),
+            tool("propose_task_sharing", "修改家庭任务谁能看到、谁负责、提醒谁（仅当current_context有household时）。用户说“这个交给老婆”“别让孩子看到”“让全家都知道”“只提醒我”时用它；先get_tasks取得id和revision。已完成的任务也可以改。确认后生效。" + TaskFamilyArgs.guidance, [
+                "id": string, "expected_revision": ["type": "integer"], "family": TaskFamilyArgs.schema
             ]),
             tool("propose_task_action", "提出完成/暂停/恢复/取消/删除整个任务；reopen将已完成或取消的任务重新标记为未完成。cancel保留历史，delete永久删除任务及操作记录并停止提醒，保留对话。仅在用户明确要求删除时使用delete，确认后才生效。先get_tasks取得id和revision。", [
                 "id": string, "expected_revision": ["type": "integer"],
@@ -91,6 +95,7 @@ extension ButlerTools {
                 struct Phase: Decodable { let start: String; let end: String?; let `repeat`: String; let interval_minutes: Int?; let max_occurrences: Int? }
                 let id: String?; let expected_revision: Int?; let text: String; let time_zone: String
                 let end_time: String?; let auto_complete_at: String?; let phases: [Phase]
+                let family: TaskFamilyArgs?
             }
             let input = try JSONDecoder().decode(Input.self, from: data)
             guard let zone = TimeZone(identifier: input.time_zone), (1...12).contains(input.phases.count) else { throw ToolError("时区或阶段数量无效") }
@@ -120,6 +125,7 @@ extension ButlerTools {
             reminder.text = input.text; reminder.fireDate = firstDate
             reminder.phases = phases; reminder.endDate = try date(input.end_time)
             reminder.autoCompleteAt = try date(input.auto_complete_at); reminder.timeZoneIdentifier = input.time_zone
+            reminder.sharing = try taskSharing(input.family, existing: reminder.sharing)
             do { try ReminderSchedule.validate(reminder) }
             catch { throw ToolError(error.localizedDescription) }
             // Preview the rule even while the saved task is paused. Editing must not resume it.
@@ -138,6 +144,16 @@ extension ButlerTools {
             try validateTaskAction(input.action, reminder: value)
             add(.taskAction(id, input.action, expectedRevision: input.expected_revision), title: "\(input.action.title)任务：\(value.text)",
                 detail: input.action == .delete ? "永久删除任务及操作记录，停止后续提醒；对话记录保留。此操作不能撤销。" : nil)
+        case "propose_task_sharing":
+            struct Input: Decodable { let id: String; let expected_revision: Int; let family: TaskFamilyArgs? }
+            let input = try JSONDecoder().decode(Input.self, from: data)
+            guard HouseholdStore.shared.state != nil else { throw ToolError("还没有建立家庭，任务只属于你自己") }
+            guard let id = UUID(uuidString: input.id), let value = reminders.reminder(id: id) else { throw ToolError("找不到任务") }
+            try requireTaskRevision(id, input.expected_revision)
+            guard let family = input.family else { throw ToolError("family 不能为 null") }
+            let sharing = try taskSharing(family, existing: value.sharing)
+            guard sharing != value.sharing else { throw ToolError("和现在一样，不需要修改") }
+            add(.taskSharing(id, sharing, expectedRevision: input.expected_revision), title: "\(value.text)：改家人设置", detail: nil)
         default: return nil
         }
         return try encode(["status": "waiting_for_user_confirmation", "saved": false, "pending_changes": pending.count] as [String: Any])
@@ -147,8 +163,10 @@ extension ButlerTools {
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
         var value = try JSONSerialization.jsonObject(with: encoder.encode(reminder)) as? [String: Any] ?? [:]
         value["rule_summary"] = ReminderSchedule.ruleSummary(reminder)
-        value["notification_policy"] = reminder.syncReceived == true ? "从其他设备同步，仅显示任务，本机不新增通知" : "由本机按规则尽力安排，实际送达依赖系统"
-        value["next_notifications"] = reminder.syncReceived == true ? [] : ReminderSchedule.preview(reminder, now: .now, limit: 6).map { ISO8601DateFormatter().string(from: $0) }
+        value["notification_policy"] = notificationPolicy(reminder)
+        value["next_notifications"] = !reminders.remindsHere(reminder) ? [] : ReminderSchedule.preview(reminder, now: .now, limit: 6).map { ISO8601DateFormatter().string(from: $0) }
+        value["sharing"] = nil
+        if let family = familyDescription(reminder) { value["family"] = family }
         return value
     }
 

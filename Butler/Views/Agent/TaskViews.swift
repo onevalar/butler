@@ -25,8 +25,13 @@ struct TaskListView: View {
             ForEach(values) { task in
                 Button { onOpen(task.id) } label: {
                     VStack(alignment: .leading, spacing: 6) {
-                        HStack { Text(task.text).foregroundStyle(.primary); Spacer(); Text(task.statusLabel).font(.caption).foregroundStyle(.secondary) }
-                        Text(task.whenLabel).font(.footnote).foregroundStyle(.secondary)
+                        HStack {
+                            Text(task.text).foregroundStyle(.primary)
+                            Spacer()
+                            Text(HouseholdStore.shared.names.completedBy(task) ?? task.statusLabel).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Text([task.whenLabel, HouseholdStore.shared.names.rowLabel(task.sharing)].compactMap { $0 }.joined(separator: " · "))
+                            .font(.footnote).foregroundStyle(.secondary)
                     }.padding(.vertical, 4)
                 }
                 .glassRows()
@@ -92,7 +97,8 @@ struct TaskDetailView: View {
             if let task = store.reminder(id: id) {
                 Section {
                     Text(task.text).font(.title3.bold())
-                    LabeledContent("状态", value: task.statusLabel)
+                    LabeledContent("状态", value: [task.statusLabel, HouseholdStore.shared.names.completedBy(task)]
+                        .compactMap { $0 }.joined(separator: " · "))
                     Text(task.whenLabel)
                     if task.timeZoneIdentifier != TimeZone.current.identifier {
                         LabeledContent("时区", value: task.timeZoneIdentifier)
@@ -116,6 +122,11 @@ struct TaskDetailView: View {
                         }
                         .listRowBackground(Color.clear)
                         .listRowInsets(EdgeInsets())
+                    }
+                }
+                if HouseholdStore.shared.state != nil {
+                    TaskFamilySection(task: task) { sharing in
+                        act { try store.setSharing(id, sharing, detail: "改为" + HouseholdStore.shared.names.thirdPerson.summary(sharing)) }
                     }
                 }
                 Section("提醒规则预览") {
@@ -149,7 +160,9 @@ struct TaskDetailView: View {
                     ForEach(task.activity.reversed()) { event in
                         VStack(alignment: .leading, spacing: 4) {
                             Text(event.detail)
-                            Text(event.date.formatted()).font(.caption).foregroundStyle(.secondary)
+                            Text([HouseholdStore.shared.names.name(event.by).map { $0 == "你" ? "我" : $0 }, event.date.formatted()]
+                                .compactMap { $0 }.joined(separator: " · "))
+                                .font(.caption).foregroundStyle(.secondary)
                         }
                     }
                 }

@@ -162,7 +162,8 @@ extension ButlerChat {
             data["task_id"] = id.uuidString
             if var reminder = tools?.reminders.reminder(id: id) {
                 data["exists"] = true
-                data["notification_policy"] = reminder.syncReceived == true ? "同步收到的任务，本机不新增通知" : "本机按规则尽力安排"
+                data["notification_policy"] = tools?.notificationPolicy(reminder)
+                data["family"] = tools?.familyDescription(reminder)
                 reminder.activity = Array(reminder.activity.suffix(20))
                 let encoder = JSONEncoder()
                 encoder.dateEncodingStrategy = .iso8601
