@@ -88,7 +88,9 @@ struct ContentView: View {
 
     private var facts: [LotFacts] {
         let byID = Dictionary(products.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        return lots.filter { $0.state == .active }.map { LotFacts(lot: $0, product: byID[$0.productID]) }
+        let household = HouseholdStore.shared
+        return lots.filter { $0.state == .active && household.isVisible($0.productID) }
+            .map { LotFacts(lot: $0, product: byID[$0.productID]) }
     }
 
     private var history: [LotFacts] {
@@ -125,6 +127,13 @@ struct ContentView: View {
                 .presentationDragIndicator(.visible)
             }
         }
+        // Just joined a household from an invitation link.
+        .sheet(isPresented: Binding(get: { HouseholdService.shared.needsName }, set: { if !$0 { HouseholdService.shared.needsName = false } })) {
+            JoinedHouseholdSheet()
+        }
+        .alert("家庭", isPresented: Binding(get: { HouseholdService.shared.notice != nil }, set: { if !$0 { HouseholdService.shared.notice = nil } })) {
+            Button("知道了", role: .cancel) {}
+        } message: { Text(HouseholdService.shared.notice ?? "") }
         .fullScreenCover(isPresented: Binding(get: { showsOnboarding }, set: { if !$0 { onboardingDone = true } })) {
             if let chat {
                 OnboardingView(chat: chat, calendarFeed: calendarFeed) { onboardingDone = true }

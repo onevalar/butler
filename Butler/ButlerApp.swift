@@ -48,6 +48,8 @@ final class AppLaunch {
 @main
 struct ButlerApp: App {
     @State private var launch: AppLaunch
+    /// Household invitation links arrive through the scene delegate.
+    @UIApplicationDelegateAdaptor(ButlerAppDelegate.self) private var appDelegate
 
     init() {
         UserDefaults.standard.register(defaults: [

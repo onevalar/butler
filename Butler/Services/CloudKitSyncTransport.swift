@@ -16,9 +16,19 @@ import CryptoKit
     private var cachedEpoch: UUID?
     private var cachedToken: CKServerChangeToken?
     private var cachedRows: [UUID: SyncRecord] = [:]
+    /// A household zone lives in the owner's private database; members reach it through their shared database.
+    private let shared: Bool
+    private var database: CKDatabase { shared ? container.sharedCloudDatabase : container.privateCloudDatabase }
     init(chatHistory: Bool = false, photos: Bool = false) {
         self.photos = photos
+        shared = false
         zone = CKRecordZone.ID(zoneName: photos ? "ButlerPhotoSyncV1" : (chatHistory ? "ButlerChatSyncV1" : "ButlerPrivateSyncV1"), ownerName: CKCurrentUserDefaultName)
+    }
+    /// The household's things: the owner's zone, read as owner or as a member.
+    init(household: HouseholdState) {
+        photos = false
+        shared = household.role == .member
+        zone = CKRecordZone.ID(zoneName: household.zoneName, ownerName: household.zoneOwner)
     }
     func account() async throws -> String {
         guard try await container.accountStatus() == .available else { throw SyncFailure("iCloud不可用，本机资料保留。") }
@@ -31,7 +41,7 @@ import CryptoKit
     private func control(account: String) async throws -> CKRecord? {
         try await check(account)
         do {
-            let record = try await container.privateCloudDatabase.record(for: controlID)
+            let record = try await database.record(for: controlID)
             try await check(account)
             _ = try gate(record)
             return record
@@ -87,7 +97,7 @@ import CryptoKit
         repeat {
             try await check(account)
             do {
-                let page = try await container.privateCloudDatabase.recordZoneChanges(inZoneWith: zone, since: token, resultsLimit: photos ? 3 : 100)
+                let page = try await database.recordZoneChanges(inZoneWith: zone, since: token, resultsLimit: photos ? 3 : 100)
                 try await check(account)
                 for deletion in page.deletions {
                     guard deletion.recordID != controlID else { throw SyncFailure("云端控制记录被删除，已停止。") }
@@ -140,7 +150,7 @@ import CryptoKit
                 record["sha256"] = Self.digest(data) as CKRecordValue
             }
         }
-        let result = try await container.privateCloudDatabase.modifyRecords(saving: records, deleting: deleting,
+        let result = try await database.modifyRecords(saving: records, deleting: deleting,
             savePolicy: .ifServerRecordUnchanged, atomically: true)
         try await check(account)
         for record in records {
@@ -156,7 +166,7 @@ import CryptoKit
         try await check(account); try row.validate()
         let control = try await control(account: account), value = try gate(control)
         guard value.epoch == epoch, value.cleaning == nil else { throw SyncFailure("云端已清理或正在清理，旧上传被拒绝。") }
-        if control == nil { _ = try await container.privateCloudDatabase.save(CKRecordZone(zoneID: zone)) }
+        if control == nil, !shared { _ = try await container.privateCloudDatabase.save(CKRecordZone(zoneID: zone)) }
         try await modify([encode(row), stamp(control, value)], account: account)
     }
     func clean(_ plan: SyncCleanup) async throws {
@@ -167,7 +177,7 @@ import CryptoKit
             guard try head(control) == plan.head, value.cleaning == nil else {
                 throw SyncCleanupNotStarted()
             }
-            if control == nil { _ = try await container.privateCloudDatabase.save(CKRecordZone(zoneID: zone)) }
+            if control == nil, !shared { _ = try await container.privateCloudDatabase.save(CKRecordZone(zoneID: zone)) }
             value.cleaning = plan.id
             do { try await modify([stamp(control, value)], account: plan.account) }
             catch let error as CKError where error.code == .serverRecordChanged { throw SyncCleanupNotStarted() }

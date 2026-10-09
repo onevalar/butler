@@ -25,6 +25,8 @@ import UIKit
             let local = ButlerSyncData(container: container, notes: try .openNotes(), tasks: .openOnDevice(),
                 revisionFile: root.appendingPathComponent("local-revision.json"))
             store = SyncStore(file: root.appendingPathComponent("journal.json"), local: local, transport: CloudKitSyncTransport())
+            // The household's shared things travel in their own zone; this device's own sync leaves them out.
+            HouseholdService.shared.configure(container: container, base: local, root: root)
             if let directory = BackupService.supportDirectory {
                 let isWorking: () -> Bool = { [weak self] in
                     guard let sessions = self?.sessions.allObjects, !sessions.isEmpty else { return true }
@@ -82,6 +84,9 @@ import UIKit
     }
 
     func foregroundTick() {
+        if UIApplication.shared.applicationState == .active, UIApplication.shared.isProtectedDataAvailable {
+            Task { await HouseholdService.shared.sync() }
+        }
         guard UIApplication.shared.applicationState == .active, UIApplication.shared.isProtectedDataAvailable,
               let store, store.enabled, !store.busy, job == nil else { return }
         job = Task { [weak self] in

@@ -11,6 +11,8 @@
 		<key>CFBundleURLName</key><string>com.anvalar.Butler.widget</string>
 		<key>CFBundleURLSchemes</key><array><string>butler</string></array>
 	</dict></array>
+	<key>CKSharingSupported</key>
+	<true/>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSAlarmKitUsageDescription</key>

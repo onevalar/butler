@@ -12,6 +12,8 @@ struct PendingChange: Identifiable, Codable {
         case move(LotFacts, String)
         case tracking(LotFacts, quantityOnly: Bool)
         case itemProfile(LotFacts, ItemProfile)
+        /// Who in the household can see a thing (household only).
+        case itemSharing(LotFacts, ItemSharing.Scope, hiddenFrom: [UUID])
         case undoInventory(LotFacts, UUID)
         case note(LocalMemory)
         case reminder(TimedReminder)
@@ -55,7 +57,7 @@ struct PendingChange: Identifiable, Codable {
     var relatedScope: ChatScope? {
         switch kind {
         case .setQuantity(let lot, _), .close(let lot, _), .setDate(let lot, _, _), .move(let lot, _), .tracking(let lot, _),
-             .itemProfile(let lot, _), .undoInventory(let lot, _): .lot(lot.id)
+             .itemProfile(let lot, _), .undoInventory(let lot, _), .itemSharing(let lot, _, _): .lot(lot.id)
         case .reminder(let value), .cancelReminder(let value), .taskPlan(let value, _): .task(value.id)
         case .taskAction(let id, _, _): .task(id)
         case .taskDisplay(let change): .task(change.taskID)
@@ -471,6 +473,9 @@ final class ButlerTools {
                     if lot.isDurable { throw ToolError("耐用品通过物品资料管理，不使用食品跟踪方式") }
                     try actions.setQuantityOnly(quantityOnly, productID: lot.productID)
                 case .itemProfile(let lot, let profile): try actions.setProfile(profile, for: try fresh(lot))
+                case .itemSharing(let lot, let scope, let hidden):
+                    guard HouseholdStore.shared.state != nil else { throw ToolError("还没有建立家庭") }
+                    HouseholdService.shared.setScope(scope, for: lot.productID, hiddenFrom: Set(hidden))
                 case .undoInventory(let lot, let eventID):
                     let current = try lotFacts(lot.id)
                     guard current.revision == lot.revision else { throw ToolError("物品已改变，请重新查询") }
