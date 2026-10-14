@@ -15,6 +15,29 @@ import XCTest
         XCTAssertThrowsError(try HouseholdInvitationIdentity.householdID(container: container, zoneName: "ButlerHouseholdV1-invalid"))
     }
 
+    func testAtomicWriteReportsRootCauseInsteadOfUnrelatedBatchFailure() {
+        let item = CKRecord(recordType: "ButlerRevisionV1")
+        let control = CKRecord(recordType: "ButlerSyncControlV1")
+        XCTAssertThrowsError(try CloudKitSyncTransport.checkSaveResults([
+            item.recordID: .failure(CKError(.batchRequestFailed)),
+            control.recordID: .failure(CKError(.serverRecordChanged))
+        ], records: [item, control])) { error in
+            XCTAssertEqual((error as? CKError)?.code, .serverRecordChanged)
+        }
+        XCTAssertThrowsError(try CloudKitSyncTransport.checkSaveResults([item.recordID: .success(item)], records: [item, control]))
+        XCTAssertNoThrow(try CloudKitSyncTransport.checkSaveResults([item.recordID: .success(item), control.recordID: .success(control)], records: [item, control]))
+    }
+
+    func testControlRecordNameMeetsCloudKitIDRules() {
+        let name = CloudKitSyncTransport.controlRecordName
+        XCTAssertFalse(name.isEmpty)
+        XCTAssertFalse(name.hasPrefix("_"), "CloudKit rejects reserved record names and aborts the whole write batch")
+        XCTAssertLessThanOrEqual(name.utf8.count, 255)
+        XCTAssertTrue(name.unicodeScalars.allSatisfy { $0.isASCII })
+        XCTAssertNotEqual(name, CKRecordNameZoneWideShare)
+        XCTAssertNil(UUID(uuidString: name), "the control fence must not collide with revision IDs")
+    }
+
     func testDirectInvitationOffersPrivateCollaborationWithFamilyPreview() throws {
         let share = CKShare(recordZoneID: .init(zoneName: "test-family"))
         share[CKShare.SystemFieldKey.title] = "测试家庭" as CKRecordValue

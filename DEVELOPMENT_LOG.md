@@ -1,3 +1,10 @@
+## 2026-10-14 真机定位 CloudKit 写入失败
+
+- 用户重新打开家庭页后，18:56 新日志仍反复出现 Atomic failure。先停止启动云构建，安装增加逐项根因诊断的版本。18:59 真机明确返回 CKError.invalidArguments：控制记录 __control__ 为非法 ID，导致整个原子批次失败。
+- Apple SDK CKRecordID.h 明确 recordName 不得以下划线开头。控制记录改为 butler-sync-control-v1；保留原 zone、本机同步日志及待上传修订，不删除或重建用户家庭。批量保存先检查全部结果，优先返回非 batchRequestFailed 的实际根因，避免再被连带失败遮蔽。
+- 添加 CloudKit ID 合法性与批量根因优先回归。完整 779 项测试，1 项既有跳过，0 失败；Debug 真机构建通过。修复版安装时 iPhone 已变为 unavailable，已请用户重连；尚未取得修复后真实云端成功回执。
+- 之前整合提交 62e1ece 已推送 main；本节修复随后单独提交。App Store Connect 登录已恢复，最终构建尚未启动。
+
 ## 2026-10-14 家庭加入恢复与发布前回归
 
 - 检查冷启动 connectionOptions.cloudKitShareMetadata、运行中 UIWindowSceneDelegate 回调、CKSharingSupported、共享数据库路由与前台／静默推送同步入口。冷／热启动真实邀请及跨账号云端接收仍待真机验收，不能用源码检查替代。

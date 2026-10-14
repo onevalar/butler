@@ -326,6 +326,7 @@ final class HouseholdService {
             }
             lastSync = .now
             syncIssue = nil
+            ChatDiagnostics.log("household sync completed; pending=\(syncStore.pendingCount); joining=\(store.joining)")
             await subscribe()
         } catch {
             syncIssue = store.joining ? "已接受邀请，家庭资料尚未同步完成；联网后会继续。"

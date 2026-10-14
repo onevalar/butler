@@ -11,7 +11,10 @@ import CryptoKit
     private let photos: Bool
     private let recordType = "ButlerRevisionV1"
     private struct Gate: Codable { var epoch: UUID?; var cleaning: UUID? }
-    private var controlID: CKRecord.ID { .init(recordName: "__control__", zoneID: zone) }
+    // CKRecord.ID forbids names beginning with an underscore. The old __control__
+    // was rejected by CloudKit, atomically rejecting every revision in its batch.
+    static let controlRecordName = "butler-sync-control-v1"
+    private var controlID: CKRecord.ID { .init(recordName: Self.controlRecordName, zoneID: zone) }
     private var cachedAccount: String?
     private var cachedEpoch: UUID?
     private var cachedToken: CKServerChangeToken?
@@ -162,14 +165,24 @@ import CryptoKit
         let result = try await database.modifyRecords(saving: records, deleting: deleting,
             savePolicy: .ifServerRecordUnchanged, atomically: true)
         try await check(account)
-        for record in records {
-            guard let saved = result.saveResults[record.recordID] else { throw SyncFailure("保存回执缺失，需核对原操作。") }
-            _ = try saved.get()
-        }
+        try Self.checkSaveResults(result.saveResults, records: records)
         for id in deleting {
             guard let deleted = result.deleteResults[id] else { throw SyncFailure("删除回执缺失，需核对原操作。") }
             try deleted.get()
         }
+    }
+
+    /// In an atomic batch, most records only report batchRequestFailed. Surface the actual
+    /// failing record (often the control fence), otherwise a permanent rejection looks generic.
+    static func checkSaveResults(_ results: [CKRecord.ID: Result<CKRecord, Error>], records: [CKRecord]) throws {
+        var failures: [(CKRecord, Error)] = []
+        for record in records {
+            guard let saved = results[record.recordID] else { throw SyncFailure("保存回执缺失，需核对原操作。") }
+            if case .failure(let error) = saved { failures.append((record, error)) }
+        }
+        guard let failure = failures.first(where: { ($0.1 as? CKError)?.code != .batchRequestFailed }) ?? failures.first else { return }
+        ChatDiagnostics.log("cloud sync write rejected; type=\(failure.0.recordType); \(ChatDiagnostics.describe(failure.1)); \(failure.1.localizedDescription)")
+        throw failure.1
     }
     func send(_ row: SyncRecord, account: String, epoch: UUID?) async throws {
         try await check(account); try row.validate()
