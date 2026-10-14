@@ -11,6 +11,9 @@
 	<array><dict>
 		<key>CFBundleURLName</key><string>com.anvalar.Butler.widget</string>
 		<key>CFBundleURLSchemes</key><array><string>butler</string></array>
+	</dict><dict>
+		<key>CFBundleURLName</key><string>com.anvalar.Butler.family</string>
+		<key>CFBundleURLSchemes</key><array><string>com.anvalar.butler</string></array>
 	</dict></array>
 	<key>CKSharingSupported</key>
 	<true/>

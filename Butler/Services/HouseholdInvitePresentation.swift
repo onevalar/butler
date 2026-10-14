@@ -4,6 +4,33 @@ import UIKit
 
 /// A CloudKit URL is supplied by Apple. Never fall back to a browser address or clipboard.
 enum HouseholdShareLink {
+    static let appScheme = "com.anvalar.butler"
+
+    /// Route to our app without relying on iCloud's regional web handoff. The enclosed
+    /// URL remains Apple's exact, saved single-recipient invitation, not a new share.
+    static func applicationURL(for invitation: URL) throws -> URL {
+        let original = try validated(invitation)
+        var parts = URLComponents()
+        parts.scheme = appScheme
+        parts.host = "family"
+        parts.path = "/join"
+        parts.queryItems = [URLQueryItem(name: "invitation", value: original.absoluteString)]
+        guard let url = parts.url else { throw SyncFailure("无法生成家庭邀请，请重试。") }
+        return url
+    }
+
+    static func cloudURL(from url: URL) throws -> URL {
+        if url.scheme?.lowercased() != appScheme { return try validated(url) }
+        guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              parts.host == "family", parts.path == "/join", parts.user == nil,
+              parts.password == nil, parts.port == nil, parts.fragment == nil,
+              let items = parts.queryItems, items.count == 1, items[0].name == "invitation",
+              let value = items[0].value, let original = URL(string: value) else {
+            throw SyncFailure("家庭邀请链接不完整，请重新复制。")
+        }
+        return try validated(original)
+    }
+
     static func validated(_ url: URL?) throws -> URL {
         guard let url, let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               components.scheme?.lowercased() == "https", let host = components.host?.lowercased(),
@@ -20,7 +47,7 @@ enum HouseholdShareLink {
     enum Purpose { case invite, manage }
 
     static func presentInvitation(url: URL, title: String) throws {
-        let url = try HouseholdShareLink.validated(url)
+        let url = try HouseholdShareLink.applicationURL(for: url)
         guard let root = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
             .filter({ $0.activationState == .foregroundActive }).flatMap(\.windows)
             .first(where: \.isKeyWindow)?.rootViewController else {

@@ -248,8 +248,13 @@ final class HouseholdService {
 
     func openInvitation(_ url: URL) async {
         do {
-            let checked = try HouseholdShareLink.validated(url)
+            let checked = try HouseholdShareLink.cloudURL(from: url)
+            // Log the handoff stages, never the invitation token or participant identity.
+            ChatDiagnostics.log("household invitation lookup started")
             let metadata = try await cloud.shareMetadata(for: checked)
+            _ = try HouseholdInvitationIdentity.householdID(container: metadata.containerIdentifier,
+                                                            zoneName: metadata.share.recordID.zoneID.zoneName)
+            ChatDiagnostics.log("household invitation metadata verified")
             await accept(metadata)
         } catch {
             notice = "无法打开家庭邀请，请让家人重新生成一条邀请链接。"
@@ -262,7 +267,10 @@ final class HouseholdService {
     /// Called when this person opens an invitation link.
     func accept(_ metadata: CKShare.Metadata) async {
         guard let container else { pendingInvite = metadata; return }
-        guard !busy else { return }
+        guard !busy else {
+            notice = "正在处理家庭操作，请稍后重新打开邀请。"
+            return
+        }
         busy = true; defer { busy = false }
         do {
             let zone = metadata.share.recordID.zoneID

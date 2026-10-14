@@ -1,3 +1,11 @@
+## 2026-10-14 iCloud 网页未交接邀请的 App 直达入口
+
+- 接收方 1.0（40）在 Safari 打开新生成的中国区 iCloud 链接，只到登录页／首页；备忘录菜单显示“在 iCloud 中打开”。这不能证明邀请无效，也不能证明整个中国区不支持共享。Development/Production 均无 Sharing Fallback URL；没有据此修改云端配置。
+- 将用户提供的原始链接直接交给创建者手机上的 App：23:22 日志明确记录 lookup started → metadata verified，已校验小当家容器及家庭 zone；该邀请可被原生 CloudKit 读取。读取没有接受新的成员或更换家庭，不能替代接收方权限验收。
+- 新增专用 com.anvalar.butler://family/join 入口，分享与复制通过它打开 App，内部完整保留 Apple 一次性邀请地址，再由 CloudKit 验证并接受。严格校验入口和嵌套地址，拒绝重复参数、外部域名、其他路径；原始 Apple 链接仍可粘贴加入。保留 widget URL scheme；忙碌时明确提示，不再静默丢弃接受操作。
+- 48 项邀请／家庭同步定向测试全部通过；Release 签名构建通过并覆盖安装创建者 iPhone（安装序列 2316）。23:25 真机接收专用 URL 后确认 metadata verified，随后生产同步 pending=0; joining=false。此测试通过开发工具把 URL 交给 App，尚不代表 Safari／聊天软件真实点击唤起；模拟器额外启动检查被 SBMainWorkspace Busy 阻塞，未计为通过。
+- 接收方必须获得含此入口的新版本；当前 TestFlight 40 不含新入口。尚未启动新 TestFlight 构建，真实跨账号接受与双向同步仍待验证。部分聊天软件可能不允许自定义协议链接，保留 App 内粘贴作为恢复入口；不能承诺所有聊天软件均可一键唤起。
+
 ## 2026-10-14 一人一条邀请链接与家庭同步恢复
 
 - 根因：复制普通 CKShare.url 不能给尚未邀请的账号授予加入资格。邀请与复制入口统一改为 oneTimeURLParticipant → 保存私有 CKShare → 读取该参与者 oneTimeURL；不回退到普通地址。保持 readWrite 成员权限及 publicPermission=none，每条邀请由一位家人接受，下一位重新生成。冲突重新读取服务器 share，保留其他成员及同一邀请 ID。

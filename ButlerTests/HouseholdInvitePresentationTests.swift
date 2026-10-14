@@ -5,6 +5,45 @@ import XCTest
 @testable import Butler
 
 @MainActor final class HouseholdInvitePresentationTests: XCTestCase {
+    func testAppInvitationPreservesAppleTokenQueryAndFragment() throws {
+        for text in ["https://www.icloud.com.cn/share/test-invite",
+                     "https://www.icloud.com/share/test-invite?value=a%2Bb#family%20name"] {
+            let original = try XCTUnwrap(URL(string: text))
+            let link = try HouseholdShareLink.applicationURL(for: original)
+            XCTAssertEqual(link.scheme, HouseholdShareLink.appScheme)
+            XCTAssertEqual(try HouseholdShareLink.cloudURL(from: link), original)
+            XCTAssertEqual(try HouseholdShareLink.cloudURL(from: original), original)
+            let item = HouseholdInvitationItem(url: link, title: "测试家庭")
+            let controller = UIActivityViewController(activityItems: [item], applicationActivities: nil)
+            for activity: UIActivity.ActivityType? in [.copyToPasteboard, .message, nil] {
+                XCTAssertEqual(item.activityViewController(controller, itemForActivityType: activity) as? URL, link)
+            }
+        }
+    }
+
+    func testAppInvitationRejectsAmbiguousAndForeignTargets() throws {
+        let good = "https%3A%2F%2Fwww.icloud.com.cn%2Fshare%2Ftest-invite"
+        for text in ["com.anvalar.butler://family/join?invitation=https://attacker.test/share/token",
+                     "com.anvalar.butler://family/join?invitation=\(good)&invitation=\(good)",
+                     "com.anvalar.butler://family/join?invitation=\(good)&other=1",
+                     "com.anvalar.butler://other/join?invitation=\(good)",
+                     "com.anvalar.butler://family/delete?invitation=\(good)",
+                     "com.anvalar.butler://user@family/join?invitation=\(good)",
+                     "com.anvalar.butler://family:80/join?invitation=\(good)",
+                     "com.anvalar.butler://family/join?invitation=\(good)#extra",
+                     "com.anvalar.butler://family/join?invitation=",
+                     "com.anvalar.butler://family/join"] {
+            XCTAssertThrowsError(try HouseholdShareLink.cloudURL(from: XCTUnwrap(URL(string: text))), text)
+        }
+    }
+
+    func testAppRegistersItsFamilyInvitationSchemeAlongsideWidgets() throws {
+        let entries = try XCTUnwrap(Bundle.main.object(forInfoDictionaryKey: "CFBundleURLTypes") as? [[String: Any]])
+        let schemes = entries.flatMap { $0["CFBundleURLSchemes"] as? [String] ?? [] }
+        XCTAssertTrue(schemes.contains(HouseholdShareLink.appScheme))
+        XCTAssertTrue(schemes.contains("butler"))
+    }
+
     func testRejectsForeignOrMalformedInvitationInsteadOfInventingHouseholdID() throws {
         let id = UUID(), container = "iCloud.com.anvalar.Butler"
         XCTAssertEqual(try HouseholdInvitationIdentity.householdID(container: container,

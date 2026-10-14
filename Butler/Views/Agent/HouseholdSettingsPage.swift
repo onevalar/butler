@@ -81,7 +81,7 @@ struct HouseholdSettingsPage: View {
                 } footer: {
                     Text(syncLine)
                     if store.isOwner {
-                        Text("发给家人，打开后即可加入。每条邀请链接供一位家人使用；邀请下一位时再生成一条。")
+                        Text("家人先更新小当家，再打开邀请加入。每条链接供一位家人使用；邀请下一位时再生成一条。")
                     }
                 }
                 .glassRows()
@@ -135,7 +135,7 @@ struct HouseholdSettingsPage: View {
         .alert("邀请链接已复制", isPresented: $copiedLink) {
             Button("好", role: .cancel) {}
         } message: {
-            Text("发给一位家人，对方安装小当家后打开即可加入。邀请其他家人时，请再复制一条新链接。")
+            Text("发给一位已更新小当家的家人。链接会直接打开 App；如果聊天软件不支持打开，可在小当家“家庭 → 通过邀请链接加入”中粘贴。邀请其他家人时，请再复制一条新链接。")
         }
         .alert("加入家庭", isPresented: $enteringInvite) {
             TextField("粘贴家人发来的邀请链接", text: $invitationText)
@@ -201,7 +201,8 @@ struct HouseholdSettingsPage: View {
         Task {
             defer { copyingLink = false }
             do {
-                let link = try await service.invitationURL()
+                let invitation = try await service.invitationURL()
+                let link = try HouseholdShareLink.applicationURL(for: invitation)
                 UIPasteboard.general.setItems([["public.url": link.absoluteString,
                                                 "public.utf8-plain-text": link.absoluteString]],
                                               options: [.localOnly: true])
