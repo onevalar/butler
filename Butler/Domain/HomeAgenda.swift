@@ -26,13 +26,16 @@ struct AgendaEntry: Identifiable, Hashable {
     /// Happens every day (a daily reminder): shown once in lists and not dotted on every day.
     var isRoutine = false
     var isCompleted = false
+    var arrangementReviewDate: Date? = nil
+    var arrangementPeriod: ArrangementPeriod? = nil
+    var timeLabel: String { arrangementPeriod?.label ?? start?.clockTime ?? "全天" }
     /// Original calendar occurrence, shared by its daily slices but not by other repeats.
     var calendarOccurrenceID: String? = nil
     var calendarSpan: DateInterval? = nil
 
     var isAllDay: Bool { start == nil }
 
-    func isPending(at now: Date) -> Bool { kind == .reminder && !isCompleted && (start ?? day) <= now }
+    func isPending(at now: Date) -> Bool { kind == .reminder && !isCompleted && (arrangementReviewDate ?? start ?? day) <= now }
 }
 
 /// A system calendar event, already read from EventKit.
@@ -147,7 +150,7 @@ struct HomeAgenda {
                 let detail = (completion.map { "已完成 · \($0.monthDay) \($0.clockTime) 完成" } ?? "已完成") + who
                 byDay[day, default: []].append(AgendaEntry(
                     id: "completed-\(reminder.id)-\(date.timeIntervalSince1970)", kind: .reminder,
-                    title: reminder.text, subtitle: detail, day: day, start: date,
+                    title: reminder.text, subtitle: detail, day: day, start: reminder.timePeriod == nil ? date : nil,
                     end: date.addingTimeInterval(30 * 60), target: .reminder(reminder.id), isCompleted: true))
             }
         }
@@ -162,6 +165,17 @@ struct HomeAgenda {
                     subtitle: ["\(reminder.fireDate.monthDay) 的任务 · 尚未完成", household.rowLabel(reminder.sharing)]
                         .compactMap { $0 }.joined(separator: " · "), day: today, start: nil, end: nil,
                     target: .reminder(reminder.id)))
+            }
+            if let period = reminder.timePeriod {
+                let day = calendar.startOfDay(for: reminder.fireDate)
+                if day <= lastDay {
+                    byDay[day, default: []].append(AgendaEntry(
+                        id: "arrangement-\(reminder.id)", kind: .reminder, title: reminder.text,
+                        subtitle: [period.label, household.rowLabel(reminder.sharing)].compactMap { $0 }.joined(separator: " · "),
+                        day: day, start: nil, end: nil, target: .reminder(reminder.id),
+                        arrangementReviewDate: reminder.arrangementReviewDate, arrangementPeriod: period))
+                }
+                continue
             }
             var taskDays = displayedDays
             if reminder.repeats == .none && reminder.phases == nil && reminder.fireDate < today {

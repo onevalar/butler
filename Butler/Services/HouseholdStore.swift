@@ -14,6 +14,8 @@ final class HouseholdStore {
     private(set) var sharing: [UUID: ItemSharing] = [:]
     /// Things that were on this phone when it joined, waiting to be merged or sorted after the first sync.
     private(set) var staged: Set<UUID> = []
+    /// Durable even on an empty phone: acceptance may succeed before the first download does.
+    private(set) var joining = false
     @ObservationIgnored let directory: URL
 
     init(directory: URL) {
@@ -22,6 +24,7 @@ final class HouseholdStore {
         members = load("members.json") ?? []
         sharing = load("sharing.json") ?? [:]
         staged = load("staged.json") ?? []
+        joining = state != nil && ((load("joining.json") as Bool?) ?? !staged.isEmpty)
         hiddenTasks = load("hidden-tasks.json") ?? [:]
         rules = load("rules.json") ?? []
         myRules = load("my-rules.json") ?? []
@@ -123,12 +126,19 @@ final class HouseholdStore {
 
     // MARK: Changes
 
-    func begin(_ state: HouseholdState, me: HouseholdMember, staging: Set<UUID> = []) {
+    func begin(_ state: HouseholdState, me: HouseholdMember, staging: Set<UUID> = [], joining: Bool = false) {
         self.state = state
         members = [me]
         staged = staging
+        self.joining = joining
         sharing = sharing.filter { !staging.contains($0.key) }
         save(state, "state.json"); save(members, "members.json"); save(staged, "staged.json"); save(sharing, "sharing.json")
+        save(joining, "joining.json")
+    }
+
+    func completeJoining() {
+        joining = false
+        save(false, "joining.json")
     }
 
     func upsert(_ member: HouseholdMember) {
@@ -158,11 +168,12 @@ final class HouseholdStore {
         state = nil
         members = []
         staged = []
+        joining = false
         sharing = [:]
         hiddenTasks = [:]
         rules = []
         // This person's own rules are theirs, not the household's: they stay.
-        for name in ["state.json", "members.json", "sharing.json", "staged.json", "hidden-tasks.json", "rules.json"] {
+        for name in ["state.json", "members.json", "sharing.json", "staged.json", "joining.json", "hidden-tasks.json", "rules.json"] {
             try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
         }
     }

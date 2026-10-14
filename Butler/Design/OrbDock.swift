@@ -49,6 +49,11 @@ struct OrbDockView: View {
     @State private var handsFree = false
     @State private var voiceWidth: CGFloat = VoiceGeometry.ballWidth
     @State private var cancelExtent: CGFloat = 0
+    @State private var separation: CGFloat = 0
+    @State private var contact = CGSize.zero
+    @State private var returnProgress: CGFloat = 1
+    @State private var returning = false
+    @State private var visualSession = UUID()
 
     private var motionEnabled: Bool { !reduceMotion && scenePhase == .active }
 
@@ -127,9 +132,11 @@ struct OrbDockView: View {
             // Width also drives reflections, so lighting never jumps ahead of the outline.
             GeometryReader { proxy in
                 VoiceGlass(width: proxy.size.width, height: 340, barWidth: voiceWidth, extent: cancelExtent,
+                           separation: separation, contact: contact, returnProgress: returnProgress, returning: returning,
                            level: recorder.dictation.audioLevel, recording: interaction.phase == .recording,
                            cancelling: interaction.cancelling, active: working || recorder.dictation.listening,
                            tilt: motionEnabled ? motion.tilt : .zero)
+                    .animation(motionEnabled ? .easeOut(duration: 0.12) : nil, value: recorder.dictation.audioLevel)
             }
             .frame(height: 340)
             .allowsHitTesting(false)
@@ -152,6 +159,8 @@ struct OrbDockView: View {
                 onVoiceActivate: {
                     if handsFree { interaction.release(); handsFree = false }
                     else { beginPress(); handsFree = interaction.held }
+                }, onContact: { point in
+                    contact = CGSize(width: max(-16, min(16, point.x - 48)), height: max(-16, min(16, point.y - 48)))
                 })
                 .frame(width: 96, height: 96)
                 .padding(.bottom, Self.ballLift - 48)
@@ -190,17 +199,27 @@ struct OrbDockView: View {
                     try await Task.sleep(for: .seconds(2))
                     // Preview must animate even if another simulator window has focus.
                     withAnimation(reduceMotion ? nil : .smooth(duration: 0.42)) {
+                        returning = false
+                        separation = 0
                         cancelExtent = 0
                         voiceWidth = VoiceGeometry.barWidth
                     }
                     try await Task.sleep(for: .seconds(1))
-                    withAnimation(.smooth(duration: 0.4)) { cancelExtent = 1 }
+                    withAnimation(.linear(duration: 1.6)) { cancelExtent = 0.76 }
+                    try await Task.sleep(for: .seconds(2.2))
+                    withAnimation(.linear(duration: 0.25)) { cancelExtent = 0.9 }
+                    try await Task.sleep(for: .seconds(0.25))
+                    withAnimation(.easeOut(duration: 0.18)) { separation = 1 }
                     try await Task.sleep(for: .seconds(1))
                     hideVoiceGlass(animated: !reduceMotion)
                 }
             } catch { }
         }
         #endif
+        .onChange(of: interaction.cancelling) { _, cancelling in
+            guard interaction.held else { return }
+            withAnimation(motionEnabled ? .easeOut(duration: 0.18) : nil) { separation = cancelling ? 1 : 0 }
+        }
         .onChange(of: interaction.held) { _, held in
             if held { showVoiceGlass() } else { hideVoiceGlass(animated: motionEnabled) }
         }
@@ -244,18 +263,38 @@ struct OrbDockView: View {
     }
 
     private func showVoiceGlass() {
-        // A single continuous expansion crosses the hold threshold without stopping at a bulge.
-        // Interruptions retarget SwiftUI's current presentation value, including a quick re-press.
-        withAnimation(motionEnabled ? .smooth(duration: 0.42) : nil) {
+        visualSession = UUID()
+        returning = false
+        returnProgress = 1
+        withAnimation(motionEnabled ? .easeInOut(duration: 0.32) : nil) {
             cancelExtent = 0
+            separation = 0
             voiceWidth = VoiceGeometry.barWidth
         }
     }
 
     private func hideVoiceGlass(animated: Bool) {
-        withAnimation(animated ? .smooth(duration: 0.32) : nil) {
-            voiceWidth = VoiceGeometry.ballWidth
-            cancelExtent = 0
+        let token = UUID(); visualSession = token
+        if animated && cancelExtent > 0.78 {
+            // Release is a fall, contact, then one local compression — not the pull animation reversed.
+            returning = true
+            returnProgress = 0
+            withAnimation(.linear(duration: 0.62), completionCriteria: .logicallyComplete) {
+                returnProgress = 1
+            } completion: {
+                guard visualSession == token, !interaction.held else { return }
+                returning = false
+                voiceWidth = VoiceGeometry.ballWidth
+                cancelExtent = 0
+                separation = 0
+            }
+        } else {
+            returning = false
+            withAnimation(animated ? .spring(duration: 0.42, bounce: 0.12) : nil) {
+                voiceWidth = VoiceGeometry.ballWidth
+                cancelExtent = 0
+                separation = 0
+            }
         }
     }
 
@@ -293,6 +332,10 @@ private struct VoiceOrbLight: View {
     let bounds: CGRect
     let active: Bool
     let tilt: CGSize
+    var audio: CGFloat = 0
+    var pressure: CGFloat = 0
+    var contact = CGSize.zero
+    var freezeLighting = false
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
@@ -301,9 +344,9 @@ private struct VoiceOrbLight: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: active ? 1.0 / 60 : 1.0 / 30,
-                                paused: reduceMotion || scenePhase != .active)) { _ in
+                                paused: reduceMotion || freezeLighting || scenePhase != .active)) { _ in
             let elapsed = ProcessInfo.processInfo.systemUptime - phaseStarted
-            lighting(phase: reduceMotion ? 0 : phaseBase + elapsed * (active ? 1 : 0.35))
+            lighting(phase: reduceMotion || freezeLighting ? 0 : phaseBase + elapsed * (active ? 1 : 0.35))
         }
         .onChange(of: active) { old, _ in
             let now = ProcessInfo.processInfo.systemUptime
@@ -341,14 +384,21 @@ private struct VoiceOrbLight: View {
                     .color(palette.glow[0].0), .color(palette.glow[1].0), .color(palette.glow[2].0),
                     .float(Float(palette.glow[0].1)), .float(Float(palette.glow[1].1)), .float(Float(palette.glow[2].1))))
                 .frame(width: diameter / 0.86, height: diameter / 0.86)
-                .blur(radius: 1.3)
+                .opacity(0.72 + audio * 0.28)
+                .blur(radius: 1.3 - audio * 0.35)
                 .scaleEffect(x: bounds.width / diameter, y: 1)
                 .position(x: center.x + tilt.width * 2.5, y: center.y + tilt.height * 2.5)
+            Rectangle().fill(.white)
+                .colorEffect(ShaderLibrary.orbContactSurface(.boundingRect, .float(Float(pressure)),
+                    .float2(Float(contact.width), Float(contact.height))))
+                .frame(width: bounds.width, height: bounds.height)
+                .position(center)
             topReflection.fill(LinearGradient(colors: [.white.opacity(palette.spec), .white.opacity(0)],
                                               startPoint: .top, endPoint: .bottom))
+                .opacity(1 - pressure * 0.72)
                 .blur(radius: 1.8)
                 .offset(x: -tilt.width * 2, y: -tilt.height * 1.4)
-            Ellipse().fill(.white.opacity(0.9))
+            Ellipse().fill(.white.opacity(0.9 * (1 - pressure * 0.85)))
                 .frame(width: bounds.width * 0.14, height: diameter * 0.07)
                 .rotationEffect(.degrees(-25))
                 .position(x: bounds.minX + bounds.width * 0.30 - tilt.width * 2,
@@ -379,30 +429,31 @@ private struct VoiceOrbLight: View {
     }
 }
 
-/// The glass while talking: the ball as a bar with round ends, voice bars on both sides of the finger,
-/// and a red cancel zone that grows out of the same glass when the finger slides up.
+/// Pressure and the measured voice level deform the same glass. Pulling up empties the dock.
 private struct VoiceGlass: View, Animatable {
     let width: CGFloat
     let height: CGFloat
     var barWidth: CGFloat
     var extent: CGFloat
-    let level: CGFloat
+    var separation: CGFloat
+    let contact: CGSize
+    var returnProgress: CGFloat
+    let returning: Bool
+    var level: CGFloat
     let recording: Bool
     let cancelling: Bool
     let active: Bool
     let tilt: CGSize
+    var freezeLighting = false
     @Environment(\.colorScheme) private var colorScheme
 
-    var animatableData: AnimatablePair<CGFloat, CGFloat> {
-        get { AnimatablePair(barWidth, extent) }
-        set { barWidth = newValue.first; extent = newValue.second }
+    var animatableData: AnimatablePair<AnimatablePair<CGFloat, CGFloat>, AnimatablePair<CGFloat, AnimatablePair<CGFloat, CGFloat>>> {
+        get { AnimatablePair(AnimatablePair(barWidth, extent), AnimatablePair(level, AnimatablePair(separation, returnProgress))) }
+        set { barWidth = newValue.first.first; extent = newValue.first.second
+            level = newValue.second.first; separation = newValue.second.second.first; returnProgress = newValue.second.second.second }
     }
 
     private func outline(_ geometry: VoiceGeometry, centerY: CGFloat) -> Path {
-        if extent <= 0.001 {
-            return Path(roundedRect: CGRect(x: (width - barWidth) / 2, y: centerY - 31,
-                                            width: barWidth, height: 62), cornerRadius: 31)
-        }
         return Path { path in
             for contour in geometry.contours(width: width, height: height, centerY: centerY) {
                 path.addLines(contour)
@@ -412,55 +463,145 @@ private struct VoiceGlass: View, Animatable {
     }
 
     var body: some View {
-        let centerY = height - OrbPose.ballLift
-        let geometry = VoiceGeometry(barWidth: barWidth, extent: extent)
+        let release = VoiceReturnPose(progress: returnProgress)
+        let impact = returning ? release.impact : 0
+        let centerY = returning ? release.centerY(dockY: height - OrbPose.ballLift) : height - OrbPose.ballLift
+        let audio = recording && !cancelling ? max(0, min(1, level)) : 0
+        let geometry = VoiceGeometry(barWidth: returning ? 62 + 38 * impact : barWidth + 1.4 * audio,
+            extent: returning ? 0 : extent, separation: returning ? 0 : separation)
         let shape = outline(geometry, centerY: centerY)
         let dark = colorScheme == .dark
-        let grow = extent * extent * (3 - 2 * extent)
+        let grow = returning ? release.cancelOpacity : VoiceGeometry.smooth(extent)
+        let cancelEmphasis = cancelling || returning
         ZStack {
             Color.clear.glassEffect(.clear, in: shape)
             VoiceOrbLight(shape: shape,
-                          bounds: CGRect(x: (width - barWidth) / 2, y: centerY - 31, width: barWidth, height: 62),
-                          active: active, tilt: tilt)
+                          bounds: shape.boundingRect,
+                          active: active, tilt: tilt, audio: audio, pressure: geometry.contactDepth, contact: contact, freezeLighting: freezeLighting)
             // The cancel zone is the same glass turning red, brightest at its far end.
-            LinearGradient(stops: [.init(color: Color(red: 1, green: 0.23, blue: 0.19).opacity(cancelling ? 0.95 : 0.78), location: 0),
-                                   .init(color: Color(red: 1, green: 0.27, blue: 0.23).opacity(cancelling ? 0.7 : 0.5), location: 0.55),
+            LinearGradient(stops: [.init(color: Color(red: 1, green: 0.23, blue: 0.19).opacity(cancelEmphasis ? 0.30 : 0.18), location: 0),
+                                   .init(color: Color(red: 1, green: 0.27, blue: 0.23).opacity(cancelEmphasis ? 0.12 : 0.08), location: 0.55),
                                    .init(color: Color(red: 1, green: 0.32, blue: 0.27).opacity(0), location: 1)],
                            startPoint: UnitPoint(x: 0.5, y: max(0, (centerY - geometry.topReach) / height)),
                            endPoint: UnitPoint(x: 0.5, y: (centerY - 4) / height))
                 .opacity(grow)
                 .clipShape(shape)
-                .animation(.easeOut(duration: 0.15), value: cancelling)
             shape.stroke(LinearGradient(colors: [.white.opacity(dark ? 0.3 : 0.9), .white.opacity(dark ? 0.1 : 0.35)],
                                         startPoint: .top, endPoint: .bottom), lineWidth: 1)
-            bars(centerY: centerY)
-            Text(cancelling ? "松开取消" : "✕ 取消")
-                .font(.system(size: 16, weight: .bold))
-                .foregroundStyle(.white)
-                .opacity(max(0, min(1, (extent - 0.45) / 0.35)) * (cancelling ? 1 : 0.8))
-                .position(x: width / 2, y: centerY - geometry.zoneOffset)
+            Image(systemName: "xmark")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(Color(red: 0.82, green: 0.16, blue: 0.12))
+                .opacity((returning ? release.cancelOpacity : max(0, min(1, (extent - 0.65) / 0.15))) * (cancelEmphasis ? 1 : 0.8))
+                // A returning sphere has no raised head: its mark shares the falling centre.
+                .position(x: width / 2, y: returning ? centerY : centerY - geometry.zoneOffset)
+                .clipShape(shape)
         }
         .frame(width: width, height: height)
         .shadow(color: .black.opacity(dark ? 0.35 : 0.14), radius: 14, y: 8)
         .accessibilityHidden(true)
     }
 
-    /// Bars stand on both sides of the finger and follow the measured microphone level, never a simulated one.
-    private func bars(centerY: CGFloat) -> some View {
-        let show = max(0, min(1, (barWidth - 148) / 28))
-        let weights: [CGFloat] = [0.55, 0.85, 1, 0.7]
-        let ink = colorScheme == .dark ? Color.white : Color.black
+}
+
+#if DEBUG
+/// Isolated visual catalogue. No microphone, model, permissions or durable stores.
+struct OrbStoryboardPreview: View {
+    @State private var began = Date.now
+    private let durations: [Double] = [4, 3, 5, 4, 8, 7, 8, 4]
+    private let titles = ["待机与倾斜反光", "短按与恢复", "长按与音量外观对照", "松开发送与等待", "上滑取消与下落归位", "未取消时滑回继续", "进入取消后滑回继续", "减少动态效果"]
+    private let notes = ["稳定球体，内部流光与倾斜反光", "仅展示球体反馈；正式短按会打开对话", "音量参数依次为 0 / 0.35 / 0.7 / 1；不是现场录音", "收回受压形态，整理期间保留内部流光", "叉号与球体同一轨迹，红色和叉号在球内淡出", "未越过取消边界，上提与回拖连续可逆", "越过边界后再拖回，恢复录音形态", "静态分段切换，关闭流光与弹性回落"]
+    private var dark: Bool { ProcessInfo.processInfo.arguments.contains("--orb-dark") }
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            catalogueFrame(at: timeline.date)
+        }
+        .preferredColorScheme(dark ? .dark : .light)
+    }
+
+    private func catalogueFrame(at date: Date) -> some View {
+        let total = durations.reduce(0, +)
+        let time = date.timeIntervalSince(began).truncatingRemainder(dividingBy: total)
+        let index = scene(at: time)
+        let t = time - durations.prefix(index).reduce(0, +)
+        let current = pose(scene: index, t: t)
         return ZStack {
-            ForEach(0..<4, id: \.self) { index in
-                ForEach([-1, 1], id: \.self) { side in
-                    Capsule()
-                        .fill(ink.opacity(cancelling ? 0.35 : 0.78))
-                        .frame(width: 5, height: recording ? 6 + level * 32 * weights[index] : 5)
-                        .position(x: width / 2 + CGFloat(side) * (barWidth / 2 - 24 - CGFloat(index) * 11), y: centerY)
-                        .animation(.easeOut(duration: 0.08), value: level)
-                }
+            LinearGradient(colors: [Color(.systemBackground), Color(.systemGray5)], startPoint: .top, endPoint: .bottom).ignoresSafeArea()
+            VStack(spacing: 12) {
+                Text(titles[index]).font(.headline).padding(.top, 60)
+                Text(notes[index]).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center).padding(.horizontal, 24)
+                Spacer()
+                glass(current, scene: index, time: t)
+                    .scaleEffect(1.5).frame(height: 450)
+                Spacer()
             }
         }
-        .opacity(show)
+    }
+
+    private func glass(_ current: Pose, scene: Int, time: Double) -> some View {
+        let tilt = scene == 0 ? CGSize(width: sin(time * 1.5) * 0.7, height: cos(time * 1.5) * 0.4) : CGSize.zero
+        return VoiceGlass(width: 220, height: 330, barWidth: 62 + 38 * current.pressure,
+            extent: current.extent, separation: current.separation, contact: CGSize(width: 3, height: -5),
+            returnProgress: current.returnProgress, returning: current.returning,
+            level: current.level, recording: scene == 2, cancelling: current.cancelling,
+            active: scene != 0, tilt: tilt, freezeLighting: scene == 7)
+    }
+
+    private func scene(at time: Double) -> Int {
+        var end = 0.0
+        for (index, duration) in durations.enumerated() { end += duration; if time < end { return index } }
+        return durations.count - 1
+    }
+
+    private struct Pose {
+        var pressure: CGFloat = 0
+        var extent: CGFloat = 0
+        var separation: CGFloat = 0
+        var returnProgress: CGFloat = 1
+        var returning = false
+        var cancelling = false
+        var level: CGFloat = 0
+    }
+
+    private func pose(scene: Int, t: Double) -> Pose {
+        func ramp(_ start: Double, _ duration: Double) -> CGFloat { VoiceGeometry.smooth(CGFloat((t - start) / duration)) }
+        // Normal release is a short damped spring; this catalogue samples its envelope.
+        func recovery(_ start: Double) -> CGFloat {
+            let x = max(0, t - start)
+            return x >= 0.65 ? 0 : CGFloat(exp(-11 * x) * cos(13 * x))
+        }
+        var p = Pose()
+        switch scene {
+        case 0: break
+        case 1:
+            p.pressure = t < 0.55 ? ramp(0.35, 0.32) : ramp(0.35, 0.32) * recovery(0.55)
+        case 2:
+            p.pressure = ramp(0.25, 0.32)
+            p.level = t < 1.5 ? 0 : t < 2.5 ? 0.35 : t < 3.5 ? 0.7 : 1
+        case 3:
+            p.pressure = t < 1 ? 1 : recovery(1)
+        case 4:
+            p.pressure = ramp(0.2, 0.32)
+            p.extent = 0.9 * ramp(1, 2)
+            p.separation = ramp(2.8, 0.18)
+            p.cancelling = t >= 2.8 && t < 5
+            if t >= 5 && t < 5.62 { p.returning = true; p.returnProgress = CGFloat((t - 5) / 0.62) }
+            if t >= 5.62 { p = Pose() }
+        case 5:
+            p.pressure = ramp(0.2, 0.32)
+            p.extent = 0.74 * ramp(1, 1.5) * (1 - ramp(2.7, 1.5))
+            if t >= 5 { p.pressure = recovery(5) }
+        case 6:
+            p.pressure = ramp(0.2, 0.32)
+            p.extent = 0.9 * ramp(1, 1.5) * (1 - ramp(3.5, 1.5))
+            p.separation = ramp(2.3, 0.18) * (1 - ramp(3.9, 0.18))
+            p.cancelling = t >= 2.3 && t < 3.9
+            if t >= 6 { p.pressure = recovery(6) }
+        default:
+            if t >= 1 && t < 3 { p.pressure = 1 }
+            if t >= 2 && t < 3 { p.extent = 0.9; p.separation = 1; p.cancelling = true }
+        }
+        return p
     }
 }
+#endif

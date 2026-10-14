@@ -77,3 +77,19 @@ static float gf_fbm(float2 p) {
     // No bright core: the whole patch is liquid.
     return half4(half3(col * a), half(a));
 }
+
+// The finger depresses the front surface. The changed normal bends reflection locally;
+// this is a height field, not an outlined ring or a second sphere fading over the first.
+[[ stitchable ]] half4 orbContactSurface(float2 position, half4 color, float4 bounds, float pressure, float2 contact) {
+    float2 p = (position - bounds.xy - bounds.zw * 0.5 - contact) / (min(bounds.z, bounds.w) * 0.5);
+    float r2 = dot(p, p);
+    float dent = exp(-r2 / 0.24);
+    float2 slope = pressure * p * dent * 7.0;
+    float3 normal = normalize(float3(-slope.x, -slope.y, 1.0));
+    float3 light = normalize(float3(-0.55, -0.72, 0.72));
+    float delta = dot(normal, light) - light.z;
+    float mask = pressure * exp(-r2 / 0.72);
+    float a = 0.24 * (1.0 - exp(-abs(delta) * 3.0)) * mask;
+    float3 ink = delta > 0 ? float3(1.0) : float3(0.26, 0.29, 0.33);
+    return half4(half3(ink * a), half(a));
+}

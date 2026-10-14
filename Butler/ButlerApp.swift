@@ -60,7 +60,7 @@ struct ButlerApp: App {
         AppTheme.migrateLegacyGlow()
         FontRegistry.registerBundledFonts()
         if !Self.isRunningTests { NotificationManager.shared.installDelegate() }
-        let testing = Self.isRunningTests
+        let testing = Self.isRunningTests || Self.isOrbStoryboard
         _launch = State(initialValue: AppLaunch(
             makeContainer: {
                 if testing { return try ButlerStore.makePreviewContainer() }
@@ -75,14 +75,31 @@ struct ButlerApp: App {
         return environment["XCTestConfigurationFilePath"] != nil || environment["XCTestBundlePath"] != nil
     }
 
+    private static var isOrbStoryboard: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.arguments.contains("--orb-storyboard")
+        #else
+        false
+        #endif
+    }
+
     var body: some Scene {
         WindowGroup {
+            #if DEBUG
+            if Self.isOrbStoryboard { OrbStoryboardPreview() }
+            else { root }
+            #else
+            root
+            #endif
+        }
+    }
+
+    @ViewBuilder private var root: some View {
             if let container = launch.container {
                 app.modelContainer(container)
             } else {
                 StoreUnavailableView(detail: launch.failure ?? "", onRetry: launch.open)
             }
-        }
     }
 
     private var app: some View {

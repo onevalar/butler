@@ -166,7 +166,7 @@ struct CalendarOverviewView: View {
         Button { onOpen(entry) } label: {
             HStack(alignment: .top, spacing: 14) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(entry.isAllDay ? "全天" : (entry.calendarSpan?.start ?? entry.start)?.clockTime ?? "全天")
+                    Text(entry.isAllDay ? entry.timeLabel : (entry.calendarSpan?.start ?? entry.start)?.clockTime ?? "全天")
                         .font(.subheadline)
                     // Reminder end values are synthetic timeline lengths, not actual appointments.
                     if !entry.isAllDay, let span = entry.calendarSpan,

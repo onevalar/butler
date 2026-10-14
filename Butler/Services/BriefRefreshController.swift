@@ -98,7 +98,11 @@ final class BriefRefreshController {
     /// Also used immediately before a card action, so a missed notification cannot authorize stale buttons.
     func checkNow(allowGeneration: Bool = true) {
         guard UIApplication.shared.isProtectedDataAvailable, let reminders else { return }
-        let waitingForSources = WeatherStore.shared.isRefreshing || sessions?.working == true || SyncService.shared.isSyncingForBrief
+        let weather = WeatherStore.shared
+        let refreshWeather = weather.snapshot.map { !$0.isFresh() } == true && !weather.isRefreshing && weather.error == nil
+        if refreshWeather { Task { await weather.refresh() } }
+        // Do not first generate with missing weather and then regenerate when the refresh finishes.
+        let waitingForSources = refreshWeather || weather.isRefreshing || sessions?.working == true || SyncService.shared.isSyncingForBrief
         dirty = waitingForSources || !allowGeneration
         let now = Date.now
         do {

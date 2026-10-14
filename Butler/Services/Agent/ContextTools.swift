@@ -130,7 +130,7 @@ extension ButlerTools {
                 guard input.expected_revision == nil else { throw ToolError("新建任务的expected_revision应为null") }
                 reminder = TimedReminder(text: input.text, fireDate: firstDate)
             }
-            reminder.text = input.text; reminder.fireDate = firstDate
+            reminder.text = input.text; reminder.fireDate = firstDate; reminder.timePeriod = nil
             reminder.phases = phases; reminder.endDate = try date(input.end_time)
             reminder.autoCompleteAt = try date(input.auto_complete_at); reminder.timeZoneIdentifier = input.time_zone
             reminder.sharing = try taskSharing(input.family, existing: reminder.sharing)

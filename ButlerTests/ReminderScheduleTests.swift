@@ -20,6 +20,52 @@ final class ReminderScheduleTests: XCTestCase {
         return ReminderStore(file: file, schedules: false)
     }
 
+    func testOfflineFuzzyRequestKeepsPrecisionWithoutGuessingAClock() throws {
+        for (request, period): (String, ArrangementPeriod) in [("明天提醒我买水", .day), ("明天下午提醒我买水", .afternoon)] {
+            let parsed = try XCTUnwrap(LocalReminderParser.parse(request, now: date(28), calendar: calendar))
+            XCTAssertEqual(parsed.timePeriod, period)
+            XCTAssertEqual(parsed.text, "买水")
+            XCTAssertEqual(parsed.fireDate, date(29, hour: 0))
+        }
+        XCTAssertNil(LocalReminderParser.parse("明天到家提醒我买水", now: date(28), calendar: calendar))
+        XCTAssertNil(LocalReminderParser.parse("明天25点提醒我买水", now: date(28), calendar: calendar))
+    }
+
+    func testFuzzyArrangementSurvivesPersistenceAndNeverCreatesMidnightNotifications() throws {
+        var task = TimedReminder(text: "买水", fireDate: date(29, hour: 0), timeZoneIdentifier: "Asia/Shanghai")
+        task.timePeriod = .afternoon
+        try ReminderSchedule.validate(task)
+        let decoded = try JSONDecoder().decode(TimedReminder.self, from: JSONEncoder().encode(task))
+        XCTAssertEqual(decoded, task)
+        XCTAssertEqual(decoded.timePeriod, .afternoon)
+        XCTAssertTrue(ReminderSchedule.preview(task, now: date(28)).isEmpty)
+        XCTAssertNil(ReminderSchedule.nativeRepeatPhase(task, now: date(28)))
+        XCTAssertEqual(ReminderSchedule.occurrences(task, on: date(29), calendar: calendar).count, 1)
+        XCTAssertTrue(ReminderSchedule.occurrences(task, on: date(28), calendar: calendar).isEmpty)
+        XCTAssertFalse(task.whenLabel.contains("00:00"))
+        XCTAssertTrue(task.whenLabel.contains("下午"))
+        XCTAssertTrue(ReminderSchedule.ruleSummary(task).contains("未设置定时通知"))
+        let store = store(); try store.add(task)
+        XCTAssertEqual(try store.todayTaskSnapshot(now: date(29), calendar: calendar).map(\.id), [task.id])
+        let agenda = HomeAgenda.build(lots: [], reminders: [task], events: [], now: date(29), calendar: calendar)
+        let entries = agenda.entries(on: calendar.startOfDay(for: date(29)))
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertNil(entries.first?.start)
+        XCTAssertTrue(agenda.pending(on: agenda.today, at: date(29)).isEmpty)
+        XCTAssertEqual(agenda.pending(on: agenda.today, at: date(29, hour: 14)).count, 1)
+        for now in [date(29), date(29, hour: 14)] {
+            let list = HomeList.build(day: agenda.today, agenda: agenda, facts: [], now: now, calendar: calendar)
+            XCTAssertEqual(list.rows.count, 1, "No duplicate all-day and pending rows")
+            XCTAssertEqual(list.rows.first?.lead, "下午")
+            let candidates = BriefCandidates.make(facts: [], agenda: agenda, now: now, calendar: calendar, tasks: [task])
+            XCTAssertEqual(candidates.count, 1)
+            XCTAssertTrue(candidates[0].detail.contains("下午"))
+            XCTAssertFalse(candidates[0].detail.contains("00:00"))
+        }
+        task.repeats = .daily
+        XCTAssertThrowsError(try ReminderSchedule.validate(task), "No accidental repeating notification rules")
+    }
+
     func testWidgetProjectionExcludesAutomaticDeadlineWithoutWritingOrCompletingTask() throws {
         let file = URL.temporaryDirectory.appendingPathComponent("widget-task-\(UUID()).json")
         defer { try? FileManager.default.removeItem(at: file) }

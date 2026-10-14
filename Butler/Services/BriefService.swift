@@ -147,7 +147,6 @@ final class BriefService {
         signature = "unavailable"
         displayedSignature = ""
         nextCheckAt = now.addingTimeInterval(60)
-        guard !interactionStarted else { return }
         brief = ButlerBrief(greeting: DailyBrief.greeting(hour: calendar.component(.hour, from: now)),
             text: "部分资料暂时无法读取，请稍后再看。", basis: "资料尚未核实", target: nil, actions: [], source: .local)
     }
@@ -178,12 +177,19 @@ final class BriefService {
         }
         let identity = model?.cacheIdentity ?? "local"
         let scope = BriefContext.fingerprint(["account": identity, "calendar_allowed": context.metadata["calendar_allowed"] as? Bool ?? false])
-        let sig = Self.contentVersion + base + "|" + context.signature + "|" + BriefModelReply.weatherSignature(weather, now: now)
+        let sig = Self.contentVersion + base + "|" + context.signature + "|" + BriefModelReply.weatherRefreshSignature(weather, now: now)
             + "|" + BriefContext.fingerprint(["account": identity])
         let local = BriefLocal.compose(candidates: candidates, lotCount: lotCount, basis: basis, now: now, calendar: calendar)
         let stored = loadCache()
         let previous = stored?.scope == scope && stored?.signature.hasPrefix(Self.contentVersion) == true ? stored?.brief.text : nil
         let cached = cachedBrief(for: sig, now: now)
+        let displaySignature = Self.contentVersion + base + "|" + context.signature + "|" + scope
+            + "|" + BriefModelReply.weatherRefreshSignature(weather, now: now, allowStale: true)
+        let retained = stored.flatMap { value -> Cached? in
+            guard value.displaySignature == displaySignature, value.dependencies.isEmpty,
+                  let validUntil = value.displayValidUntil, now < validUntil, now >= value.at.addingTimeInterval(-1) else { return nil }
+            return value
+        }
         let midnight = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)) ?? now.addingTimeInterval(86400)
         let weatherBoundaries = (weather?.hours ?? []).map { $0.date.addingTimeInterval(3600) }
         nextCheckAt = (context.boundaries + weatherBoundaries + (cached?.dependencies.flatMap(\.boundaries) ?? []) + [midnight] + [cached?.reviewAfter, weather?.fetchedAt.addingTimeInterval(1800),
@@ -201,7 +207,13 @@ final class BriefService {
         }
         if cached == nil {
             displayedSignature = ""
-            publish(local, signature: sig, local: local)
+            if let retained {
+                var value = retained.brief
+                value.actions = [] // Revalidation never leaves stale write buttons available.
+                publish(value, signature: "", local: local, force: true)
+            } else {
+                publish(local, signature: sig, local: local, force: true)
+            }
         }
         guard let model, model.isAvailable else {
             if cached != nil { publish(local, signature: sig, local: local) }
@@ -219,15 +231,15 @@ final class BriefService {
             guard let self else { return }
             await self.ask(model, cached: cached, candidates: candidates, local: local, signature: sig,
                            generation: requestGeneration, context: context, now: now, weather: weather, midnight: midnight,
-                           identity: identity, scope: scope, previous: previous, allowGeneration: allowGeneration)
+                           identity: identity, scope: scope, previous: previous, allowGeneration: allowGeneration, displaySignature: displaySignature)
         }
     }
 
-    private func publish(_ value: ButlerBrief, signature: String, local: ButlerBrief) {
+    private func publish(_ value: ButlerBrief, signature: String, local: ButlerBrief, force: Bool = false) {
         var value = value
         value.greeting = local.greeting
         value.basis = local.basis
-        if interactionStarted { return }
+        if interactionStarted && !force { return }
         brief = value
         displayedSignature = signature
     }
@@ -238,7 +250,7 @@ final class BriefService {
     private func ask(_ model: BriefModel, cached: Cached?, candidates: [BriefCandidate], local: ButlerBrief,
                      signature sig: String, generation requestGeneration: UUID, context: BriefContext,
                      now: Date, weather: WeatherSnapshot?, midnight: Date, identity: String, scope: String,
-                     previous: String?, allowGeneration: Bool) async {
+                     previous: String?, allowGeneration: Bool, displaySignature: String) async {
         let started = Date.now
         let deadline = started.addingTimeInterval(timeout)
         var validatingCache = cached != nil
@@ -264,7 +276,7 @@ final class BriefService {
                 }
                 defaults.removeObject(forKey: Self.cacheKey)
                 displayedSignature = ""
-                publish(local, signature: sig, local: local)
+                publish(local, signature: sig, local: local, force: true)
             }
             guard allowGeneration else { return }
             isThinking = true
@@ -301,7 +313,12 @@ final class BriefService {
                 }
                 publish(result, signature: sig, local: local)
                 defaults.removeObject(forKey: Self.failureKey)
-                store(Cached(signature: sig, scope: scope, brief: result, at: completedAt, reviewAfter: deadline, dependencies: answer.dependencies))
+                let displayDeadline = (context.boundaries + answer.dependencies.flatMap(\.boundaries)
+                    + (weather?.hours ?? []).map { $0.date.addingTimeInterval(3600) }
+                    + [midnight] + [weather?.observedAt.addingTimeInterval(7200)].compactMap { $0 })
+                    .filter { $0 > completedAt }.min() ?? midnight
+                store(Cached(signature: sig, scope: scope, brief: result, at: completedAt, reviewAfter: deadline,
+                    dependencies: answer.dependencies, displaySignature: displaySignature, displayValidUntil: displayDeadline))
                 nextCheckAt = (answer.dependencies.flatMap(\.boundaries) + [nextCheckAt ?? midnight, deadline])
                     .filter { $0 > completedAt }.min()
                 ChatDiagnostics.log("brief model ok \(String(format: "%.1f", Date.now.timeIntervalSince(started)))s chars=\(parsed.text.count) actions=\(actions.count)")
@@ -366,6 +383,8 @@ final class BriefService {
         var at: Date
         var reviewAfter: Date
         var dependencies: [BriefReadDependency]
+        var displaySignature: String?
+        var displayValidUntil: Date?
     }
     private struct Failure: Codable { var signature: String; var at: Date }
     private func failure() -> Failure? {

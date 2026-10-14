@@ -146,7 +146,7 @@ final class ButlerTools {
 
     /// A reminder understood on the phone (when the model couldn't be reached), shown for confirmation like any other.
     func proposeReminder(_ reminder: TimedReminder) {
-        add(.reminder(reminder), title: "提醒：\(reminder.text)", detail: reminder.whenLabel)
+        add(.reminder(reminder), title: reminder.text, detail: ReminderSchedule.friendlySummary(reminder))
     }
 
     private(set) var requestTurnID: UUID?
@@ -184,7 +184,7 @@ final class ButlerTools {
     {"type":"function","name":"propose_set_date","description":"设置或清除某件物品的日期。kind=package_expiry 包装有效期（只能用用户明确给出的日期），kind=planned_use_by 计划吃完/用完的日期。date 为 YYYY-MM-DD，null 表示清除。","strict":true,"parameters":{"type":"object","properties":{"lot_id":{"type":"string"},"kind":{"type":"string","enum":["package_expiry","planned_use_by"]},"date":{"type":["string","null"]}},"required":["lot_id","kind","date"],"additionalProperties":false}},
     {"type":"function","name":"propose_move","description":"更改某件物品的存放位置。","strict":true,"parameters":{"type":"object","properties":{"lot_id":{"type":"string"},"location":{"type":"string"}},"required":["lot_id","location"],"additionalProperties":false}},
     {"type":"function","name":"propose_set_tracking","description":"切换某样东西的记录方式：quantity 只记数量、不再追问和提醒过期；expiry 恢复跟踪到期日期。对同一种东西的所有批次生效。","strict":true,"parameters":{"type":"object","properties":{"lot_id":{"type":"string"},"track":{"type":"string","enum":["expiry","quantity"]}},"required":["lot_id","track"],"additionalProperties":false}},
-    {"type":"function","name":"propose_reminder","description":"设一个定时提醒：到点时手机弹出通知。用于“11点提醒我热饭”“每天晚上9点提醒我吃药”“周六早上提醒我买菜”。time 为本地时间 YYYY-MM-DD HH:mm；repeat：none 只提醒一次，daily 每天这个时间，weekly 每周这一天这个时间。text 是通知里显示的话，简短具体。","strict":true,"parameters":{"type":"object","properties":{"text":{"type":"string"},"time":{"type":"string"},"repeat":{"type":"string","enum":["none","daily","weekly"]},"family":\#(TaskFamilyArgs.schemaJSON)},"required":["family","repeat","text","time"],"additionalProperties":false}},
+    {"type":"function","name":"propose_reminder","description":"建立安排，确认后保存。精确钟点：time=YYYY-MM-DD HH:mm，period=null，到点通知。只说某天或上午/中午/下午/晚上：time=YYYY-MM-DD，period=day/morning/noon/afternoon/evening，repeat=none；保留模糊精度、不追问几点、不编造钟点。这类安排进入当天日程并供管家提示，不产生定时通知；确认卡可选建议时间或自定义。repeat：none 只提醒一次，daily 每天这个时间，weekly 每周这一天这个时间。text 是通知里显示的话，简短具体。","strict":true,"parameters":{"type":"object","properties":{"text":{"type":"string"},"time":{"type":"string"},"period":{"type":["string","null"],"enum":["day","morning","noon","afternoon","evening",null]},"repeat":{"type":"string","enum":["none","daily","weekly"]},"family":\#(TaskFamilyArgs.schemaJSON)},"required":["family","repeat","text","time","period"],"additionalProperties":false}},
     {"type":"function","name":"list_reminders","description":"查看已经设好、还没到点（或重复）的定时提醒。","strict":true,"parameters":{"type":"object","properties":{},"additionalProperties":false}},
     {"type":"function","name":"propose_cancel_reminder","description":"取消一个定时提醒，id 来自 list_reminders。","strict":true,"parameters":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":false}},
     {"type":"function","name":"search_notes","description":"查询用户告诉过你的习惯、偏好和其他需要记住的事（例如常去哪家店买、放在哪里、家里的布局）。query 为空返回全部笔记。程序预取的笔记有容量上限，以complete/truncated判断是否完整；资料不足时可按关键词调用本工具补查。","strict":true,"parameters":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}},
@@ -340,18 +340,26 @@ final class ButlerTools {
                                                from: try Self.date(args.from_date), to: try Self.date(args.to_date),
                                                cursor: args.cursor))
             case "propose_reminder":
-                struct Args: Decodable { var text: String; var time: String; var `repeat`: String; var family: TaskFamilyArgs? }
+                struct Args: Decodable { var text: String; var time: String; var `repeat`: String; var family: TaskFamilyArgs?; var period: ArrangementPeriod? }
                 let args = try JSONDecoder().decode(Args.self, from: data)
                 let text = args.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !text.isEmpty, text.count <= 200 else { throw ToolError("提醒内容不能为空") }
-                guard let date = Self.dateTime(args.time) else { throw ToolError("时间格式需要是 YYYY-MM-DD HH:mm") }
-                let repeats = TimedReminder.Repeat(rawValue: args.`repeat`) ?? .none
-                guard repeats != .none || date > Date.now.addingTimeInterval(30) else {
-                    throw ToolError("这个时间已经过了（现在是 \(Self.nowLabel)），请和用户确认时间")
+                let dateOnly = args.time.count == 10
+                let period = args.period ?? (dateOnly ? .day : nil)
+                guard let date = Self.dateTime(dateOnly ? args.time + " 00:00" : args.time),
+                      dateOnly == (period != nil), let repeats = TimedReminder.Repeat(rawValue: args.repeat) else {
+                    throw ToolError("日期安排用 YYYY-MM-DD 和 period；定时提醒用 YYYY-MM-DD HH:mm，period=null")
+                }
+                if period != nil {
+                    guard date >= Calendar.current.startOfDay(for: .now) else { throw ToolError("安排日期已经过去，请核对日期") }
+                } else if repeats == .none && date <= Date.now.addingTimeInterval(30) {
+                    throw ToolError("这个时间已经过了（现在是 \(Self.nowLabel)），请核对时间")
                 }
                 var reminder = TimedReminder(text: text, fireDate: date, repeats: repeats)
+                reminder.timePeriod = period
+                try ReminderSchedule.validate(reminder)
                 reminder.sharing = try taskSharing(args.family, existing: nil)
-                add(.reminder(reminder), title: "提醒：\(text)", detail: reminder.whenLabel)
+                add(.reminder(reminder), title: text, detail: ReminderSchedule.friendlySummary(reminder))
             case "list_reminders":
                 return try encode(["now": Self.nowLabel, "reminders": reminders.upcoming.map {
                     ["id": $0.id.uuidString, "text": $0.text, "when": $0.whenLabel,

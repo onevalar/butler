@@ -33,6 +33,44 @@ final class ButlerToolsTests: XCTestCase {
         return (try? JSONSerialization.jsonObject(with: Data(output.utf8))) as? [String: Any] ?? [:]
     }
 
+    func testFuzzyProposalCanChooseTimeOrKeepDayWithoutSavingUntilConfirmation() async throws {
+        let (tools, _) = try makeTools()
+        let output = await call(tools, "propose_reminder", #"{"text":"买水","time":"2099-01-02","period":"afternoon","repeat":"none"}"#)
+        XCTAssertNil(output["error"])
+        let first = try XCTUnwrap(tools.pending.first)
+        guard case .reminder(let value) = first.kind else { return XCTFail("Expected arrangement") }
+        XCTAssertEqual(value.timePeriod, .afternoon)
+        XCTAssertTrue(tools.reminders.reminders.isEmpty)
+        let clock = try XCTUnwrap(ButlerTools.dateTime("2099-01-02 15:00"))
+        try tools.reviseReminderTime(of: first.id, date: clock, period: nil)
+        guard case .reminder(let timed) = tools.pending[0].kind else { return XCTFail() }
+        XCTAssertNil(timed.timePeriod)
+        XCTAssertEqual(ReminderSchedule.preview(timed).first, clock)
+        XCTAssertTrue(tools.reminders.reminders.isEmpty)
+        try tools.reviseReminderTime(of: first.id, date: clock, period: .day)
+        XCTAssertEqual(tools.pending[0].id, first.id)
+        guard case .reminder(let day) = tools.pending[0].kind else { return XCTFail() }
+        XCTAssertEqual(day.timePeriod, .day)
+        XCTAssertTrue(ReminderSchedule.preview(day).isEmpty)
+        XCTAssertThrowsError(try tools.reviseReminderTime(of: first.id, date: .distantPast, period: nil))
+        _ = tools.confirmAll()
+        XCTAssertEqual(tools.reminders.reminders.count, 1)
+        XCTAssertEqual(tools.reminders.reminders.first?.timePeriod, .day)
+        XCTAssertTrue(ReminderSchedule.preview(tools.reminders.reminders[0]).isEmpty)
+    }
+
+    func testFuzzyToolRejectsMixedPrecisionAndExpiredDates() async throws {
+        let (tools, _) = try makeTools()
+        for arguments in [
+            #"{"text":"买水","time":"2099-01-02 15:00","period":"afternoon","repeat":"none"}"#,
+            #"{"text":"买水","time":"2000-01-02","period":"day","repeat":"none"}"#,
+            #"{"text":"买水","time":"2099-01-02","period":"day","repeat":"daily"}"#
+        ] {
+            _ = await call(tools, "propose_reminder", arguments)
+            XCTAssertTrue(tools.pending.isEmpty)
+        }
+    }
+
     func testAddSearchAdjustAndCloseOnlyAfterConfirmation() async throws {
         let (tools, container) = try makeTools()
         let proposal = await call(tools, "propose_add_items", #"""

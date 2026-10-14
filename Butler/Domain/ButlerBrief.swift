@@ -1,4 +1,5 @@
 import Foundation
+import WeatherKit
 
 // The butler's one sentence at the top of home, and the buttons under it.
 //
@@ -188,6 +189,7 @@ enum BriefCandidates {
             let leftOver = entry.day < agenda.today
             out.append(BriefCandidate(target: .task(id), kind: .dueTask, name: entry.title,
                                       detail: leftOver ? "\(entry.day.monthDay) 的事，还没完成"
+                                          : entry.start == nil ? "\(entry.subtitle ?? "今天的安排")，尚未完成"
                                           : "已到时间，还没完成" + (entry.start.map { "（\($0.clockTime)）" } ?? ""),
                                       quantity: nil, unit: nil, daysLeft: nil, location: nil, isMedicine: false))
         }
@@ -204,12 +206,12 @@ enum BriefCandidates {
         // What's still to come today, for the overview only: the card says "two trains this morning", the list
         // below has the details. These never get buttons of their own.
         let upcoming = agenda.entries(on: agenda.today).filter { entry in
-            guard entry.kind == .reminder, !entry.isCompleted, !entry.isRoutine, let start = entry.start, start > now,
+            guard entry.kind == .reminder, !entry.isCompleted, !entry.isRoutine, let start = entry.arrangementReviewDate ?? entry.start, start > now,
                   case .reminder(let id) = entry.target else { return false }
             return seenTasks.insert(id).inserted
         }.sorted { ($0.start ?? now) < ($1.start ?? now) }.compactMap { entry -> BriefCandidate? in
-            guard case .reminder(let id) = entry.target, let start = entry.start else { return nil }
-            return BriefCandidate(target: .task(id), kind: .upcomingTask, name: entry.title, detail: "今天 \(start.clockTime)",
+            guard case .reminder(let id) = entry.target, let start = entry.arrangementReviewDate ?? entry.start else { return nil }
+            return BriefCandidate(target: .task(id), kind: .upcomingTask, name: entry.title, detail: entry.arrangementReviewDate != nil ? "今天 · \(entry.subtitle ?? "不限时间")" : "今天 \(start.clockTime)",
                                   quantity: nil, unit: nil, daysLeft: nil, location: nil, isMedicine: false)
         }
         // The next few days: what is worth getting ready for (trips, deliveries, food that will need eating).
@@ -416,6 +418,7 @@ enum BriefModelReply {
 
         怎么写：
         - 概括今天的主要安排，合并同类；有需要时指出值得准备或先处理的事。根据情境组织，不机械套用“今天很忙、另外、记得”的句式。没有值得打扰的事情就平实简短，不硬凑建议。
+        - timePeriod 非空是日期／大致时段安排，fireDate 仅是日期锚点，不是零点闹钟；不称其超时，不编造定时通知。按 when_label 和 period_state 理解；未到时段只作当天概览，已完成不再催促，同一件事已提过就避免重复催促。
         - 不要只挑最近的一件细说，也不要逐条复述清单；不写车次、具体钟点、地址、座位、数量这些清单里已有的细节，时间只说大概（一大早、上午、明天、周末）。
         - 一到两句口语化的中文，总共不超过 60 个字；像熟悉他的人说话，不用“建议您”，不堆数字。事情都不急时，一句轻松的概括就够，不要硬凑。
 
@@ -466,6 +469,30 @@ enum BriefModelReply {
         payload["previous_text"] = previous
         let data = (try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])) ?? Data()
         return String(decoding: data, as: UTF8.self)
+    }
+
+    /// Only meaningful weather changes invalidate the prose; detailed facts remain in the request.
+    static func weatherRefreshSignature(_ weather: WeatherSnapshot?, now: Date, allowStale: Bool = false) -> String {
+        guard let weather, allowStale || weather.isFresh(at: now) else { return "none" }
+        func condition(_ value: String) -> String {
+            let value = WeatherCondition.chineseLabel(for: value)
+            for kind in ["雷", "雪", "雨", "雾", "霾", "沙"] where value.contains(kind) { return kind }
+            return "普通天气"
+        }
+        func thermal(_ value: Double) -> Int { value <= 0 ? -1 : value >= 35 ? 1 : 0 }
+        return BriefContext.fingerprint([
+            "place": weather.place.name, "zone": weather.place.timeZoneIdentifier ?? "",
+            "condition": condition(weather.condition), "thermal": thermal(weather.feelsLike),
+            "wind": weather.windKPH >= 40, "alerts": weather.alerts.map(\.text),
+            "hours": (weather.hours ?? []).filter { $0.date.addingTimeInterval(3600) > now }.map {
+                ["date": $0.date.ISO8601Format(), "condition": condition($0.condition),
+                 "thermal": thermal($0.temperature), "rain": $0.rainChance >= 0.6] as [String: Any]
+            },
+            "days": weather.days.map {
+                ["date": $0.date.ISO8601Format(), "condition": condition($0.condition),
+                 "cold": thermal($0.low), "heat": thermal($0.high), "rain": $0.rainChance >= 0.6] as [String: Any]
+            }
+        ])
     }
 
     static func weatherSignature(_ weather: WeatherSnapshot?, now: Date) -> String {

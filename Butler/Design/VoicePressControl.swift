@@ -12,9 +12,11 @@ struct VoicePressControl: UIViewRepresentable {
     var onCancel: () -> Void
     var onActivate: () -> Void
     var onVoiceActivate: (() -> Void)? = nil
+    var onContact: ((CGPoint) -> Void)? = nil
 
     func makeUIView(context: Context) -> ContactControl { ContactControl() }
     func updateUIView(_ control: ContactControl, context: Context) {
+        control.onContact = onContact
         control.onDown = onDown
         control.onMove = onMove
         control.onUp = onUp
@@ -31,6 +33,7 @@ struct VoicePressControl: UIViewRepresentable {
     static func dismantleUIView(_ control: ContactControl, coordinator: ()) { control.cancelContact() }
 
     final class ContactControl: UIControl {
+        var onContact: ((CGPoint) -> Void)?
         var onDown: (() -> Bool)?
         var onMove: ((CGSize) -> Void)?
         var onUp: (() -> Void)?
@@ -55,6 +58,7 @@ struct VoicePressControl: UIViewRepresentable {
             let received = ProcessInfo.processInfo.systemUptime
             // Synchronous feedback is the first action; UI updates and microphone work follow it.
             guard onDown?() == true else { return false }
+            onContact?(touch.location(in: self))
             origin = touch.location(in: window)
             let finished = ProcessInfo.processInfo.systemUptime
             ChatDiagnostics.log("voice trial: touch dispatch \(String(format: "%.1f", (received - touch.timestamp) * 1000))ms, handler \(String(format: "%.1f", (finished - received) * 1000))ms")

@@ -112,8 +112,9 @@ extension ButlerChat {
         }
         let startsNotifications = selected.contains {
             switch $0.kind {
-            case .reminder, .taskAction(_, .resume, _), .taskAction(_, .reopen, _): return true
-            case .taskPlan(let value, _): return value.status == .active
+            case .reminder(let value): return value.timePeriod == nil
+            case .taskAction(_, .resume, _), .taskAction(_, .reopen, _): return true
+            case .taskPlan(let value, _): return value.status == .active && value.timePeriod == nil
             default: return false
             }
         }
@@ -151,6 +152,9 @@ extension ButlerChat {
                 }
                 finishConfirmation(id, results: results, tools: tools, hasDates: hasDates,
                                    hasReminders: hasReminders, startsNotifications: startsNotifications)
+                if Self.continuesTravel(selected, results: results), self.error == nil, !Task.isCancelled {
+                    await continueTravelConfirmation(id, selected: selected, tools: tools)
+                }
             }
             return
         }
@@ -243,5 +247,84 @@ extension ButlerChat {
         guard !working, pendingReadable, let tools, let revised = tools.reviseFamily(of: id, to: sharing) else { return }
         messages.append(.receipt(summary: "用户在确认卡片上把「\(revised.title)」的家人设置改为：\(HouseholdStore.shared.names.summary(revised.taskFamily))。仍待确认。"))
         save()
+    }
+}
+
+extension ButlerChat {
+    /// Only completed, explicitly confirmed travel steps resume the existing request.
+    /// Revocation, failures, cancellation and recovered history never start model work.
+    static func continuesTravel(_ selected: [PendingChange], results: [ConfirmationResult]) -> Bool {
+        !selected.isEmpty && selected.allSatisfy { proposal in
+            guard case .travel(let change) = proposal.kind,
+                  let result = results.first(where: { $0.proposalID == proposal.id }),
+                  result.state == .reported || result.state == .succeeded else { return false }
+            switch change {
+            case .access(true), .current, .save, .remind: return true
+            default: return false
+            }
+        }
+    }
+
+    private func continueTravelConfirmation(_ id: UUID, selected: [PendingChange], tools: ButlerTools) async {
+        guard let index = turns.firstIndex(where: { $0.id == id }), let files else { return }
+        let owner = selected.compactMap { proposal in turns.first { $0.id == proposal.requestTurnID } }.last
+        let generation = historyGeneration
+        // Continue on the execution turn. Never send/clear the user's current draft or photos.
+        turns[index].replyState = .answering
+        do { try files.saveTurns(turns) }
+        catch { turns[index].replyState = nil; self.error = "操作回执已保留，但无法保存后续对话状态。请稍后继续。"; return }
+        rebuildContext()
+        replyProgress.begin(id)
+        workingStage = "正在继续设置地点提醒…"
+        tools.beginTurn(request: owner?.question ?? "继续已确认的地点操作", previous: nil, hasPhotos: false, turnID: id)
+        defer { tools.endTurn(); replyProgress.finish(); save() }
+        do {
+            let answer = try await run(.context("用户刚确认的地点操作已有真实回执。根据原对话中的目标和最新回执继续处理，不要求用户再说继续：许可已开启就查找用户给出的地址；用户明确要求用当前位置时提议单次定位；取得候选后提议保存家；家保存成功且原请求有到达提醒时提议该地点提醒。不要重复执行已完成的步骤。每个新的定位、保存地点和提醒仍必须提出确认卡，不能自动确认。若提醒已安排，简短告知范围和触发方式；若只是设置家，不额外创建提醒。没有足够信息时只问缺失信息。"),
+                                       tools: tools, previous: owner, turnID: id)
+            guard generation == historyGeneration else { return }
+            turns[index].answer = answer
+            turns[index].replyState = .completed
+        } catch {
+            guard generation == historyGeneration else { return }
+            turns[index].replyState = Task.isCancelled ? .stopped : .failed
+            turns[index].answer = "已确认操作的结果保留在下方。后续设置\(Task.isCancelled ? "已停止" : "暂时未能继续，请稍后发送“继续设置”")；没有自动重做操作。"
+            self.error = Task.isCancelled ? nil : SubscriptionConnection.message(error)
+        }
+    }
+}
+
+extension ButlerChat {
+    func reviseReminderTime(of id: UUID, date: Date, period: ArrangementPeriod?) {
+        guard !working, pendingReadable, let tools else { return }
+        do {
+            let revised = try tools.reviseReminderTime(of: id, date: date, period: period)
+            messages.append(.receipt(summary: "用户在确认卡片上把时间改为：\(revised.detail ?? "")。仍待确认，没有执行。"))
+            save()
+        } catch { self.error = error.localizedDescription }
+    }
+}
+
+extension ButlerTools {
+    /// Only edits the durable proposal. Neither this nor the date picker writes a task or schedules a notification.
+    @discardableResult
+    func reviseReminderTime(of id: UUID, date: Date, period: ArrangementPeriod?) throws -> PendingChange {
+        guard let index = pending.firstIndex(where: { $0.id == id }),
+              case .reminder(var reminder) = pending[index].kind,
+              reminder.repeats == .none, reminder.phases == nil else { throw ToolError("这个安排已改变，请重新查看") }
+        let calendar = ReminderSchedule.calendar(for: reminder)
+        guard date.timeIntervalSince1970.isFinite,
+              period != nil ? date >= calendar.startOfDay(for: .now) : date > Date.now else {
+            throw ToolError("所选时间已过去，请选择之后的时间")
+        }
+        reminder.fireDate = period == nil ? date : calendar.startOfDay(for: date)
+        reminder.timePeriod = period
+        try ReminderSchedule.validate(reminder)
+        let old = pending[index]
+        var revised = PendingChange(kind: .reminder(reminder), title: old.title,
+            detail: ReminderSchedule.friendlySummary(reminder), requestTurnID: old.requestTurnID)
+        revised.id = old.id
+        var next = pending; next[index] = revised
+        restorePending(next)
+        return revised
     }
 }

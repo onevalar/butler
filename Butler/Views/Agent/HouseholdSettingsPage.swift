@@ -5,6 +5,9 @@ import UIKit
 /// 管家与设置 › 家庭: create the household, invite the family, see who is in it, leave.
 struct HouseholdSettingsPage: View {
     @State private var creating = false
+    @State private var preparingInvite = false
+    @State private var copyingLink = false
+    @State private var copiedLink = false
     @State private var confirmLeave = false
     @State private var renaming = false
     @State private var newName = ""
@@ -38,16 +41,40 @@ struct HouseholdSettingsPage: View {
                         .buttonStyle(.plain)
                     }
                     if store.isOwner {
-                        Button { invite() } label: { Label("邀请家人", systemImage: "person.badge.plus") }
+                        Button { invite() } label: {
+                            HStack {
+                                Label(preparingInvite ? "正在准备邀请…" : "邀请家人", systemImage: "person.badge.plus")
+                                if preparingInvite { Spacer(); ProgressView() }
+                            }
+                        }
+                        .disabled(preparingInvite || copyingLink)
+                        Button {
+                            copyFamilyLink()
+                        } label: {
+                            HStack {
+                                Label(copyingLink ? "正在获取链接…" : "复制家庭链接", systemImage: "link")
+                                if copyingLink { Spacer(); ProgressView() }
+                            }
+                        }
+                        .disabled(preparingInvite || copyingLink)
                     }
                 } header: {
                     Text(state.name)
                 } footer: {
                     Text(syncLine)
+                    if store.isOwner {
+                        Text("家人需要安装小当家并登录自己的 iCloud，不必加入苹果“家人共享”。复制的链接仅供已邀请的账号使用。")
+                    }
                 }
                 .glassRows()
 
                 Section {
+                    if store.isOwner {
+                        Button { invite(purpose: .manage) } label: {
+                            Label("管理家庭共享", systemImage: "person.2.badge.gearshape")
+                        }
+                        .disabled(preparingInvite || copyingLink)
+                    }
                     NavigationLink { HouseholdRulesPage() } label: {
                         HStack(spacing: 8) {
                             Text("共享与提醒规则")
@@ -86,6 +113,11 @@ struct HouseholdSettingsPage: View {
         .glassList()
         .compactTitle("家庭") { EmptyView() }
         .sheet(isPresented: $creating) { CreateHouseholdSheet() }
+        .alert("家庭链接已复制", isPresented: $copiedLink) {
+            Button("好", role: .cancel) {}
+        } message: {
+            Text("已复制 iCloud 家庭链接。仅已邀请的账号可以加入；添加新家人请使用“邀请家人”。")
+        }
         .alert("家人怎么称呼你？", isPresented: $renaming) {
             TextField("例如“妈妈”“老公”", text: $newName)
             Button("好") { service.rename(me: newName) }
@@ -115,15 +147,39 @@ struct HouseholdSettingsPage: View {
     }
 
     private var syncLine: String {
+        if let issue = service.syncIssue { return issue }
+        if store.joining { return "正在同步家庭资料，完成后会整理本机物品。" }
         guard let date = service.lastSync else { return "打开 App 时会自动和家人同步。" }
         return "\(date.formatted(.dateTime.hour().minute().locale(Locale(identifier: "zh_CN")))) 已和家人同步"
     }
 
-    private func invite() {
+    private func copyFamilyLink() {
+        guard !preparingInvite, !copyingLink else { return }
+        copyingLink = true
         Task {
+            defer { copyingLink = false }
             do {
                 let share = try await service.share()
-                HouseholdInvite.present(share: share, container: service.cloudContainer)
+                let link = try HouseholdShareLink.validated(share.url)
+                UIPasteboard.general.setItems([["public.url": link.absoluteString,
+                                                "public.utf8-plain-text": link.absoluteString]],
+                                              options: [.localOnly: true])
+                copiedLink = true
+                ChatDiagnostics.log("household verifiedCloudLink copied locally")
+            } catch { self.error = HouseholdSharePreparation.message(for: error) }
+        }
+    }
+
+    private func invite(purpose: HouseholdInvite.Purpose = .invite) {
+        guard !preparingInvite, !copyingLink else { return }
+        preparingInvite = true
+        Task {
+            defer { preparingInvite = false }
+            do {
+                let share = try await service.share()
+                try HouseholdInvite.present(share: share, container: service.cloudContainer, purpose: purpose) { message in
+                    self.error = message
+                }
             } catch { self.error = error.localizedDescription }
         }
     }
@@ -257,19 +313,5 @@ struct JoinedHouseholdSheet: View {
             }
         }
         .interactiveDismissDisabled()
-    }
-}
-
-/// The system's invite sheet for a household share.
-@MainActor
-enum HouseholdInvite {
-    static func present(share: CKShare, container: CKContainer) {
-        let controller = UICloudSharingController(share: share, container: container)
-        controller.availablePermissions = [.allowPrivate, .allowReadWrite]
-        guard let root = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
-            .flatMap(\.windows).first(where: \.isKeyWindow)?.rootViewController else { return }
-        var top = root
-        while let presented = top.presentedViewController { top = presented }
-        top.present(controller, animated: true)
     }
 }

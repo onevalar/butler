@@ -8,6 +8,7 @@ enum LocalReminderParser {
         let text: String
         let fireDate: Date
         let repeats: TimedReminder.Repeat
+        var timePeriod: ArrangementPeriod? = nil
     }
 
     static func parse(_ raw: String, now: Date = .now, calendar: Calendar = .current) -> Result? {
@@ -23,7 +24,6 @@ enum LocalReminderParser {
             return Result(text: content(of: raw), fireDate: now.addingTimeInterval(relative), repeats: .none)
         }
 
-        guard let (hour, minute) = clock(in: text) else { return nil }
         let today = calendar.startOfDay(for: now)
         var day = today
         var dayGiven = false
@@ -39,6 +39,17 @@ enum LocalReminderParser {
             dayGiven = true
         }
 
+        guard let (hour, minute) = clock(in: text) else {
+            // Narrow offline fallback: a named day, no location trigger or unsupported numeric time.
+            guard dayGiven, repeats == .none,
+                  !["到家", "到公司", "离开", "到达", "点", "小时", "分钟"].contains(where: text.contains) else { return nil }
+            let period: ArrangementPeriod = ["下午"].contains(where: text.contains) ? .afternoon
+                : ["晚上", "今晚", "明晚", "傍晚"].contains(where: text.contains) ? .evening
+                : text.contains("中午") ? .noon
+                : ["上午", "早上", "早晨", "明早", "今早"].contains(where: text.contains) ? .morning : .day
+            let stripped = raw.replacingOccurrences(of: #"^(请)?(帮我)?(今天|明天|后天|今晚|明晚|今早|明早|(?:周|星期|礼拜)[一二三四五六日天])(上午|早上|早晨|中午|下午|傍晚|晚上)?"#, with: "", options: .regularExpression)
+            return Result(text: content(of: stripped), fireDate: day, repeats: .none, timePeriod: period)
+        }
         var h = hour
         let afternoon = ["下午", "晚上", "今晚", "明晚", "傍晚", "夜里", "每晚"].contains { text.contains($0) }
         let morning = ["早上", "早晨", "上午", "凌晨", "今早", "明早", "每早"].contains { text.contains($0) }

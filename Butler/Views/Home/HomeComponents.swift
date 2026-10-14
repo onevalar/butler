@@ -70,12 +70,12 @@ struct AgendaRow: View {
                 if case .day(let entry) = leading {
                     VStack(alignment: .leading, spacing: 0) {
                         Text(entry.day.relativeDayName).font(.caption).foregroundStyle(.secondary)
-                        Text(entry.start?.clockTime ?? "全天").font(.subheadline.weight(.semibold)).monospacedDigit()
+                        Text(entry.timeLabel).font(.subheadline.weight(.semibold)).monospacedDigit()
                     }
                     .frame(width: 44, alignment: .leading)
                 }
                 if case .time(let entry) = leading {
-                    Text(entry.start?.clockTime ?? "全天")
+                    Text(entry.timeLabel)
                         .font(.subheadline.weight(.semibold)).monospacedDigit()
                         .frame(width: 44, alignment: .leading)
                 }

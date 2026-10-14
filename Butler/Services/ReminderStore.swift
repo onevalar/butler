@@ -10,6 +10,8 @@ struct TimedReminder: Codable, Identifiable, Equatable {
     var text: String
     var fireDate: Date
     var repeats: Repeat
+    /// nil is an exact notification; otherwise fireDate is a calendar-day anchor, never a hidden alarm.
+    var timePeriod: ArrangementPeriod? = nil
     var createdAt: Date
     var status: Status
     var revision: Int
@@ -33,7 +35,7 @@ struct TimedReminder: Codable, Identifiable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, text, fireDate, repeats, createdAt, status, revision, endDate, autoCompleteAt, phases, timeZoneIdentifier, activity, syncReceived, sharing
+        case id, text, fireDate, repeats, createdAt, status, revision, endDate, autoCompleteAt, phases, timeZoneIdentifier, activity, syncReceived, sharing, timePeriod
     }
 
     init(from decoder: Decoder) throws {
@@ -52,6 +54,7 @@ struct TimedReminder: Codable, Identifiable, Equatable {
         activity = try values.decodeIfPresent([ReminderActivity].self, forKey: .activity) ?? []
         syncReceived = try values.decodeIfPresent(Bool.self, forKey: .syncReceived)
         sharing = try values.decodeIfPresent(TaskSharing.self, forKey: .sharing)
+        timePeriod = try values.decodeIfPresent(ArrangementPeriod.self, forKey: .timePeriod)
     }
 
     var statusLabel: String {
@@ -59,6 +62,7 @@ struct TimedReminder: Codable, Identifiable, Equatable {
     }
 
     var whenLabel: String {
+        if let timePeriod { return arrangementDayLabel + " · " + timePeriod.label }
         let calendar = ReminderSchedule.calendar(for: self)
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
@@ -84,7 +88,10 @@ struct TimedReminder: Codable, Identifiable, Equatable {
         return base + zone
     }
 
-    func isUpcoming(now: Date = .now) -> Bool { !ReminderSchedule.preview(self, now: now, limit: 1).isEmpty }
+    func isUpcoming(now: Date = .now) -> Bool {
+        if timePeriod != nil { return status == .active && fireDate >= ReminderSchedule.calendar(for: self).startOfDay(for: now) }
+        return !ReminderSchedule.preview(self, now: now, limit: 1).isEmpty
+    }
 }
 
 /// Task records are durable; finishing or cancelling never deletes their history.
@@ -481,7 +488,7 @@ final class ReminderStore {
                 }
             }
         }
-        for reminder in reminders where reminder.status == .active {
+        for reminder in reminders where reminder.status == .active && reminder.timePeriod == nil {
             for alert in extraAlerts(reminder, now) where alert.date > now {
                 candidates.append((alert.date, datedRequest(reminder, fire: alert.date,
                     suffix: "escalate.\(Int(alert.date.timeIntervalSince1970))", body: alert.body)))

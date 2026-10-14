@@ -114,9 +114,10 @@ extension ButlerChat {
                 // No connection: a reminder can still be understood and set on the phone.
                 if Self.isConnectivity(error), attached.isEmpty, Self.allowsLocalReminderCreation(in: scope, hasHomeBrief: homeBrief != nil),
                    let local = LocalReminderParser.parse(text) {
-                    let reminder = TimedReminder(text: local.text, fireDate: local.fireDate, repeats: local.repeats)
+                    var reminder = TimedReminder(text: local.text, fireDate: local.fireDate, repeats: local.repeats)
+                    reminder.timePeriod = local.timePeriod
                     tools.proposeReminder(reminder)
-                    turns[index].answer = "暂时连不上模型服务，我先在手机上按我的理解设好：\(reminder.whenLabel)提醒你「\(reminder.text)」。请在下面确认；时间不对直接告诉我。"
+                    turns[index].answer = "暂时连不上模型服务，先为你整理了「\(reminder.text)」：\(reminder.whenLabel)。请在下面确认，也可以直接调整时间。"
                     turns[index].replyState = .completed
                     ChatDiagnostics.log("local reminder \(reminder.whenLabel)")
                     return
@@ -229,7 +230,7 @@ extension ButlerChat {
         return true
     }
 
-    private func run(_ message: LocalAgentMessage, tools: ButlerTools, previous: ChatTurn?, turnID: UUID) async throws -> String {
+    func run(_ message: LocalAgentMessage, tools: ButlerTools, previous: ChatTurn?, turnID: UUID) async throws -> String {
         guard let model else { throw SubscriptionError.signInRequired }
         let start = messages.count
         let pendingBefore = tools.pending

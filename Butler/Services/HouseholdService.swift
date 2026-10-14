@@ -18,6 +18,7 @@ final class HouseholdService {
 
     private(set) var busy = false
     private(set) var lastSync: Date?
+    private(set) var syncIssue: String?
     var notice: String?
     /// Shown once after joining or creating: what was shared and what stayed personal.
     var summary: Summary?
@@ -29,6 +30,8 @@ final class HouseholdService {
     @ObservationIgnored private var root: URL?
     @ObservationIgnored private(set) var syncStore: SyncStore?
     @ObservationIgnored private var pendingInvite: CKShare.Metadata?
+    @ObservationIgnored private var inviteTask: Task<CKShare, Error>?
+    @ObservationIgnored private var syncing = false
     @ObservationIgnored private lazy var cloud = CKContainer(identifier: CloudKitSyncTransport.containerID)
 
     var store: HouseholdStore { .shared }
@@ -108,6 +111,7 @@ final class HouseholdService {
 
     /// Creates the household in this person's iCloud and sorts what is already on the phone.
     func create(name: String, myName: String) async throws -> Summary {
+        guard !busy, !syncing else { throw SyncFailure("正在处理家庭资料，请稍后重试。") }
         guard let container, store.state == nil else { throw SyncFailure("已经在一个家庭里了。") }
         busy = true; defer { busy = false }
         let me = try await myMemberID()
@@ -118,7 +122,9 @@ final class HouseholdService {
         let share = CKShare(recordZoneID: zone.zoneID)
         share[CKShare.SystemFieldKey.title] = name as CKRecordValue
         share.publicPermission = .none
-        _ = try await cloud.privateCloudDatabase.modifyRecords(saving: [share], deleting: [])
+        // A batch operation can succeed while an individual save fails. This single-record
+        // API must return the saved share before we persist a successful local household.
+        _ = try HouseholdSharePreparation.checked(try await cloud.privateCloudDatabase.save(share))
         let state = HouseholdState(id: id, name: name, role: .owner, zoneName: zone.zoneID.zoneName,
                                    zoneOwner: CKCurrentUserDefaultName, me: me, joinedAt: .now)
         store.begin(state, me: HouseholdMember(id: me, name: myName, isOwner: true, joinedAt: .now))
@@ -133,12 +139,33 @@ final class HouseholdService {
 
     /// The share for the system's invite sheet (owner only).
     func share() async throws -> CKShare {
-        guard store.isOwner, let zoneID else { throw SyncFailure("只有创建家庭的人可以邀请家人。") }
-        let id = CKRecord.ID(recordName: CKRecordNameZoneWideShare, zoneID: zoneID)
-        guard let share = try await cloud.privateCloudDatabase.record(for: id) as? CKShare else {
-            throw SyncFailure("家庭邀请没有找到，请稍后再试。")
+        guard store.isOwner, let state = store.state, let zoneID else {
+            throw SyncFailure("只有创建家庭的人可以邀请家人。")
         }
-        return share
+        if let inviteTask { return try await inviteTask.value }
+        let task = Task { @MainActor in
+            do {
+                guard try await self.myMemberID() == state.me else {
+                    throw SyncFailure("当前 iCloud 账号与创建家庭时不同，请切回原账号后再邀请家人。")
+                }
+                let database = self.cloud.privateCloudDatabase
+                let id = CKRecord.ID(recordName: CKRecordNameZoneWideShare, zoneID: zoneID)
+                let share = try await HouseholdSharePreparation.prepare(zoneID: zoneID, title: state.name,
+                    fetch: { try await database.record(for: id) },
+                    verifyZone: { _ = try await database.recordZone(for: zoneID) },
+                    save: { try await database.save($0) })
+                guard self.store.state?.id == state.id, try await self.myMemberID() == state.me else {
+                    throw SyncFailure("家庭或 iCloud 账号已变化，请重新打开家庭页面后再试。")
+                }
+                return share
+            } catch {
+                ChatDiagnostics.log("household invite preparation failed: \(error)")
+                throw SyncFailure(HouseholdSharePreparation.message(for: error))
+            }
+        }
+        inviteTask = task
+        defer { inviteTask = nil }
+        return try await task.value
     }
 
     var cloudContainer: CKContainer { cloud }
@@ -148,31 +175,37 @@ final class HouseholdService {
     /// Called when this person opens an invitation link.
     func accept(_ metadata: CKShare.Metadata) async {
         guard let container else { pendingInvite = metadata; return }
-        guard store.state == nil else {
-            notice = "这台手机已经在一个家庭里了。要加入新的家庭，请先退出当前家庭。"
-            return
-        }
+        guard !busy else { return }
         busy = true; defer { busy = false }
         do {
+            let zone = metadata.share.recordID.zoneID
+            let id = try HouseholdInvitationIdentity.householdID(container: metadata.containerIdentifier, zoneName: zone.zoneName)
+            if let current = store.state {
+                guard current.id == id, current.zoneName == zone.zoneName,
+                      current.role == .owner || current.zoneOwner == zone.ownerName else {
+                    throw SyncFailure("这台手机已经在另一个家庭里了。请先退出当前家庭，再加入。")
+                }
+                // Reopening the same link resumes a pending import instead of resetting local data.
+                await sync()
+                return
+            }
             let me = try await myMemberID()
             try backUpBeforeSharing(container)
             _ = try await cloud.accept(metadata)
-            let zone = metadata.share.recordID.zoneID
+            guard try await myMemberID() == me else {
+                throw SyncFailure("iCloud 账号在加入期间发生变化，请切回原账号后重新打开邀请。")
+            }
             let name = (metadata.share[CKShare.SystemFieldKey.title] as? String) ?? "我们家"
-            let id = UUID(uuidString: String(zone.zoneName.dropFirst("ButlerHouseholdV1-".count))) ?? UUID()
             let state = HouseholdState(id: id, name: name, role: .member, zoneName: zone.zoneName,
                                        zoneOwner: zone.ownerName, me: me, joinedAt: .now)
             let given = metadata.share.currentUserParticipant?.userIdentity.nameComponents
                 .map { PersonNameComponentsFormatter.localizedString(from: $0, style: .short) }
             // What was already on this phone waits until the household's things have arrived, then is merged.
-            let existing = Set(((try? ModelContext(container).fetch(FetchDescriptor<CatalogProduct>())) ?? []).map(\.id))
+            let existing = Set(try ModelContext(container).fetch(FetchDescriptor<CatalogProduct>()).map(\.id))
             store.begin(state, me: HouseholdMember(id: me, name: (given?.isEmpty == false ? given! : "家人"),
-                                                   isOwner: false, joinedAt: .now), staging: existing)
+                                                   isOwner: false, joinedAt: .now), staging: existing, joining: true)
             needsName = true
             makeSyncStore(state)
-            try await syncStore?.setEnabled(true)
-            await sync()
-            summary = finishJoining(container)
             await sync()
             await subscribe()
         } catch {
@@ -182,11 +215,11 @@ final class HouseholdService {
     }
 
     /// After the first sync: the same thing recorded by both is merged into the household's; the rest is sorted.
-    private func finishJoining(_ container: ModelContainer) -> Summary {
+    static func finishJoining(_ container: ModelContainer, store: HouseholdStore) throws -> Summary {
         let context = ModelContext(container)
-        let products = (try? context.fetch(FetchDescriptor<CatalogProduct>())) ?? []
-        let lots = (try? context.fetch(FetchDescriptor<InventoryLot>())) ?? []
-        let templates = (try? context.fetch(FetchDescriptor<PersonalProductTemplate>())) ?? []
+        let products = try context.fetch(FetchDescriptor<CatalogProduct>())
+        let lots = try context.fetch(FetchDescriptor<InventoryLot>())
+        let templates = try context.fetch(FetchDescriptor<PersonalProductTemplate>())
         let staged = store.staged
         let household = products.filter { !staged.contains($0.id) && store.sharing[$0.id]?.scope == .household }
         var merged = 0
@@ -200,11 +233,12 @@ final class HouseholdService {
             context.delete(product)
             merged += 1
         }
-        try? context.save()
+        try context.save()
         store.unstage(staged)
-        var summary = sortedSummary(container)
-        summary.merged = merged
-        return summary
+        store.classifyNew(container: container)
+        let remaining = try context.fetch(FetchDescriptor<CatalogProduct>())
+        let personal = remaining.filter { store.sharing[$0.id]?.scope == .personal }.map(\.canonicalName)
+        return Summary(shared: remaining.count - personal.count, personal: personal, merged: merged)
     }
 
     /// Sorts anything not yet sorted and reports the result for the one summary card.
@@ -276,12 +310,26 @@ final class HouseholdService {
     }
 
     func sync() async {
-        guard let syncStore, syncStore.enabled, !syncStore.busy else { return }
-        if store.state?.role == .member, await householdEnded() { return }
+        guard let syncStore, let state = store.state, !syncStore.busy, !syncing,
+              syncStore.enabled || store.joining else { return }
+        syncing = true; defer { syncing = false }
         do {
-            try await syncStore.synchronize()
+            // Check identity before testing whether a shared zone disappeared. A different account
+            // naturally has a different zone list; that must never be interpreted as removal.
+            guard try await myMemberID() == state.me else {
+                throw SyncFailure("当前 iCloud 账号与加入家庭时不同，请切回原账号后同步。")
+            }
+            if state.role == .member, !store.joining, await householdEnded() { return }
+            try await HouseholdJoinRecovery.synchronize(store: store, sync: syncStore) {
+                guard let container = self.container else { throw SyncFailure("本机资料尚未准备好。") }
+                self.summary = try Self.finishJoining(container, store: self.store)
+            }
             lastSync = .now
+            syncIssue = nil
+            await subscribe()
         } catch {
+            syncIssue = store.joining ? "已接受邀请，家庭资料尚未同步完成；联网后会继续。"
+                : ((error as? SyncFailure)?.message ?? "家庭同步暂未完成，请检查网络和 iCloud；本机资料已保留。")
             ChatDiagnostics.log("household sync: \(error.localizedDescription)")
         }
     }
@@ -315,11 +363,15 @@ final class HouseholdService {
             if state.role == .owner {
                 let subscription = CKRecordZoneSubscription(zoneID: zoneID, subscriptionID: id)
                 subscription.notificationInfo = info
-                _ = try await cloud.privateCloudDatabase.modifySubscriptions(saving: [subscription], deleting: [])
+                let result = try await cloud.privateCloudDatabase.modifySubscriptions(saving: [subscription], deleting: [])
+                guard let saved = result.saveResults[id] else { throw SyncFailure("家庭通知订阅回执缺失。") }
+                _ = try saved.get()
             } else {
                 let subscription = CKDatabaseSubscription(subscriptionID: id)
                 subscription.notificationInfo = info
-                _ = try await cloud.sharedCloudDatabase.modifySubscriptions(saving: [subscription], deleting: [])
+                let result = try await cloud.sharedCloudDatabase.modifySubscriptions(saving: [subscription], deleting: [])
+                guard let saved = result.saveResults[id] else { throw SyncFailure("家庭通知订阅回执缺失。") }
+                _ = try saved.get()
             }
             UserDefaults.standard.set(true, forKey: key)
         } catch {
@@ -338,14 +390,12 @@ final class HouseholdService {
 
     /// A member leaves; the owner dissolves. Either way everyone keeps a copy as their own.
     func leave() async throws {
+        guard !busy, !syncing else { throw SyncFailure("正在同步家庭资料，请稍后再退出。") }
         guard let state = store.state, let zoneID else { return }
         busy = true; defer { busy = false }
         let shareID = CKRecord.ID(recordName: CKRecordNameZoneWideShare, zoneID: zoneID)
-        if state.role == .owner {
-            _ = try await cloud.privateCloudDatabase.modifyRecords(saving: [], deleting: [shareID])
-        } else {
-            _ = try await cloud.sharedCloudDatabase.modifyRecords(saving: [], deleting: [shareID])
-        }
+        let database = state.role == .owner ? cloud.privateCloudDatabase : cloud.sharedCloudDatabase
+        _ = try await database.deleteRecord(withID: shareID)
         await unsubscribe(state)
         endLocally()
     }
@@ -356,6 +406,8 @@ final class HouseholdService {
             try? FileManager.default.removeItem(at: root.appendingPathComponent("household-\(state.id.uuidString).json"))
         }
         syncStore = nil
+        lastSync = nil
+        syncIssue = nil
         store.end()
         // Tasks this phone was not reminding about stay as records; what it reminds about is decided again.
         base?.tasks.rescheduleAll()

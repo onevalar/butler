@@ -29,6 +29,7 @@ enum ReminderSchedule {
 
     /// Shared by the confirmation card and saved task detail, including every rule and bound.
     static func ruleSummary(_ reminder: TimedReminder) -> String {
+        if reminder.timePeriod != nil { return reminder.whenLabel + "；未设置定时通知，由管家结合安排提示。" }
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.timeZone = TimeZone(identifier: reminder.timeZoneIdentifier)
@@ -70,6 +71,7 @@ enum ReminderSchedule {
     /// What the confirmation card says: a few plain sentences about when it will remind. The full rules stay on the
     /// task's own page and go to the model; the card never shows time zones, rule numbering or boilerplate.
     static func friendlySummary(_ reminder: TimedReminder, now: Date = .now) -> String {
+        if reminder.timePeriod != nil { return reminder.whenLabel + "\n未设置定时通知" }
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: reminder.timeZoneIdentifier) ?? .current
         let clock = DateFormatter()
@@ -113,6 +115,11 @@ enum ReminderSchedule {
               reminder.text.count <= 200 else { throw InvalidRule(message: "提醒内容需为 1–200 字") }
         guard TimeZone(identifier: reminder.timeZoneIdentifier) != nil else {
             throw InvalidRule(message: "提醒时区无效")
+        }
+        if reminder.timePeriod != nil {
+            guard reminder.repeats == .none, reminder.phases == nil, reminder.endDate == nil, reminder.autoCompleteAt == nil else {
+                throw InvalidRule(message: "日期或时段安排不能混用定时、重复或自动完成规则")
+            }
         }
         guard reminder.fireDate.timeIntervalSince1970.isFinite else { throw InvalidRule(message: "提醒时间无效") }
         guard [reminder.endDate, reminder.autoCompleteAt].compactMap({ $0 }).allSatisfy({ $0.timeIntervalSince1970.isFinite }) else {
@@ -158,7 +165,7 @@ enum ReminderSchedule {
 
     /// Returns the next unique dates strictly after `now`; overlapping phases fire once.
     static func preview(_ reminder: TimedReminder, now: Date = .now, limit: Int = 8) -> [Date] {
-        guard reminder.status == .active, limit > 0 else { return [] }
+        guard reminder.timePeriod == nil, reminder.status == .active, limit > 0 else { return [] }
         let phases = reminder.phases ?? [ReminderPhase(startDate: reminder.fireDate, repeats: reminder.repeats)]
         let calendar = calendar(for: reminder)
         return Array(Set(phases.flatMap { dates(for: $0, reminder: reminder, after: now, limit: limit, calendar: calendar) })
@@ -166,6 +173,9 @@ enum ReminderSchedule {
     }
 
     static func occurrences(_ reminder: TimedReminder, on day: Date, calendar displayCalendar: Calendar = .current) -> [Date] {
+        if reminder.timePeriod != nil {
+            return reminder.status == .active && displayCalendar.isDate(reminder.fireDate, inSameDayAs: day) ? [reminder.fireDate] : []
+        }
         let start = displayCalendar.startOfDay(for: day)
         guard let end = displayCalendar.date(byAdding: .day, value: 1, to: start) else { return [] }
         var bounded = reminder
@@ -180,7 +190,7 @@ enum ReminderSchedule {
     }
 
     static func nativeRepeatPhase(_ reminder: TimedReminder, now: Date) -> ReminderPhase? {
-        guard reminder.status == .active, reminder.endDate == nil, reminder.autoCompleteAt == nil else { return nil }
+        guard reminder.timePeriod == nil, reminder.status == .active, reminder.endDate == nil, reminder.autoCompleteAt == nil else { return nil }
         let phase: ReminderPhase
         if let phases = reminder.phases {
             guard phases.count == 1, let first = phases.first, first.endDate == nil,
@@ -240,5 +250,35 @@ enum ReminderSchedule {
             if result.count == limit { break }
         }
         return result
+    }
+}
+
+/// The precision spoken by the user, independent of notification scheduling.
+enum ArrangementPeriod: String, Codable, CaseIterable {
+    case day, morning, noon, afternoon, evening
+    var label: String {
+        switch self { case .day: "不限时间"; case .morning: "上午"; case .noon: "中午"; case .afternoon: "下午"; case .evening: "晚上" }
+    }
+    var suggestedHour: Int {
+        switch self { case .day, .morning: 9; case .noon: 12; case .afternoon: 15; case .evening: 19 }
+    }
+    /// A review boundary for the butler, not an alarm or a deadline.
+    var reviewHour: Int {
+        switch self { case .day: 0; case .morning: 6; case .noon: 11; case .afternoon: 12; case .evening: 18 }
+    }
+}
+
+extension TimedReminder {
+    var arrangementDayLabel: String {
+        let calendar = ReminderSchedule.calendar(for: self)
+        if calendar.isDateInToday(fireDate) { return "今天" }
+        if calendar.isDateInTomorrow(fireDate) { return "明天" }
+        let f = DateFormatter(); f.locale = Locale(identifier: "zh_CN"); f.timeZone = calendar.timeZone
+        f.dateFormat = "M月d日"
+        return f.string(from: fireDate)
+    }
+    var arrangementReviewDate: Date? {
+        guard let timePeriod else { return nil }
+        return ReminderSchedule.calendar(for: self).date(bySettingHour: timePeriod.reviewHour, minute: 0, second: 0, of: fireDate)
     }
 }

@@ -84,6 +84,12 @@ import CryptoKit
         guard record.recordID.recordName == row.id.uuidString, row.key.kind.isPhoto == photos else { throw SyncFailure("云端编号或范围不匹配。") }
         return row
     }
+    /// The zone-wide invitation is CloudKit metadata, not one of our immutable data revisions.
+    static func isZoneShareMetadata(_ record: CKRecord, in zone: CKRecordZone.ID) -> Bool {
+        record is CKShare && record.recordID.zoneID == zone
+            && record.recordID.recordName == CKRecordNameZoneWideShare
+    }
+
     private static func digest(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
     private func encode(_ row: SyncRecord) throws -> CKRecord {
         let record = CKRecord(recordType: recordType, recordID: .init(recordName: row.id.uuidString, zoneID: zone))
@@ -106,6 +112,7 @@ import CryptoKit
                 for (id, result) in page.modificationResultsByID {
                     let record = try result.get().record
                     if id == controlID { _ = try gate(record); continue }
+                    if Self.isZoneShareMetadata(record, in: zone) { continue }
                     let row = try decode(record)
                     if let old = rows[row.id], old != row { throw SyncFailure("云端历史被修改。") }
                     rows[row.id] = row
@@ -116,6 +123,8 @@ import CryptoKit
                 token = page.changeToken
                 if !page.moreComing { break }
             } catch let error as CKError where error.code == .zoneNotFound {
+                // A member cannot create the owner's zone. Missing/propagating access is not an empty household.
+                guard !shared else { throw error }
                 guard rows.isEmpty else { throw SyncFailure("同步区域读取途中消失。") }; return []
             } catch let error as CKError where error.code == .changeTokenExpired && incremental && cachedToken != nil {
                 cachedToken = nil; cachedRows = [:]

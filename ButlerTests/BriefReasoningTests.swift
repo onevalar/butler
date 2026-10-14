@@ -169,7 +169,7 @@ final class BriefReasoningTests: XCTestCase {
         XCTAssertEqual(model.requests, 1)
     }
 
-    func testConfirmedCorrectionInvalidatesCacheButDoesNotReplaceTouchedCard() async throws {
+    func testConfirmedCorrectionRemovesStaleTouchedCardImmediately() async throws {
         let model = Model()
         let service = BriefService(defaults: defaults())
         service.attach(model: model)
@@ -182,7 +182,8 @@ final class BriefReasoningTests: XCTestCase {
         update(service, at: now)
         await service.settle()
         XCTAssertEqual(model.requests, 2)
-        XCTAssertEqual(service.brief, original)
+        XCTAssertNotEqual(service.brief.text, original.text)
+        XCTAssertTrue(service.brief.actions.isEmpty)
         service.endInteraction()
         update(service, at: now)
         XCTAssertEqual(service.brief.text, "行程取消了，今天不用准备行李。")
@@ -346,8 +347,8 @@ final class BriefReasoningTests: XCTestCase {
         service.update(candidates: [], lotCount: 0, taskCount: 0, usesCalendar: false, now: now, allowGeneration: false)
         await service.settle()
         XCTAssertEqual(model.requests, 1)
-        XCTAssertEqual(service.brief, original)
-        XCTAssertFalse(service.actionsAreCurrent)
+        XCTAssertNotEqual(service.brief.text, original.text)
+        XCTAssertTrue(service.brief.actions.isEmpty)
         service.endInteraction()
         update(service, at: now)
         await service.settle()
@@ -510,6 +511,81 @@ final class BriefReasoningTests: XCTestCase {
         await service.settle()
         XCTAssertEqual(model.requests, 4, "Denied access is different from a failed authorized read")
         XCTAssertFalse(model.lastRequest.contains("previous_text"), "Do not resubmit calendar content after permission is revoked")
+    }
+
+    func testReviewRefreshKeepsValidTextOnColdOpenButStripsActions() async throws {
+        let storage = defaults(), model = Model()
+        let first = BriefService(defaults: storage)
+        model.reply = "{\"text\":\"今天还有安排，请留意。\",\"review_after\":\"\(now.addingTimeInterval(60).ISO8601Format())\"}"
+        first.attach(model: model)
+        update(first, at: now)
+        await first.settle()
+        let reopened = BriefService(defaults: storage)
+        reopened.attach(model: model)
+        model.delay = .milliseconds(50)
+        model.reply = #"{"text":"更新后的提醒。"}"#
+        update(reopened, at: now.addingTimeInterval(61))
+        XCTAssertEqual(reopened.brief.text, "今天还有安排，请留意。")
+        XCTAssertTrue(reopened.brief.actions.isEmpty)
+        XCTAssertFalse(reopened.actionsAreCurrent)
+        await reopened.settle()
+        XCTAssertEqual(reopened.brief.text, "更新后的提醒。")
+    }
+
+    func testRemovedItemImmediatelyLosesItsTextAndButtonsEvenWhileTouched() async {
+        let model = Model(), service = BriefService(defaults: defaults()), item = candidate()
+        model.reply = "{\"target\":\"\(item.target.key)\",\"text\":\"牛奶快到期，今天喝掉吧。\"}"
+        service.attach(model: model)
+        update(service, at: now, candidates: [item])
+        await service.settle()
+        XCTAssertFalse(service.brief.quickActions.isEmpty)
+        service.beginInteraction()
+        service.update(candidates: [], lotCount: 0, taskCount: 0, usesCalendar: false, now: now, allowGeneration: false)
+        XCTAssertFalse(service.brief.text.contains("牛奶"))
+        XCTAssertNil(service.brief.target)
+        XCTAssertTrue(service.brief.quickActions.isEmpty)
+        XCTAssertEqual(model.requests, 1)
+    }
+
+    func testWeatherNoiseReusesProseButRainChangeInvalidatesImmediately() async throws {
+        let model = Model(), storage = defaults(), first = BriefService(defaults: storage)
+        first.attach(model: model)
+        let original = weather(at: now)
+        first.update(candidates: [], lotCount: 0, taskCount: 0, usesCalendar: false, now: now, weather: original)
+        await first.settle()
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(original)) as? [String: Any])
+        object["temperature"] = 22.7; object["feelsLike"] = 24; object["windKPH"] = 10
+        let changed = try JSONDecoder().decode(WeatherSnapshot.self, from: JSONSerialization.data(withJSONObject: object))
+        let reopened = BriefService(defaults: storage)
+        reopened.attach(model: model)
+        reopened.update(candidates: [], lotCount: 0, taskCount: 0, usesCalendar: false, now: now, weather: changed)
+        XCTAssertEqual(reopened.brief.text, first.brief.text)
+        await reopened.settle()
+        XCTAssertEqual(model.requests, 1)
+        model.delay = .milliseconds(50)
+        reopened.update(candidates: [], lotCount: 0, taskCount: 0, usesCalendar: false, now: now, weather: weather(at: now, rain: 0.9))
+        XCTAssertNotEqual(reopened.brief.source, .model)
+        await reopened.settle()
+        XCTAssertEqual(model.requests, 2)
+    }
+
+    func testWeatherRefreshGapRetainsTextButHardTimeAndSourceChangesRemoveIt() async {
+        let model = Model(), service = BriefService(defaults: defaults())
+        service.attach(model: model)
+        let snapshot = weather(at: now)
+        service.update(candidates: [], lotCount: 0, taskCount: 0, usesCalendar: false, now: now, weather: snapshot)
+        await service.settle()
+        let text = service.brief.text
+        service.update(candidates: [], lotCount: 0, taskCount: 0, usesCalendar: false, now: now.addingTimeInterval(1801), weather: snapshot, allowGeneration: false)
+        XCTAssertEqual(service.brief.text, text)
+        XCTAssertTrue(service.brief.actions.isEmpty)
+        service.update(candidates: [], lotCount: 0, taskCount: 0, usesCalendar: false, now: now.addingTimeInterval(7201), weather: snapshot, allowGeneration: false)
+        XCTAssertNotEqual(service.brief.text, text)
+        model.context.sections["tasks"] = [["status": "completed"]]
+        service.beginInteraction()
+        service.update(candidates: [], lotCount: 0, taskCount: 0, usesCalendar: false, now: now.addingTimeInterval(1802), weather: snapshot, allowGeneration: false)
+        XCTAssertNotEqual(service.brief.text, text)
+        XCTAssertTrue(service.brief.actions.isEmpty)
     }
 
     private func weather(at date: Date, rain: Double = 0.2, hours: [WeatherSnapshot.Hour]? = nil) -> WeatherSnapshot {

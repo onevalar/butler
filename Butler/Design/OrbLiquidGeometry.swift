@@ -125,81 +125,75 @@ enum SymmetricContour {
     }
 }
 
-/// The glass while the owner is speaking: the ball drawn out into a bar with round ends, and, while the finger
-/// slides up, a cancel zone that grows out of the same glass on a smooth neck. One surface, never two pieces.
+/// A local surface indentation pushes glass radially outward. During a pull the
+/// full body shifts upward into one rounded taper, without a second bulb or a thin filament.
 struct VoiceGeometry: Sendable, Equatable {
-    /// Width of the bar; `ballWidth` is the ball itself.
+    // Retain the input range for callers; it now controls pressure, never an ellipse width.
     var barWidth: CGFloat
-    var barHeight: CGFloat = 62
     static let ballWidth: CGFloat = 62
-    /// Wide enough that both hands of bars show either side of a fingertip.
-    static let barWidth: CGFloat = 176
-    /// 0...1: how far the cancel zone has grown.
+    static let barWidth: CGFloat = 100
     var extent: CGFloat = 0
-    /// Distance from the bar's centre to the zone's centre when fully grown.
+    var separation: CGFloat = 0
     static let reach: CGFloat = 100
-    static let zoneWidth: CGFloat = 96
-    static let zoneHeight: CGFloat = 58
-    /// The neck is the bar being drawn upward: a column that eases in slightly and ends in the zone.
-    static let neckBase: CGFloat = 19
-    static let neckTip: CGFloat = 16
-
-    /// How far the top of the glass is above the bar's centre.
-    var topReach: CGFloat {
-        guard extent > 0.001 else { return barHeight / 2 }
-        let grow = Self.smooth(extent)
-        // The highest of the zone and the neck's rounded tip (the neck is wider than a small zone at first).
-        let tip = Self.neckTip + 3 * grow
-        return max(barHeight / 2, zoneOffset + max(8, Self.zoneHeight / 2 * grow, tip))
-    }
-
-    /// Centre of the zone above the bar's centre.
-    // Start inside the bar, rather than jumping from its edge to a separate rounded tip.
-    var zoneOffset: CGFloat { Self.reach * Self.smooth(extent) }
-
-    /// Signed distance to the fused shape: inside is negative. `x` is from the centre line, `y` is downward,
-    /// `centerY` is the bar's centre in the same space.
-    func distance(x: CGFloat, y: CGFloat, centerY: CGFloat) -> CGFloat {
-        let bar = Self.pill(x: x, y: y - centerY, halfWidth: barWidth / 2, halfHeight: barHeight / 2)
-        guard extent > 0.001, y < centerY else { return bar }
-        let grow = Self.smooth(extent)
-        let zoneY = centerY - zoneOffset
-        let zone = Self.pill(x: x, y: y - zoneY, halfWidth: max(8, Self.zoneWidth / 2 * grow), halfHeight: max(8, Self.zoneHeight / 2 * grow))
-        // The neck: a cone from the bar's middle up to the zone, thinning as it stretches.
-        let tip = Self.neckTip + 3 * grow
-        let neck = Self.cone(x: x, y: centerY - y, r1: Self.neckBase, r2: tip, height: max(zoneOffset, Self.neckBase - tip + 1))
-        return Self.smoothMin(Self.smoothMin(bar, neck, 16), zone, 18)
+    var pressure: CGFloat { max(0, min(1, (barWidth - 62) / 38)) }
+    var transfer: CGFloat { Self.smooth(extent / 0.79) }
+    /// The first response is the depression; peripheral displacement follows it.
+    var spread: CGFloat { Self.smooth((pressure - 0.18) / 0.82) }
+    var contactDepth: CGFloat { Self.smooth(pressure / 0.65) * (1 - transfer) }
+    var area: CGFloat { .pi * 31 * 31 * (1 + 0.38 * spread * (1 - transfer)) }
+    // Reconnecting during a fast downward drag must restore the body even if the
+    // short separation animation has not caught up with the pointer yet.
+    private var detachment: CGFloat { separation * Self.smooth(extent / 0.65) }
+    var rootRadius: CGFloat { max(0.8 * transfer, 31 * sqrt(1 + 0.38 * spread) * pow(1 - transfer, 1.3)) * (1 - detachment) }
+    var dropRadius: CGFloat { 31 * sqrt(transfer) }
+    var zoneOffset: CGFloat { Self.reach * transfer + (1 - transfer) * (31 * sqrt(1 + 0.38 * spread) - dropRadius) }
+    var rootY: CGFloat { -zoneOffset * detachment }
+    var topReach: CGFloat { max(rootRadius - rootY, zoneOffset + dropRadius) }
+    private var unboundedBottom: CGFloat { max(rootY + rootRadius, -zoneOffset + dropRadius) }
+    /// Once the reference droplet is reached, further travel lifts the whole body.
+    /// Fixed area plus unlimited height was making even a smooth curve look like a needle.
+    var maximumSpan: CGFloat { 2 * sqrt(area / .pi) * 1.42 }
+    var bottom: CGFloat {
+        let naturalSpan = topReach + unboundedBottom
+        let blend: CGFloat = 6
+        let overlap = max(0, blend - abs(naturalSpan - maximumSpan))
+        let boundedSpan = min(naturalSpan, maximumSpan) - overlap * overlap / (4 * blend)
+        return boundedSpan - topReach
     }
 
     func contours(width: CGFloat, height: CGFloat, centerY: CGFloat) -> [[CGPoint]] {
-        SymmetricContour.trace(width: width, height: height) { x, y in distance(x: x, y: y, centerY: centerY) }
+        let count = 240
+        let span = topReach + bottom
+        let dy = span / CGFloat(count)
+        // One rounded profile, instead of merging a small upper circle into a lower ball.
+        // The latter creates the visible nipple/second bulb at the start of a pull.
+        // A bounded bias shifts volume upward while preserving round end tangents;
+        // there is no polynomial neck that can flatten into a long needle at the foot.
+        let bias = 0.44 * transfer * (1 - detachment)
+        let radii: [CGFloat] = (0...count).map { index in
+            let v = 2 * CGFloat(index) / CGFloat(count) - 1
+            return sqrt(max(0, 1 - v * v)) * (1 - bias * v)
+        }
+        let integral = dy * (radii.reduce(0, +) - (radii[0] + radii[count]) / 2) * 2
+        let scale = area / max(0.001, integral)
+        let right = radii.enumerated().map { index, radius in
+            CGPoint(x: width / 2 + radius * scale, y: centerY - topReach + CGFloat(index) * dy)
+        }
+        return [right + right.reversed().map { CGPoint(x: width - $0.x, y: $0.y) }]
     }
 
-    private static func pill(x: CGFloat, y: CGFloat, halfWidth: CGFloat, halfHeight: CGFloat) -> CGFloat {
-        let radius = min(halfWidth, halfHeight)
-        let dx = max(abs(x) - (halfWidth - radius), 0)
-        let dy = max(abs(y) - (halfHeight - radius), 0)
-        return hypot(dx, dy) - radius
-    }
-
-    /// Signed distance to two circles of different radius joined by their tangents; the second is `height` above the first.
-    private static func cone(x: CGFloat, y: CGFloat, r1: CGFloat, r2: CGFloat, height h: CGFloat) -> CGFloat {
-        let px = abs(x), py = y
-        let b = (r1 - r2) / h
-        let a = sqrt(max(0, 1 - b * b))
-        let k = px * -b + py * a
-        if k < 0 { return hypot(px, py) - r1 }
-        if k > a * h { return hypot(px, py - h) - r2 }
-        return px * a + py * b - r1
-    }
-
-    private static func smoothMin(_ a: CGFloat, _ b: CGFloat, _ k: CGFloat) -> CGFloat {
-        let h = max(0, k - abs(a - b)) / k
-        return min(a, b) - h * h * k / 4
-    }
-
-    private static func smooth(_ value: CGFloat) -> CGFloat {
+    static func smooth(_ value: CGFloat) -> CGFloat {
         let x = max(0, min(1, value))
         return x * x * (3 - 2 * x)
     }
+}
+
+/// Shared trajectory for the released glass and its embedded cancellation mark.
+struct VoiceReturnPose {
+    var progress: CGFloat
+    var fall: CGFloat { min(1, max(0, progress / 0.70)) }
+    var offset: CGFloat { VoiceGeometry.reach * (1 - fall * fall) }
+    var impact: CGFloat { 0.62 * exp(-pow((progress - 0.77) / 0.085, 2)) }
+    var cancelOpacity: CGFloat { 1 - VoiceGeometry.smooth(progress / 0.60) }
+    func centerY(dockY: CGFloat) -> CGFloat { dockY - offset }
 }

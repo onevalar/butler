@@ -42,7 +42,7 @@ enum HomeList {
                 add(row(entry, lots: byID, alert: true, action: "处理", now: now, calendar: calendar))
             }
             for entry in agenda.pending(on: day, at: now) {
-                add(HomeListRow(id: "pending-" + entry.id, kind: .reminder, lead: entry.start?.clockTime ?? "", title: entry.title,
+                add(HomeListRow(id: "pending-" + entry.id, kind: .reminder, lead: entry.arrangementPeriod?.label ?? entry.start?.clockTime ?? "", title: entry.title,
                                 subtitle: entry.subtitle ?? "已到时间", isAlert: false, action: "查看", target: entry.target))
             }
             for offset in 0...2 {
@@ -52,7 +52,7 @@ enum HomeList {
                     add(row(entry, lots: byID, alert: false, action: nil, now: now, calendar: calendar))
                 }
             }
-            for entry in agenda.entries(on: day) where entry.kind == .calendar && entry.isAllDay {
+            for entry in agenda.entries(on: day) where entry.isAllDay && (entry.kind == .calendar || (entry.kind == .reminder && !entry.isCompleted && !entry.isPending(at: now))) {
                 add(row(entry, lots: byID, alert: false, action: nil, now: now, calendar: calendar))
             }
             for entry in agenda.needsAttention where entry.kind == .lowStock {
@@ -113,7 +113,7 @@ enum HomeList {
         } else if entry.kind == .reminder, subtitle == nil {
             subtitle = "定时提醒"
         }
-        return HomeListRow(id: entry.id, kind: entry.kind, lead: entry.start?.clockTime ?? "", title: title,
+        return HomeListRow(id: entry.id, kind: entry.kind, lead: entry.arrangementPeriod?.label ?? entry.start?.clockTime ?? "", title: title,
                            subtitle: subtitle, isAlert: alert, action: action, target: entry.target)
     }
 

@@ -97,6 +97,7 @@ extension ButlerTools {
     }
 
     func notificationPolicy(_ task: TimedReminder) -> String {
+        if task.timePeriod != nil { return "日期／时段安排；没有定时通知，供管家结合上下文提示" }
         if reminders.remindsHere(task) { return "由本机按规则尽力安排，实际送达依赖系统" }
         if let sharing = task.sharing, sharing.isShared, HouseholdStore.shared.state != nil {
             return "家庭任务，到点提醒\(HouseholdStore.shared.names.list(sharing.reminded))的手机，本机不提醒"

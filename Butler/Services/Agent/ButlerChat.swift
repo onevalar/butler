@@ -119,7 +119,7 @@ final class ButlerChat {
     var summary = ConversationSummary()
     var compacting = false
     var historyGeneration = UUID()
-    var model: SubscriptionModel?
+    var model: (any LocalAgentModel)?
     var task: Task<Void, Never>?
     @ObservationIgnored var replyStarted: ContinuousClock.Instant?
     let files: ChatSessionFiles?

@@ -155,6 +155,118 @@ import XCTest
         XCTAssertNotEqual(HouseholdMember.id(forUser: "_abc"), HouseholdMember.id(forUser: "_abd"))
     }
 
+    private func recoverJoin(_ phone: Phone) async throws {
+        try await HouseholdJoinRecovery.synchronize(store: phone.household, sync: phone.sync) {
+            _ = try HouseholdService.finishJoining(phone.container, store: phone.household)
+        }
+    }
+
+    private func resumePhone(_ phone: Phone, cloud: FakeSyncCloud) -> Phone {
+        let household = HouseholdStore(directory: phone.household.directory)
+        HouseholdService.wire(phone.base, household)
+        let local = HouseholdSyncData(base: phone.base, store: household)
+        local.announce = { _, _, _ in }
+        let sync = SyncStore(file: household.directory.deletingLastPathComponent().appendingPathComponent("household.json"),
+                             local: local, transport: cloud, kinds: HouseholdService.kinds)
+        return Phone(base: phone.base, household: household, sync: sync, said: Said())
+    }
+
+    func testFirstDownloadFailureKeepsStagedItemsThenRelaunchMergesWithoutDuplicates() async throws {
+        let cloud = FakeSyncCloud()
+        let mine = try phone(cloud, me: owner, role: .owner, name: "老公")
+        let theirs = try phone(cloud, me: member, role: .member, name: "老婆")
+        let sharedMilk = try add("牛奶", quantity: 3, to: mine)
+        let ownMilk = try add("牛奶", quantity: 2, to: theirs)
+        let privateMedicine = try add("降压药", to: theirs)
+        let state = try XCTUnwrap(theirs.household.state)
+        theirs.household.begin(state, me: try XCTUnwrap(theirs.household.me),
+            staging: [ownMilk.product, privateMedicine.product], joining: true)
+        try await mine.sync.setEnabled(true)
+        try await mine.sync.synchronize()
+        cloud.duringFetch = { throw SyncFailure("network interrupted during initial download") }
+        do { try await recoverJoin(theirs); XCTFail("Expected failed download") } catch {}
+        XCTAssertTrue(theirs.household.joining)
+        XCTAssertEqual(theirs.household.staged, [ownMilk.product, privateMedicine.product])
+        XCTAssertNil(theirs.household.sharing[ownMilk.product])
+        XCTAssertFalse(cloud.records.contains { $0.key.id == ownMilk.product })
+
+        cloud.duringFetch = nil
+        let reopened = resumePhone(theirs, cloud: cloud)
+        XCTAssertTrue(reopened.household.joining)
+        try await recoverJoin(reopened)
+        try await mine.sync.synchronize()
+        XCTAssertFalse(reopened.household.joining)
+        XCTAssertTrue(reopened.household.staged.isEmpty)
+        let products = try ModelContext(reopened.container).fetch(FetchDescriptor<CatalogProduct>())
+        XCTAssertEqual(products.filter { $0.canonicalName == "牛奶" }.map(\.id), [sharedMilk.product])
+        XCTAssertEqual(try quantity(ownMilk.lot, mine), 2)
+        XCTAssertEqual(try quantity(sharedMilk.lot, reopened), 3)
+        XCTAssertEqual(try names(mine), ["牛奶"])
+        XCTAssertEqual(try names(reopened), ["牛奶", "降压药"])
+        let count = cloud.records.count
+        try await recoverJoin(reopened)
+        XCTAssertEqual(cloud.records.count, count, "reopening the same invitation must not merge or upload twice")
+    }
+
+    func testEmptyPhoneResumesAfterAcceptanceButBeforeSyncWasEnabled() async throws {
+        let cloud = FakeSyncCloud()
+        let mine = try phone(cloud, me: owner, role: .owner, name: "老公")
+        let theirs = try phone(cloud, me: member, role: .member, name: "老婆")
+        try add("饮用水", to: mine)
+        try await mine.sync.setEnabled(true); try await mine.sync.synchronize()
+        theirs.household.begin(try XCTUnwrap(theirs.household.state), me: try XCTUnwrap(theirs.household.me), joining: true)
+        cloud.offline = true
+        do { try await recoverJoin(theirs); XCTFail("Expected offline failure") } catch {}
+        XCTAssertFalse(theirs.sync.enabled)
+        let reopened = resumePhone(theirs, cloud: cloud)
+        XCTAssertTrue(reopened.household.joining, "empty staging is not evidence that joining finished")
+        cloud.offline = false
+        try await recoverJoin(reopened)
+        XCTAssertTrue(reopened.sync.enabled)
+        XCTAssertFalse(reopened.household.joining)
+        XCTAssertEqual(try names(reopened), ["饮用水"])
+    }
+
+    func testFailedLocalMergeRemainsPendingForRetry() async throws {
+        let cloud = FakeSyncCloud()
+        let theirs = try phone(cloud, me: member, role: .member, name: "老婆")
+        theirs.household.begin(try XCTUnwrap(theirs.household.state), me: try XCTUnwrap(theirs.household.me), joining: true)
+        do {
+            try await HouseholdJoinRecovery.synchronize(store: theirs.household, sync: theirs.sync) {
+                throw SyncFailure("disk full")
+            }
+            XCTFail("Expected merge failure")
+        } catch {}
+        XCTAssertTrue(theirs.household.joining)
+        try await recoverJoin(theirs)
+        XCTAssertFalse(theirs.household.joining)
+    }
+
+    func testDateOnlyFamilyArrangementAndCompletionSyncAcrossDistinctAccounts() async throws {
+        let cloud = FakeSyncCloud()
+        let mine = try phone(cloud, me: owner, role: .owner, name: "老公")
+        let theirs = try phone(cloud, me: member, role: .member, name: "老婆")
+        var planned = task("明天下午买牛奶", TaskSharing(scope: .household, createdBy: owner, assignee: member))
+        planned.timePeriod = .afternoon
+        try mine.tasks.add(planned)
+        try mine.tasks.add(task("个人体检", TaskSharing(scope: .personal, createdBy: owner)))
+        cloud.user = "owner-account"
+        try await mine.sync.setEnabled(true); try await mine.sync.synchronize()
+        cloud.user = "member-account"
+        try await theirs.sync.setEnabled(true); try await theirs.sync.synchronize()
+        let received = try XCTUnwrap(theirs.tasks.reminder(id: planned.id))
+        XCTAssertEqual(received.timePeriod, .afternoon)
+        XCTAssertEqual(received.sharing?.assignee, member)
+        XCTAssertEqual(theirs.tasks.reminders.count, 1)
+        XCTAssertTrue(ReminderSchedule.preview(received, now: .now, limit: 10).isEmpty)
+        try theirs.tasks.complete(planned.id)
+        try await theirs.sync.synchronize()
+        cloud.user = "owner-account"
+        try await mine.sync.synchronize()
+        XCTAssertEqual(mine.tasks.reminder(id: planned.id)?.status, .completed)
+        XCTAssertEqual(mine.tasks.reminder(id: planned.id)?.activity.last?.by, member)
+    }
+
     // MARK: Tasks
 
     private func pair() async throws -> (FakeSyncCloud, Phone, Phone) {

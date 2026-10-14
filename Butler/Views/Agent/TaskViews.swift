@@ -210,7 +210,7 @@ struct TaskDetailView: View {
         case .paused: "已暂停，恢复后继续安排。"
         case .completed: "任务已完成，后续提醒已停止。"
         case .cancelled: "任务已取消，历史记录会保留。"
-        case .active: "没有后续提醒；提醒结束不代表事情已经完成。"
+        case .active: task.timePeriod != nil ? "未设置定时通知；管家会结合当天安排提示。" : "没有后续提醒；提醒结束不代表事情已经完成。"
         }
     }
 }

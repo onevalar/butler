@@ -38,6 +38,12 @@ enum BriefSources {
                 let occurrences = ReminderSchedule.preview(task, now: now, limit: 3)
                 context.boundaries += occurrences.filter { $0 > now }
                 if let end = task.autoCompleteAt, end > now { context.boundaries.append(end) }
+                if let review = task.arrangementReviewDate {
+                    row["when_label"] = task.whenLabel
+                    row["period_state"] = review > now ? "尚未到该时段" : "已进入可安排时段；不是逾期"
+                    row["notification_policy"] = "没有定时通知"
+                    if task.status == .active, review > now { context.boundaries.append(review) }
+                }
                 row["next_occurrences"] = occurrences.map { $0.ISO8601Format() }
                 row["occurrence_scope"] = "最多展示接下来3次；完整规则见 phases/repeats，不代表只有3次"
                 return row

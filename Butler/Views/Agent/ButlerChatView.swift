@@ -496,6 +496,11 @@ struct ButlerChatView: View {
                         if let detail = ConfirmationPresentation.detail(change.detail, title: change.title) {
                             Text(detail).font(.subheadline).foregroundStyle(.secondary)
                         }
+                        if case .reminder(let reminder) = change.kind, reminder.repeats == .none, reminder.phases == nil {
+                            ArrangementTimeControl(reminder: reminder, disabled: blocked) { date, period in
+                                chat.reviseReminderTime(of: change.id, date: date, period: period)
+                            }
+                        }
                         if let family = change.taskFamily {
                             TaskFamilyCardLine(sharing: family, disabled: blocked) { chat.reviseFamily(of: change.id, to: $0) }
                         }
@@ -535,4 +540,68 @@ struct ButlerChatView: View {
         .padding(.trailing, 32)
     }
 
+}
+
+/// Inline choices keep an imprecise request out of a clarification loop.
+private struct ArrangementTimeControl: View {
+    let reminder: TimedReminder
+    let disabled: Bool
+    let onChange: (Date, ArrangementPeriod?) -> Void
+    @State private var editing = false
+    @State private var selectedDate = Date.now
+    private func clock(_ date: Date) -> String {
+        let f = DateFormatter(); f.dateFormat = "HH:mm"; f.timeZone = ReminderSchedule.calendar(for: reminder).timeZone
+        return f.string(from: date)
+    }
+
+    private var suggested: Date? {
+        let calendar = ReminderSchedule.calendar(for: reminder)
+        return calendar.date(bySettingHour: reminder.timePeriod?.suggestedHour ?? 9, minute: 0, second: 0, of: reminder.fireDate)
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            if reminder.timePeriod != nil, let suggested, suggested > .now {
+                Button("选 \(clock(suggested))") {
+                    onChange(suggested, nil)
+                }
+            }
+            Menu("调整时间") {
+                ForEach(ArrangementPeriod.allCases, id: \.self) { period in
+                    Button(period.label, systemImage: reminder.timePeriod == period ? "checkmark" : "calendar") {
+                        onChange(reminder.fireDate, period)
+                    }
+                }
+                Button("自定义时间…", systemImage: "clock") {
+                    selectedDate = max(suggested ?? reminder.fireDate, Date.now.addingTimeInterval(300))
+                    editing = true
+                }
+            }
+        }
+        .font(.subheadline.weight(.medium))
+        .buttonStyle(.borderless)
+        .disabled(disabled)
+        .sheet(isPresented: $editing) {
+            NavigationStack {
+                VStack(spacing: 20) {
+                    DatePicker("提醒时间", selection: $selectedDate, in: Date.now..., displayedComponents: [.date, .hourAndMinute])
+                        .datePickerStyle(.wheel)
+                        .environment(\.timeZone, ReminderSchedule.calendar(for: reminder).timeZone)
+                    Text("选择后仍需在卡片上确认，才会设置通知。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                .padding()
+                .navigationTitle("设置时间")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) { Button("取消") { editing = false } }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("选好") { onChange(selectedDate, nil); editing = false }
+                            .disabled(selectedDate <= .now)
+                    }
+                }
+            }
+            .presentationDetents([.height(350)])
+        }
+    }
 }

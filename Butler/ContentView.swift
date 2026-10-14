@@ -203,7 +203,7 @@ struct ContentView: View {
                 isActive: path.isEmpty && scenePhase == .active,
                 now: agendaNow,
                 brief: briefService.brief,
-                briefBusy: briefService.isThinking,
+                briefBusy: briefService.isThinking && briefService.brief.source != .model,
                 pendingTaskCount: agenda.pending(on: agenda.today, at: agendaNow).count,
                 onOpen: open,
                 onOpenInventory: { path.append(.items) },
