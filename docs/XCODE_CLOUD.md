@@ -61,8 +61,9 @@ GitHub 仓库授权已完成，以上工作流已在 App Store Connect 保存并
 1. 确认要分发的功能已提交推送到 `main`，记录提交 SHA；更新 `TestFlight/WhatToTest.zh-Hans.txt`。
 2. 打开上述构建页面 → **Start Build** → **Main · TestFlight** → **Next** → 选择 **main** → **Start Build**。日常无需重新配置 Xcode、签名或仓库授权。
 3. 确认构建对应预期 SHA。构建号由 Xcode Cloud 自动递增；仅当其他渠道上传过更高构建号时，再通过 Settings → Build Number 调整下一次编号。
-4. 等待 Test、Archive、TestFlight Internal Testing 和 TestFlight External Testing 完成，然后在 TestFlight 核对新版本关联内部、外部两个 `test` 组，并检查外部审核/可测试状态。失败时先看对应日志，修复后再手动重试；不要把等待审核误认为需要重新构建。
-5. 向用户报告版本/构建号、提交、测试与分发结果。测试者需接受对应组邀请并在手机 TestFlight 安装或更新；如外部仍待审核，分别报告内部可用和外部等待状态。
+4. 发布前在 CloudKit Console 对照 Development/Production，确认本版使用的记录类型及索引均已部署；TestFlight 构建成功不代表数据库结构已发布。开发与生产数据隔离，不能用 Debug 同步成功代替生产验收。
+5. 等待 Test、Archive、TestFlight Internal Testing 和 TestFlight External Testing 完成，然后在 TestFlight 核对新版本关联内部、外部两个 `test` 组，并检查外部审核/可测试状态。失败时先看对应日志，修复后再手动重试；不要把等待审核误认为需要重新构建。
+6. 向用户报告版本/构建号、提交、测试与分发结果。测试者需接受对应组邀请并在手机 TestFlight 安装或更新；如外部仍待审核，分别报告内部可用和外部等待状态。
 
 已跑通的构建 23/24 等待约 5～7 分钟，消耗约 7 计算分钟/次，仅作经验估计；Apple 排队和处理可能延长耗时。
 
@@ -131,3 +132,9 @@ GitHub 仓库授权已完成，以上工作流已在 App Store Connect 保存并
 - 兼容修复后本机 79 项提醒与动效回归通过，另有 9 项邀请展示测试通过；最新 Debug 真机签名构建已覆盖安装（db sequence 2276）。之前云写入修复版已实测同步两次成功、待上传归零；最终等价编译兼容版安装后因手机锁屏未自动启动。
 - 云端 778/779 通过（1 项既有跳过、0 失败），Test、Archive、TestFlight Internal Testing 均 Succeeded；External Testing 经 Pending Beta Review 后转为 Succeeded，内外部分发均成功。云端总耗时约 13 分钟，Usage 10 分 20 秒。4 条测试警告为既有 WeatherStoreTests 尾随闭包提示及远程通知代理的 Swift 6 隔离迁移警告。
 - TestFlight 1.0 (40) 状态 Testing，已核对 Groups (2)：内部 test（1 人）、外部 test（3 人）；中文测试说明已自动带入。本记录提交只保存结果，不触发下一次构建。
+
+### Build 40 发布后生产数据库修复
+
+- 21:24 真机反馈 CKShare 创建失败；Production 缺 ButlerRevisionV1、ButlerSyncControlV1、cloudkit.share。已在 CloudKit Console 部署开发结构至生产，未删除或迁移用户数据。
+- 21:40 用户确认“邀请家人”和“复制家庭链接”都恢复；真机日志证实系统邀请抽屉打开、有效 iCloud 链接复制。无需新版本或重新构建。
+- 仍有开发安装切换 TestFlight 后的家庭历史不匹配问题，生产同步尚未验证恢复；前文 pending=0 仅为调试安装环境，不能代表两个环境的数据互通。必须保留防止旧数据复活的检查，并另行实现明确的环境切换／恢复方案。

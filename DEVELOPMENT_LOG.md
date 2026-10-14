@@ -1,3 +1,10 @@
+## 2026-10-14 TestFlight 家庭邀请生产结构缺失
+
+- 用户报告 Build 40 邀请与复制入口同时失败。读取手机日志：21:24–21:27 CKError.invalidArguments 明确返回 Cannot create new type cloudkit.share in production schema；不是网络临时错误，现有通用提示误导。
+- CloudKit Console 对照确认 Production 仅有 Users，Development 另有 ButlerRevisionV1、ButlerSyncControlV1、cloudkit.share 及对应索引。通过 Deploy Schema Changes 发布这三类结构，控制台显示 Changes Deployed / The schema is deployed to Production。未重置环境、未删除家庭或用户记录；未修改邀请的 private permission。
+- 用户随后确认两个入口均正常。21:40 真机日志记录 sharing presented; purpose=invite; validCloudURL=true，以及 verifiedCloudLink copied locally。现有 TestFlight 40 即可生效，无需重构建。
+- 同一批日志仍有“云端历史缺失或被清除”。代码 household-<UUID>.json 未区分 Development/Production；20:07 的同步成功来自本地调试安装，不能当成 TestFlight 生产同步成功。当前尚未恢复这台手机生产环境的家庭数据同步；不清空 sent/baselines，不关闭历史完整性保护，不把开发数据静默重传。后续需明确环境隔离及经确认的恢复流程，并验证真实双账号。
+
 ## 2026-10-14 真机同步恢复及云构建兼容修复
 
 - 已覆盖安装修复版并成功启动；真机日志北京时间 20:07:32、20:08:08 连续返回 household sync completed; pending=0; joining=false。原家庭及本机数据保留，真实云端写入恢复；未用第二个 iCloud 账号进行真实邀请／双向验收。
