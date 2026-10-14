@@ -124,3 +124,10 @@ GitHub 仓库授权已完成，以上工作流已在 App Store Connect 保存并
 - 整合提交 62e1ece 及真机 CloudKit 非法控制记录 ID 修复 9fb6469 均已推送 main；本机完整 779 项测试、1 项既有跳过、0 失败，Release 签名构建成功。
 - 手动启动 [Build 39](https://appstoreconnect.apple.com/teams/52049831-307a-44f3-95af-623b83d68dc0/xcode-cloud/products/ECE4419A-60C4-420A-A42F-FEB1AC95BFB8/builds/0cc21281-4b0e-414e-854e-b95855eca882/summary)，后台核对提交为 9fb6469ee44f80658f58b7a18a061655e9481f7b，Xcode 26.3。Test 在 OrbDock.swift:398 报告 Ambiguous use of operator '-'，必过测试阻止内外部 TestFlight 分发。显式转换透明度参数为 Double 后重新构建，不能分发 39。
 - 真机诊断明确拒绝旧控制记录 __control__，新编号修复已通过完整回归；手机重连后成功安装并启动，20:07:32、20:08:08 日志连续显示 pending=0; joining=false，真实云端写入恢复。第二个 iCloud 账号的真实邀请／双向验收仍待完成。
+
+### Build 40（2026-10-14）
+
+- 修复 Xcode 26.3 的透明度类型歧义与首页提醒有效期长表达式类型检查超时；提交 a6b70e5 已推送 main，手动启动 [Build 40](https://appstoreconnect.apple.com/teams/52049831-307a-44f3-95af-623b83d68dc0/xcode-cloud/products/ECE4419A-60C4-420A-A42F-FEB1AC95BFB8/builds/050b9c15-ac34-43b1-a891-ff7284ced1b6/summary)。
+- 兼容修复后本机 79 项提醒与动效回归通过，另有 9 项邀请展示测试通过；最新 Debug 真机签名构建已覆盖安装（db sequence 2276）。之前云写入修复版已实测同步两次成功、待上传归零；最终等价编译兼容版安装后因手机锁屏未自动启动。
+- 云端 778/779 通过（1 项既有跳过、0 失败），Test、Archive、TestFlight Internal Testing 均 Succeeded；External Testing 经 Pending Beta Review 后转为 Succeeded，内外部分发均成功。云端总耗时约 13 分钟，Usage 10 分 20 秒。4 条测试警告为既有 WeatherStoreTests 尾随闭包提示及远程通知代理的 Swift 6 隔离迁移警告。
+- TestFlight 1.0 (40) 状态 Testing，已核对 Groups (2)：内部 test（1 人）、外部 test（3 人）；中文测试说明已自动带入。本记录提交只保存结果，不触发下一次构建。
