@@ -347,6 +347,10 @@ struct ContentView: View {
         }
         .onChange(of: ShortcutNavigation.shared.request?.id, initial: true) { _, _ in handleShortcutNavigation() }
         .onOpenURL { url in
+            if (try? HouseholdShareLink.validated(url)) != nil {
+                Task { await HouseholdService.shared.openInvitation(url) }
+                return
+            }
             do { try ShortcutNavigation.shared.openWidgetURL(url); handleShortcutNavigation() }
             catch { notificationError = error.localizedDescription }
         }

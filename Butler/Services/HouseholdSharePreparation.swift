@@ -3,6 +3,37 @@ import Foundation
 
 /// Recover only a missing invitation record in an existing owner zone. Never recreate a missing zone.
 @MainActor enum HouseholdSharePreparation {
+    /// A private, single-recipient invitation can be forwarded without knowing an Apple ID.
+    /// Never substitute CKShare.url: it does not authorize a new recipient.
+    static func invitation(fetch: () async throws -> CKShare,
+                           save: (CKShare) async throws -> CKShare,
+                           url: (CKShare, CKShare.Participant.ID) -> URL? = { $0.oneTimeURL(for: $1) }) async throws -> URL {
+        let participant = CKShare.Participant.oneTimeURLParticipant()
+        participant.permission = .readWrite
+        for attempt in 0..<3 {
+            try Task.checkCancellation()
+            let share = try await fetch()
+            guard share.publicPermission == .none else {
+                throw SyncFailure("家庭共享权限已变化，请先在管理家庭共享中检查。")
+            }
+            if !share.participants.contains(where: { $0.participantID == participant.participantID }) {
+                share.addParticipant(participant)
+            }
+            do {
+                let saved = try await save(share)
+                guard saved.recordID == share.recordID, saved.publicPermission == .none,
+                      saved.participants.contains(where: { $0.participantID == participant.participantID }) else {
+                    throw SyncFailure("邀请未保存完整，请重新生成。")
+                }
+                return try HouseholdShareLink.validated(url(saved, participant.participantID))
+            } catch let error as CKError where error.code == .serverRecordChanged && attempt < 2 {
+                // Preserve other invitations and use the same participant on retry.
+                continue
+            }
+        }
+        throw SyncFailure("家庭邀请正在更新，请稍后再试。")
+    }
+
     static func prepare(zoneID: CKRecordZone.ID, title: String,
                         fetch: () async throws -> CKRecord,
                         verifyZone: () async throws -> Void,

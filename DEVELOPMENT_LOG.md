@@ -1,3 +1,12 @@
+## 2026-10-14 一人一条邀请链接与家庭同步恢复
+
+- 根因：复制普通 CKShare.url 不能给尚未邀请的账号授予加入资格。邀请与复制入口统一改为 oneTimeURLParticipant → 保存私有 CKShare → 读取该参与者 oneTimeURL；不回退到普通地址。保持 readWrite 成员权限及 publicPermission=none，每条邀请由一位家人接受，下一位重新生成。冲突重新读取服务器 share，保留其他成员及同一邀请 ID。
+- 首轮新增 API 测试暴露缺少 com.apple.developer.icloud-extended-share-access / InProcessOneTimeLinks。已补齐唯一所需 entitlement，Xcode 自动更新签名 profile；实际 Release 签名只包含 InProcessOneTimeLinks，环境为 Production，运行时环境标记同为 Production。不是仅编译通过而未检查签名。
+- 直接显示普通分享抽屉，分享与复制传递同一类型的已保存邀请 URL。UICloudSharingController 仅用于管理已有共享。接受后显示同步进度／失败重试，首次数据同步成功才显示完成；保留冷／热启动 metadata 回调，新增 App 内粘贴邀请的恢复入口。
+- 家庭同步日志标记环境，未标记的旧日志或环境变化须显式恢复；先备份本机资料及原同步日志，再核对原账号／云端版本，合并当前共享内容，不清空 sent 后重传旧历史。云端历史缺失会持久暂停并显示恢复入口。订阅成功标记按环境隔离。
+- 全套 786 项测试、1 项既有跳过、0 失败。覆盖单人邀请保存回执／URL 缺失／保存失败／冲突保留参与者、复制与分享 URL、旧环境恢复备份及无重复上传、账号和云端版本变化拒绝恢复、缺失历史跨重启暂停，以及既有家庭物品和日程双向回归。测试传输为替身，不代表真实跨账号验收。
+- Release 构建与签名验证通过，覆盖安装 AnValar iPhone（安装序列 2300），成功启动。22:52 真机日志确认 environment=Production; recovery=true；已请用户在家庭页恢复并生成新邀请，实际恢复与第二账号接受结果待核对。未删除家庭、未重置云端、未启动新的 TestFlight 构建。
+
 ## 2026-10-14 TestFlight 家庭邀请生产结构缺失
 
 - 用户报告 Build 40 邀请与复制入口同时失败。读取手机日志：21:24–21:27 CKError.invalidArguments 明确返回 Cannot create new type cloudkit.share in production schema；不是网络临时错误，现有通用提示误导。

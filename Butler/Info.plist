@@ -2,6 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>ButlerCloudEnvironment</key><string>$(BUTLER_CLOUD_ENVIRONMENT)</string>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array><string>com.anvalar.Butler.brief-refresh</string></array>
 	<key>UIBackgroundModes</key>

@@ -19,7 +19,26 @@ enum HouseholdShareLink {
 @MainActor enum HouseholdInvite {
     enum Purpose { case invite, manage }
 
-    static func present(share: CKShare, container: CKContainer, purpose: Purpose = .invite,
+    static func presentInvitation(url: URL, title: String) throws {
+        let url = try HouseholdShareLink.validated(url)
+        guard let root = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
+            .filter({ $0.activationState == .foregroundActive }).flatMap(\.windows)
+            .first(where: \.isKeyWindow)?.rootViewController else {
+            throw SyncFailure("暂时无法打开分享，请返回家庭页面后重试。")
+        }
+        var top = root
+        while let presented = top.presentedViewController { top = presented }
+        let controller = UIActivityViewController(activityItems: [HouseholdInvitationItem(url: url, title: title)], applicationActivities: nil)
+        if let popover = controller.popoverPresentationController {
+            popover.sourceView = top.view
+            popover.sourceRect = CGRect(x: top.view.bounds.midX, y: top.view.bounds.maxY - 20, width: 1, height: 1)
+            popover.permittedArrowDirections = []
+        }
+        top.present(controller, animated: true)
+        ChatDiagnostics.log("household single-use invitation presented")
+    }
+
+    static func presentManagement(share: CKShare, container: CKContainer,
                         onFailure: @escaping (String) -> Void) throws {
         _ = try HouseholdShareLink.validated(share.url)
         guard let root = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
@@ -29,75 +48,14 @@ enum HouseholdShareLink {
         }
         var top = root
         while let presented = top.presentedViewController { top = presented }
-        let controller: UIViewController
-        switch purpose {
-        case .invite:
-            controller = makeInviteController(share: share, container: container, onFailure: onFailure)
-        case .manage:
-            controller = makeController(share: share, container: container, onFailure: onFailure)
-        }
+        let controller = makeController(share: share, container: container, onFailure: onFailure)
         if let popover = controller.popoverPresentationController {
             popover.sourceView = top.view
             popover.sourceRect = CGRect(x: top.view.bounds.midX, y: top.view.bounds.maxY - 20, width: 1, height: 1)
             popover.permittedArrowDirections = []
         }
-        ChatDiagnostics.log("household sharing presented; purpose=\(purpose); validCloudURL=true; public=\(share.publicPermission.rawValue)")
+        ChatDiagnostics.log("household sharing presented; purpose=manage; validCloudURL=true; public=\(share.publicPermission.rawValue)")
         top.present(controller, animated: true)
-    }
-
-    static var invitationOptions: CKAllowedSharingOptions {
-        CKAllowedSharingOptions(allowedParticipantPermissionOptions: .readWrite,
-                                allowedParticipantAccessOptions: .specifiedRecipientsOnly)
-    }
-
-    static func invitationConfiguration(share: CKShare, container: CKContainer) -> UIActivityItemsConfiguration {
-        let provider = NSItemProvider()
-        // A collaboration item lets iOS add recipients. A plain URL cannot grant access.
-        provider.registerCKShare(share, container: container, allowedSharingOptions: invitationOptions)
-        let configuration = UIActivityItemsConfiguration(itemProviders: [provider])
-        let metadata = LPLinkMetadata()
-        metadata.title = (share[CKShare.SystemFieldKey.title] as? String) ?? "小当家的家庭"
-        if let image = UIImage(systemName: "house.fill") {
-            metadata.imageProvider = NSItemProvider(object: image)
-        }
-        configuration.perItemMetadataProvider = { _, key in
-            key == .linkPresentationMetadata ? metadata : nil
-        }
-        configuration.metadataProvider = { key in
-            guard key == .collaborationModeRestrictions else { return nil }
-            return [UIActivityViewController.CollaborationModeRestriction(disabledMode: .sendCopy)]
-        }
-        return configuration
-    }
-
-    static func makeInviteController(share: CKShare, container: CKContainer,
-                                     onFailure: @escaping (String) -> Void) -> HouseholdInvitationController {
-        let controller = HouseholdInvitationController(activityItemsConfiguration:
-            invitationConfiguration(share: share, container: container))
-        controller.onFailure = onFailure
-        let observer = CKSystemSharingUIObserver(container: container)
-        controller.sharingObserver = observer
-        let shareID = share.recordID
-        observer.systemSharingUIDidSaveShareBlock = { [weak controller] id, result in
-            guard id == shareID else { return }
-            Task { @MainActor [weak controller] in
-                switch result {
-                case .success(let saved):
-                    do {
-                        _ = try HouseholdShareLink.validated(saved.url)
-                        ChatDiagnostics.log("household invitation share saved; validCloudURL=true")
-                    } catch { controller?.reportFailure(error) }
-                case .failure(let error): controller?.reportFailure(error)
-                }
-            }
-        }
-        controller.completionWithItemsHandler = { [weak controller] _, completed, _, error in
-            Task { @MainActor [weak controller] in
-                if let error { controller?.reportFailure(error) }
-                else { ChatDiagnostics.log("household invitation activity ended; completed=\(completed)") }
-            }
-        }
-        return controller
     }
 
     static func makeController(share: CKShare, container: CKContainer,
@@ -112,20 +70,19 @@ enum HouseholdShareLink {
     }
 }
 
-/// Keep the CloudKit observer alive for the whole system share sheet lifetime.
-@MainActor final class HouseholdInvitationController: UIActivityViewController {
-    var sharingObserver: CKSystemSharingUIObserver?
-    var onFailure: ((String) -> Void)?
-    private var reportedFailure = false
-
-    func reportFailure(_ error: Error) {
-        guard !reportedFailure else { return }
-        reportedFailure = true
-        ChatDiagnostics.log("household invitation failed: \(ChatDiagnostics.describe(error))")
-        let message = "邀请未能完成。" + HouseholdSharePreparation.message(for: error)
-        if presentingViewController != nil {
-            dismiss(animated: true) { [onFailure] in onFailure?(message) }
-        } else { onFailure?(message) }
+@MainActor final class HouseholdInvitationItem: NSObject, UIActivityItemSource {
+    let url: URL
+    let title: String
+    init(url: URL, title: String) { self.url = url; self.title = title }
+    func activityViewControllerPlaceholderItem(_ activityViewController: UIActivityViewController) -> Any { url }
+    func activityViewController(_ activityViewController: UIActivityViewController,
+                                itemForActivityType activityType: UIActivity.ActivityType?) -> Any? { url }
+    func activityViewControllerLinkMetadata(_ activityViewController: UIActivityViewController) -> LPLinkMetadata? {
+        let metadata = LPLinkMetadata()
+        metadata.title = "加入「\(title)」"
+        metadata.url = url
+        if let image = UIImage(systemName: "house.fill") { metadata.iconProvider = NSItemProvider(object: image) }
+        return metadata
     }
 }
 

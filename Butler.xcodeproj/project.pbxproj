@@ -552,6 +552,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Butler/Info.plist;
 				CODE_SIGN_ENTITLEMENTS = Butler/Butler.entitlements;
+				BUTLER_CLOUD_ENVIRONMENT = Development;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -586,6 +587,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Butler/Info.plist;
 				CODE_SIGN_ENTITLEMENTS = Butler/Butler.entitlements;
+				BUTLER_CLOUD_ENVIRONMENT = Production;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

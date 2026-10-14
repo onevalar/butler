@@ -19,6 +19,7 @@ final class HouseholdService {
     private(set) var busy = false
     private(set) var lastSync: Date?
     private(set) var syncIssue: String?
+    private(set) var needsSyncRecovery = false
     var notice: String?
     /// Shown once after joining or creating: what was shared and what stayed personal.
     var summary: Summary?
@@ -31,6 +32,7 @@ final class HouseholdService {
     @ObservationIgnored private(set) var syncStore: SyncStore?
     @ObservationIgnored private var pendingInvite: CKShare.Metadata?
     @ObservationIgnored private var inviteTask: Task<CKShare, Error>?
+    @ObservationIgnored private var linkTask: Task<URL, Error>?
     @ObservationIgnored private var syncing = false
     @ObservationIgnored private lazy var cloud = CKContainer(identifier: CloudKitSyncTransport.containerID)
 
@@ -57,9 +59,17 @@ final class HouseholdService {
 
     private func makeSyncStore(_ state: HouseholdState) {
         guard let base, let root else { return }
+        guard let environment = Bundle.main.object(forInfoDictionaryKey: "ButlerCloudEnvironment") as? String,
+              ["Development", "Production"].contains(environment) else {
+            syncIssue = "当前安装的云端配置不完整，请更新小当家。"
+            return
+        }
         syncStore = SyncStore(file: root.appendingPathComponent("household-\(state.id.uuidString).json"),
                               local: HouseholdSyncData(base: base, store: store),
-                              transport: CloudKitSyncTransport(household: state), kinds: Self.kinds)
+                              transport: CloudKitSyncTransport(household: state), kinds: Self.kinds, environment: environment)
+        needsSyncRecovery = syncStore?.needsReconnect == true
+        if needsSyncRecovery { syncIssue = "需要恢复家庭同步，本机资料已保留。" }
+        ChatDiagnostics.log("household configured; environment=\(environment); recovery=\(needsSyncRecovery)")
     }
 
     static let kinds: Set<SyncRecord.Kind> = [.inventory, .member, .task, .rule]
@@ -169,6 +179,83 @@ final class HouseholdService {
     }
 
     var cloudContainer: CKContainer { cloud }
+
+    /// Both Copy and Share issue a real invitation for one new member.
+    func invitationURL() async throws -> URL {
+        if let linkTask { return try await linkTask.value }
+        let task = Task { @MainActor in
+            guard self.store.isOwner, let state = self.store.state else {
+                throw SyncFailure("只有创建家庭的人可以邀请家人。")
+            }
+            guard !self.needsSyncRecovery else { throw SyncFailure("请先点“恢复家庭同步”，完成后就能邀请家人。") }
+            guard !self.syncing, !self.busy else { throw SyncFailure("家庭资料正在同步，请稍后再邀请。") }
+            await self.sync()
+            guard self.syncIssue == nil, self.lastSync != nil, self.syncStore?.pendingCount == 0 else {
+                throw SyncFailure("家庭资料还没有同步完成，请先在家庭页面完成同步。")
+            }
+            let link = try await HouseholdSharePreparation.invitation(fetch: { try await self.share() }, save: { share in
+                guard self.store.state?.id == state.id, try await self.myMemberID() == state.me else {
+                    throw SyncFailure("家庭或账号已变化，请重新打开家庭页面。")
+                }
+                return try HouseholdSharePreparation.checked(try await self.cloud.privateCloudDatabase.save(share))
+            })
+            guard self.store.state?.id == state.id, try await self.myMemberID() == state.me else {
+                throw SyncFailure("家庭或账号已变化，未交付邀请链接。")
+            }
+            ChatDiagnostics.log("household single-use invitation ready")
+            return link
+        }
+        linkTask = task
+        defer { linkTask = nil }
+        do { return try await task.value }
+        catch {
+            ChatDiagnostics.log("household invitation generation failed: \(ChatDiagnostics.describe(error))")
+            throw SyncFailure(HouseholdSharePreparation.message(for: error))
+        }
+    }
+
+    struct Recovery {
+        let household: UUID
+        let account: String
+        let head: SyncCloudHead
+    }
+
+    func recoveryPreview() async throws -> Recovery {
+        guard !busy, !syncing, let state = store.state, let syncStore,
+              try await myMemberID() == state.me else { throw SyncFailure("请等待同步空闲，并确认仍使用原来的 iCloud 账号。") }
+        let (account, head) = try await syncStore.reconnectPreview()
+        return Recovery(household: state.id, account: account, head: head)
+    }
+
+    func recoverSync(_ preview: Recovery) async throws {
+        guard !busy, !syncing, let state = store.state, state.id == preview.household,
+              let container, let syncStore else {
+            throw SyncFailure("家庭或账号已变化，请重新确认恢复。")
+        }
+        busy = true
+        defer { busy = false }
+        guard try await myMemberID() == state.me, store.state?.id == preview.household, !syncing else {
+            throw SyncFailure("家庭或同步状态已变化，请重新确认恢复。")
+        }
+        try backUpBeforeSharing(container)
+        try await syncStore.reconnect(account: preview.account, head: preview.head)
+        lastSync = nil
+        needsSyncRecovery = false
+        await sync()
+        guard syncIssue == nil, lastSync != nil else { throw SyncFailure(syncIssue ?? "同步尚未完成，请联网后重试。") }
+        ChatDiagnostics.log("household recovery completed; pending=\(syncStore.pendingCount)")
+    }
+
+    func openInvitation(_ url: URL) async {
+        do {
+            let checked = try HouseholdShareLink.validated(url)
+            let metadata = try await cloud.shareMetadata(for: checked)
+            await accept(metadata)
+        } catch {
+            notice = "无法打开家庭邀请，请让家人重新生成一条邀请链接。"
+            ChatDiagnostics.log("household invitation lookup failed: \(ChatDiagnostics.describe(error))")
+        }
+    }
 
     // MARK: Join
 
@@ -310,6 +397,11 @@ final class HouseholdService {
     }
 
     func sync() async {
+        if syncStore?.needsReconnect == true {
+            needsSyncRecovery = true
+            syncIssue = "需要恢复家庭同步，本机资料已保留。"
+            return
+        }
         guard let syncStore, let state = store.state, !syncStore.busy, !syncing,
               syncStore.enabled || store.joining else { return }
         syncing = true; defer { syncing = false }
@@ -329,6 +421,7 @@ final class HouseholdService {
             ChatDiagnostics.log("household sync completed; pending=\(syncStore.pendingCount); joining=\(store.joining)")
             await subscribe()
         } catch {
+            needsSyncRecovery = syncStore.needsReconnect
             syncIssue = store.joining ? "已接受邀请，家庭资料尚未同步完成；联网后会继续。"
                 : ((error as? SyncFailure)?.message ?? "家庭同步暂未完成，请检查网络和 iCloud；本机资料已保留。")
             ChatDiagnostics.log("household sync: \(error.localizedDescription)")
@@ -356,7 +449,8 @@ final class HouseholdService {
     private func subscribe() async {
         guard let state = store.state, let zoneID, let id = subscriptionID else { return }
         UIApplication.shared.registerForRemoteNotifications()
-        let key = "household.subscribed.\(id)"
+        let environment = Bundle.main.object(forInfoDictionaryKey: "ButlerCloudEnvironment") as? String ?? "Unknown"
+        let key = "household.subscribed.\(environment).\(id)"
         guard !UserDefaults.standard.bool(forKey: key) else { return }
         let info = CKSubscription.NotificationInfo()
         info.shouldSendContentAvailable = true
@@ -383,6 +477,8 @@ final class HouseholdService {
     private func unsubscribe(_ state: HouseholdState) async {
         let id = "household-\(state.id.uuidString)"
         UserDefaults.standard.removeObject(forKey: "household.subscribed.\(id)")
+        let environment = Bundle.main.object(forInfoDictionaryKey: "ButlerCloudEnvironment") as? String ?? "Unknown"
+        UserDefaults.standard.removeObject(forKey: "household.subscribed.\(environment).\(id)")
         let database = state.role == .owner ? cloud.privateCloudDatabase : cloud.sharedCloudDatabase
         _ = try? await database.modifySubscriptions(saving: [], deleting: [id])
     }
@@ -409,6 +505,7 @@ final class HouseholdService {
         syncStore = nil
         lastSync = nil
         syncIssue = nil
+        needsSyncRecovery = false
         store.end()
         // Tasks this phone was not reminding about stay as records; what it reminds about is decided again.
         base?.tasks.rescheduleAll()

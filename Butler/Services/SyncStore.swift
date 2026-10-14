@@ -27,11 +27,13 @@ import Foundation
         var cleanup: SyncCleanup?
         var needsReconnect: Bool?
         var adopting: Bool?
+        var environment: String?
     }
     private let file: URL
     private let local: any SyncLocalData
     private let transport: any SyncTransport
     private let kinds: Set<SyncRecord.Kind>
+    private let environment: String?
     private var state = State()
     private var failed = false
     private var generation = UUID()
@@ -39,13 +41,15 @@ import Foundation
     private(set) var warning: String?
     var enabled: Bool { state.enabled && !failed }
     var lastSuccess: Date? { state.lastSuccess }
-    var needsReconnect: Bool { state.needsReconnect == true }
+    var needsReconnect: Bool { state.needsReconnect == true || environmentMismatch }
+    private var environmentMismatch: Bool { environment != nil && state.environment != environment }
     var cleanupID: UUID? { state.cleanup?.id }
     var deviceID: UUID { state.device }
     var pendingCount: Int { state.records.filter { !state.sent.contains($0.id) }.count }
     init(file: URL, local: any SyncLocalData, transport: any SyncTransport,
-         kinds: Set<SyncRecord.Kind> = [.inventory, .task, .note]) {
+         kinds: Set<SyncRecord.Kind> = [.inventory, .task, .note], environment: String? = nil) {
         self.file = file; self.local = local; self.transport = transport; self.kinds = kinds
+        self.environment = environment
         do {
             state = try JSONDecoder().decode(State.self, from: Data(contentsOf: file))
             guard state.version == 1, state.records.allSatisfy({ kinds.contains($0.key.kind) }),
@@ -57,6 +61,9 @@ import Foundation
             failed = e.domain != NSCocoaErrorDomain || e.code != NSFileReadNoSuchFileError
             if failed { warning = "同步记录不可读，已停止同步；原数据未清除。" }
         }
+        if state.account == nil && state.records.isEmpty && state.baselines.isEmpty && state.importing == nil {
+            state.environment = environment
+        }
     }
     nonisolated deinit {}
     private func save(_ next: State) throws {
@@ -67,6 +74,7 @@ import Foundation
     private func ready(_ token: UUID) throws {
         try Task.checkCancellation()
         guard !failed, state.enabled, generation == token else { throw SyncFailure("同步已关闭或中断，未继续处理。") }
+        guard !environmentMismatch else { throw SyncFailure("需要恢复家庭同步；本机资料已保留。") }
     }
     private func checkAccount(_ token: UUID) async throws -> String {
         try ready(token)
@@ -170,8 +178,12 @@ import Foundation
         let token = generation
         let current = try await reconnectPreview()
         guard current.0 == account, current.1 == head, !busy, token == generation else { throw SyncFailure("云端或本机在确认期间变化，请重新核对。") }
+        // Keep the exact old journal before adopting another environment or cloud generation.
+        let backup = file.deletingLastPathComponent().appendingPathComponent("reconnect-backup-\(UUID().uuidString)-\(file.lastPathComponent)")
+        try Data(contentsOf: file).write(to: backup, options: .atomic)
         try local.abandonImport()
         var next = State(); next.device = state.device; next.account = account
+        next.environment = environment
         next.cloudEpoch = head.epoch; next.enabled = true; next.adopting = true
         try save(next); generation = UUID(); warning = nil
     }
@@ -282,7 +294,11 @@ import Foundation
             try Self.validate(fetched)
             // A complete fetch cannot silently lose previously acknowledged revisions.
             let remoteIDs = Set(fetched.map(\.id))
-            guard state.sent.isSubset(of: remoteIDs) else { throw SyncFailure("云端历史缺失或被清除，暂停本轮；不自动重传旧资料。") }
+            guard state.sent.isSubset(of: remoteIDs) else {
+                var next = state; next.needsReconnect = true; next.enabled = false
+                try save(next)
+                throw SyncFailure("云端历史缺失或被清除，暂停本轮；不自动重传旧资料。")
+            }
             var map = Dictionary(uniqueKeysWithValues: state.records.map { ($0.id, $0) })
             for row in fetched {
                 if let old = map[row.id], old != row { throw SyncFailure("同编号同步记录不一致。") }

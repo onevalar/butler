@@ -306,6 +306,68 @@ import XCTest
         XCTAssertEqual(cloud.records.count, 1); XCTAssertTrue(try store.conflicts().isEmpty)
     }
 
+    func testLegacyEnvironmentRequiresRecoveryAndArchivesJournalBeforeUploadingCurrentData() async throws {
+        let development = FakeSyncCloud(), (legacy, local, file) = try make(development)
+        local.values[key] = Data("old".utf8)
+        try await legacy.setEnabled(true); try await legacy.synchronize()
+        local.values[key] = Data("current".utf8)
+        let original = try Data(contentsOf: file)
+        let production = FakeSyncCloud()
+        let migrated = SyncStore(file: file, local: local, transport: production, environment: "Production")
+        XCTAssertTrue(migrated.needsReconnect)
+        await fail { try await migrated.synchronize() }
+        await fail { try await migrated.setEnabled(true) }
+        XCTAssertTrue(production.records.isEmpty)
+        XCTAssertEqual(try Data(contentsOf: file), original)
+        let (account, head) = try await migrated.reconnectPreview()
+        try await migrated.reconnect(account: account, head: head)
+        let backups = try FileManager.default.contentsOfDirectory(at: file.deletingLastPathComponent(), includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent.hasPrefix("reconnect-backup-") }
+        XCTAssertEqual(backups.count, 1)
+        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(backups.first)), original)
+        try await migrated.synchronize()
+        XCTAssertEqual(production.records.count, 1)
+        XCTAssertEqual(production.records.first?.payload, Data("current".utf8))
+        XCTAssertEqual(development.records.first?.payload, Data("old".utf8))
+        let reopened = SyncStore(file: file, local: local, transport: production, environment: "Production")
+        XCTAssertFalse(reopened.needsReconnect)
+        try await reopened.synchronize()
+        XCTAssertEqual(production.records.count, 1)
+        let switchedBack = SyncStore(file: file, local: local, transport: development, environment: "Development")
+        XCTAssertTrue(switchedBack.needsReconnect)
+        await fail { try await switchedBack.synchronize() }
+        XCTAssertEqual(local.values[key], Data("current".utf8))
+    }
+
+    func testRecoveryRefusesChangedAccountOrCloudHeadWithoutResettingJournal() async throws {
+        let cloud = FakeSyncCloud(), (store, local, file) = try make(cloud)
+        local.values[key] = Data("keep".utf8)
+        try await store.setEnabled(true); try await store.synchronize()
+        let original = try Data(contentsOf: file)
+        let (account, head) = try await store.reconnectPreview()
+        cloud.user = "someone-else"
+        await fail { try await store.reconnect(account: account, head: head) }
+        cloud.user = account; cloud.cloudHead.revision = "changed"
+        await fail { try await store.reconnect(account: account, head: head) }
+        XCTAssertEqual(try Data(contentsOf: file), original)
+        XCTAssertEqual(local.values[key], Data("keep".utf8))
+        XCTAssertEqual(cloud.records.count, 1)
+    }
+
+    func testMissingCloudHistoryPersistsRecoveryRequirementAcrossRestart() async throws {
+        let cloud = FakeSyncCloud(), (store, local, file) = try make(cloud)
+        local.values[key] = Data("keep".utf8)
+        try await store.setEnabled(true); try await store.synchronize()
+        cloud.records = []
+        await fail { try await store.synchronize() }
+        let reopened = SyncStore(file: file, local: local, transport: cloud)
+        XCTAssertTrue(reopened.needsReconnect)
+        XCTAssertFalse(reopened.enabled)
+        await fail { try await reopened.setEnabled(true) }
+        XCTAssertTrue(cloud.records.isEmpty)
+        XCTAssertEqual(local.values[key], Data("keep".utf8))
+    }
+
     func testCorruptJournalUnknownVersionAndCyclicHistoryFailClosed() async throws {
         let cloud = FakeSyncCloud(), (_, local, file) = try make(cloud)
         try Data("broken".utf8).write(to: file)

@@ -5,6 +5,86 @@ import XCTest
 @MainActor final class HouseholdSharePreparationTests: XCTestCase {
     private let zone = CKRecordZone.ID(zoneName: "test-family", ownerName: CKCurrentUserDefaultName)
 
+    func testInvitationSavesPrivateParticipantBeforeReadingItsOwnURL() async throws {
+        let share = CKShare(recordZoneID: zone)
+        var saved = false
+        let expected = URL(string: "https://www.icloud.com/share/test-invitation#recipient-token")!
+        let result = try await HouseholdSharePreparation.invitation(fetch: { share }, save: { value in
+            XCTAssertEqual(value.publicPermission, .none)
+            XCTAssertEqual(value.participants.filter { $0.role != .owner }.count, 1)
+            XCTAssertEqual(value.participants.first(where: { $0.role != .owner })?.permission, .readWrite)
+            saved = true
+            return value
+        }, url: { value, id in
+            XCTAssertTrue(saved)
+            XCTAssertTrue(value === share)
+            XCTAssertEqual(value.participants.first(where: { $0.role != .owner })?.participantID, id)
+            return expected
+        })
+        XCTAssertEqual(result, expected)
+    }
+
+    func testInvitationRefusesMissingURLAndIncompleteSaveReceipt() async {
+        for missingParticipant in [false, true] {
+            let share = CKShare(recordZoneID: zone)
+            do {
+                _ = try await HouseholdSharePreparation.invitation(fetch: { share }, save: { value in
+                    missingParticipant ? CKShare(recordZoneID: self.zone) : value
+                }, url: { _, _ in
+                    if missingParticipant { XCTFail("Incomplete save must not deliver a link") }
+                    return nil
+                })
+                XCTFail("Must not fall back to the ordinary share URL")
+            } catch { XCTAssertTrue(error is SyncFailure) }
+        }
+    }
+
+    func testInvitationConflictPreservesRecipientAndOtherInvitations() async throws {
+        let first = CKShare(recordZoneID: zone), fresh = CKShare(recordZoneID: zone)
+        let other = CKShare.Participant.oneTimeURLParticipant()
+        other.permission = .readWrite
+        fresh.addParticipant(other)
+        var reads = 0
+        var recipient: CKShare.Participant.ID?
+        _ = try await HouseholdSharePreparation.invitation(fetch: {
+            reads += 1
+            return reads == 1 ? first : fresh
+        }, save: { value in
+            if reads == 1 {
+                recipient = value.participants.first(where: { $0.role != .owner })?.participantID
+                throw CKError(.serverRecordChanged)
+            }
+            XCTAssertEqual(value.participants.filter { $0.role != .owner }.count, 2)
+            XCTAssertTrue(value.participants.contains { $0.participantID == other.participantID })
+            XCTAssertTrue(value.participants.contains { $0.participantID == recipient })
+            return value
+        }, url: { _, id in
+            XCTAssertEqual(id, recipient)
+            return URL(string: "https://www.icloud.com/share/test-invitation")
+        })
+        XCTAssertEqual(reads, 2)
+    }
+
+    func testInvitationSaveFailureDoesNotReadOrDeliverURL() async {
+        let share = CKShare(recordZoneID: zone)
+        do {
+            _ = try await HouseholdSharePreparation.invitation(fetch: { share },
+                save: { _ in throw CKError(.networkFailure) },
+                url: { _, _ in XCTFail("No receipt, no invitation"); return nil })
+            XCTFail("Must fail")
+        } catch { XCTAssertEqual((error as? CKError)?.code, .networkFailure) }
+    }
+
+    func testInvitationNeverOpensPublicAccess() async {
+        let share = CKShare(recordZoneID: zone)
+        share.publicPermission = .readWrite
+        do {
+            _ = try await HouseholdSharePreparation.invitation(fetch: { share },
+                save: { _ in XCTFail("Must not change public sharing"); return share })
+            XCTFail("Must fail")
+        } catch { XCTAssertTrue(error is SyncFailure) }
+    }
+
     func testExistingShareIsKeptWithoutWritingOrResettingParticipants() async throws {
         let existing = CKShare(recordZoneID: zone)
         let result = try await HouseholdSharePreparation.prepare(zoneID: zone, title: "家",

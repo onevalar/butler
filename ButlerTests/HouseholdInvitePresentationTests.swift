@@ -38,42 +38,18 @@ import XCTest
         XCTAssertNil(UUID(uuidString: name), "the control fence must not collide with revision IDs")
     }
 
-    func testDirectInvitationOffersPrivateCollaborationWithFamilyPreview() throws {
-        let share = CKShare(recordZoneID: .init(zoneName: "test-family"))
-        share[CKShare.SystemFieldKey.title] = "测试家庭" as CKRecordValue
-        let container = CKContainer(identifier: "iCloud.com.anvalar.Butler")
-        let options = HouseholdInvite.invitationOptions
-        XCTAssertEqual(options.allowedParticipantAccessOptions, .specifiedRecipientsOnly)
-        XCTAssertEqual(options.allowedParticipantPermissionOptions, .readWrite)
-        XCTAssertFalse(options.allowsParticipantsToInviteOthers)
-        let config = HouseholdInvite.invitationConfiguration(share: share, container: container)
-        let metadata = try XCTUnwrap(config.perItemMetadataProvider?(0, .linkPresentationMetadata) as? LPLinkMetadata)
-        XCTAssertEqual(metadata.title, "测试家庭")
-        XCTAssertNotNil(metadata.imageProvider)
-        let restrictions = try XCTUnwrap(config.metadataProvider?(.collaborationModeRestrictions)
-            as? [UIActivityViewController.CollaborationModeRestriction])
-        XCTAssertEqual(restrictions.count, 1)
-        XCTAssertEqual(restrictions.first?.disabledMode, .sendCopy)
-        XCTAssertEqual(share.publicPermission, .none)
-    }
-
-    func testDirectInvitationRetainsObserverAndReportsSaveFailureOnce() async throws {
-        let share = CKShare(recordZoneID: .init(zoneName: "test-family"))
-        let reported = expectation(description: "Share save error reaches the page")
-        var messages: [String] = []
-        let controller = HouseholdInvite.makeInviteController(share: share,
-            container: CKContainer(identifier: "iCloud.com.anvalar.Butler")) {
-                messages.append($0)
-                reported.fulfill()
-            }
-        let callback = try XCTUnwrap(controller.sharingObserver?.systemSharingUIDidSaveShareBlock)
-        callback(share.recordID, .failure(CKError(.networkFailure)))
-        await fulfillment(of: [reported], timeout: 2)
-        // The activity may report the same error after the CloudKit save callback.
-        controller.reportFailure(CKError(.networkFailure))
-        XCTAssertEqual(messages.count, 1)
-        XCTAssertTrue(messages[0].contains("网络"))
-        XCTAssertFalse(messages[0].contains("CKError"))
+    func testCopyAndSocialSharingUseTheExactSavedInvitationURL() throws {
+        let url = URL(string: "https://www.icloud.com/share/test-invite#recipient-token")!
+        let item = HouseholdInvitationItem(url: url, title: "测试家庭")
+        let controller = UIActivityViewController(activityItems: [item], applicationActivities: nil)
+        XCTAssertEqual(item.activityViewControllerPlaceholderItem(controller) as? URL, url)
+        for activity: UIActivity.ActivityType? in [.copyToPasteboard, .message, nil] {
+            XCTAssertEqual(item.activityViewController(controller, itemForActivityType: activity) as? URL, url)
+        }
+        let metadata = try XCTUnwrap(item.activityViewControllerLinkMetadata(controller))
+        XCTAssertEqual(metadata.title, "加入「测试家庭」")
+        XCTAssertEqual(metadata.url, url)
+        XCTAssertNotNil(metadata.iconProvider)
     }
 
     func testRejectsOldClipboardAndNonCloudKitAddresses() {

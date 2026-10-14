@@ -12,12 +12,30 @@ struct HouseholdSettingsPage: View {
     @State private var renaming = false
     @State private var newName = ""
     @State private var error: String?
+    @State private var recovery: HouseholdService.Recovery?
+    @State private var recovering = false
+    @State private var enteringInvite = false
+    @State private var invitationText = ""
     private var service: HouseholdService { .shared }
     private var store: HouseholdStore { .shared }
 
     var body: some View {
         Form {
             if let state = store.state {
+                if service.needsSyncRecovery {
+                    Section {
+                        Text("恢复后，会将这台手机当前的共享物品和日程与家庭合并同步。个人资料仍只属于你。")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                        Button(recovering ? "正在准备…" : "恢复家庭同步") {
+                            recovering = true
+                            Task {
+                                defer { recovering = false }
+                                do { recovery = try await service.recoveryPreview() }
+                                catch { self.error = error.localizedDescription }
+                            }
+                        }.disabled(recovering || service.busy)
+                    }.glassRows()
+                }
                 if let summary = service.summary {
                     Section { HouseholdSummaryCard(summary: summary) { service.summary = nil } }
                         .listRowBackground(Color.clear)
@@ -52,7 +70,7 @@ struct HouseholdSettingsPage: View {
                             copyFamilyLink()
                         } label: {
                             HStack {
-                                Label(copyingLink ? "正在获取链接…" : "复制家庭链接", systemImage: "link")
+                                Label(copyingLink ? "正在生成邀请…" : "复制邀请链接", systemImage: "link")
                                 if copyingLink { Spacer(); ProgressView() }
                             }
                         }
@@ -63,7 +81,7 @@ struct HouseholdSettingsPage: View {
                 } footer: {
                     Text(syncLine)
                     if store.isOwner {
-                        Text("家人需要安装小当家并登录自己的 iCloud，不必加入苹果“家人共享”。复制的链接仅供已邀请的账号使用。")
+                        Text("发给家人，打开后即可加入。每条邀请链接供一位家人使用；邀请下一位时再生成一条。")
                     }
                 }
                 .glassRows()
@@ -106,6 +124,7 @@ struct HouseholdSettingsPage: View {
                     }
                     .padding(.vertical, 6)
                     Button { creating = true } label: { Label("建立家庭", systemImage: "house") }
+                    Button { enteringInvite = true } label: { Label("通过邀请链接加入", systemImage: "link") }
                 }
                 .glassRows()
             }
@@ -113,10 +132,33 @@ struct HouseholdSettingsPage: View {
         .glassList()
         .compactTitle("家庭") { EmptyView() }
         .sheet(isPresented: $creating) { CreateHouseholdSheet() }
-        .alert("家庭链接已复制", isPresented: $copiedLink) {
+        .alert("邀请链接已复制", isPresented: $copiedLink) {
             Button("好", role: .cancel) {}
         } message: {
-            Text("已复制 iCloud 家庭链接。仅已邀请的账号可以加入；添加新家人请使用“邀请家人”。")
+            Text("发给一位家人，对方安装小当家后打开即可加入。邀请其他家人时，请再复制一条新链接。")
+        }
+        .alert("加入家庭", isPresented: $enteringInvite) {
+            TextField("粘贴家人发来的邀请链接", text: $invitationText)
+            Button("加入") {
+                guard let url = URL(string: invitationText.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+                    error = "邀请链接不完整，请重新粘贴。"; return
+                }
+                Task { await service.openInvitation(url) }
+            }
+            Button("取消", role: .cancel) {}
+        } message: { Text("如果浏览器没有自动打开小当家，可以在这里粘贴邀请链接。") }
+        .alert("恢复家庭同步？", isPresented: Binding(get: { recovery != nil }, set: { if !$0 { recovery = nil } })) {
+            Button("恢复并同步") {
+                guard let preview = recovery else { return }
+                recovery = nil
+                Task {
+                    do { try await service.recoverSync(preview) }
+                    catch { self.error = error.localizedDescription }
+                }
+            }
+            Button("取消", role: .cancel) { recovery = nil }
+        } message: {
+            Text("会先备份本机资料，再将当前共享物品和日程合并到家庭。若此前清理过云端，本机仍保留的共享内容可能重新出现。")
         }
         .alert("家人怎么称呼你？", isPresented: $renaming) {
             TextField("例如“妈妈”“老公”", text: $newName)
@@ -159,13 +201,12 @@ struct HouseholdSettingsPage: View {
         Task {
             defer { copyingLink = false }
             do {
-                let share = try await service.share()
-                let link = try HouseholdShareLink.validated(share.url)
+                let link = try await service.invitationURL()
                 UIPasteboard.general.setItems([["public.url": link.absoluteString,
                                                 "public.utf8-plain-text": link.absoluteString]],
                                               options: [.localOnly: true])
                 copiedLink = true
-                ChatDiagnostics.log("household verifiedCloudLink copied locally")
+                ChatDiagnostics.log("household single-use invitation copied locally")
             } catch { self.error = HouseholdSharePreparation.message(for: error) }
         }
     }
@@ -176,8 +217,13 @@ struct HouseholdSettingsPage: View {
         Task {
             defer { preparingInvite = false }
             do {
+                if purpose == .invite {
+                    let link = try await service.invitationURL()
+                    try HouseholdInvite.presentInvitation(url: link, title: store.state?.name ?? "我们家")
+                    return
+                }
                 let share = try await service.share()
-                try HouseholdInvite.present(share: share, container: service.cloudContainer, purpose: purpose) { message in
+                try HouseholdInvite.presentManagement(share: share, container: service.cloudContainer) { message in
                     self.error = message
                 }
             } catch { self.error = error.localizedDescription }
@@ -291,8 +337,15 @@ struct JoinedHouseholdSheet: View {
             Form {
                 Section {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("已加入「\(HouseholdStore.shared.state?.name ?? "我们家")」").font(.title3.bold())
-                        Text("家里的东西现在大家一起看、一起记。").font(.subheadline).foregroundStyle(.secondary)
+                        Text("\(service.lastSync == nil ? "正在加入" : "已加入")「\(HouseholdStore.shared.state?.name ?? "我们家")」").font(.title3.bold())
+                        if let issue = service.syncIssue {
+                            Text(issue).font(.subheadline).foregroundStyle(.secondary)
+                            Button("重新同步") { Task { await service.sync() } }
+                        } else if service.lastSync == nil {
+                            ProgressView("正在同步家庭资料…")
+                        } else {
+                            Text("家庭资料已同步，可以一起查看和记录了。").font(.subheadline).foregroundStyle(.secondary)
+                        }
                     }
                     .padding(.vertical, 4)
                 }
@@ -308,7 +361,7 @@ struct JoinedHouseholdSheet: View {
             .glassList()
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("好") { service.rename(me: myName.isEmpty ? "家人" : myName) }
+                    Button(service.lastSync == nil ? "稍后继续" : "完成") { service.rename(me: myName.isEmpty ? "家人" : myName) }
                 }
             }
         }

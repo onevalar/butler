@@ -17,7 +17,7 @@
 - 本机自己的同步（`ButlerSyncData`）不再携带家庭共享的物品，避免同一件东西走两条路；个人物品仍走本人的私有区。
 - 建家庭 / 加入前先自动备份；`HouseholdClassifier` 判断哪些留给自己（个人药品、护肤、礼物等），家里共用的药（感冒药、创可贴）仍共享；加入时同名物品与家里已有的合并，只给一张结果卡。
 - 对某人隐藏只在对方手机上不显示、不给模型看（数据仍在同一共享区，不是加密隔离）。
-- 邀请用系统 `UICloudSharingController`；接受邀请经 `ButlerSceneDelegate`（Info.plist `CKSharingSupported`）。
+- 邀请与复制统一创建 `CKShare.Participant.oneTimeURLParticipant()`，服务器保存后才读取该参与者的 `oneTimeURL(for:)`。每条链接供一位新成员接受，无需预先提供 Apple ID；保持 `publicPermission = none`，不回退到无法授权新人的普通 `CKShare.url`。邀请直接显示系统分享抽屉，管理成员才使用 `UICloudSharingController`。接受邀请经 `ButlerSceneDelegate`（Info.plist `CKSharingSupported`），另支持 App 内粘贴链接获取 metadata 并加入。
 - 对话工具 `propose_item_sharing` 修改谁能看到，确认后生效；`current_context.household` 告诉模型家里有谁、当前是谁。
 
 ## 第二步（共享与指派任务）的实现
@@ -40,4 +40,4 @@
 
 ## 验收注意
 - 需要两个不同 Apple ID 的 iPhone 实测邀请、加入、同步、指派、完成回执、推送、退出、解散。模拟器未登录 iCloud，只能验证界面。
-- 调试安装用 CloudKit 开发环境，TestFlight/App Store 用生产环境，两边不能互通；正式测试前须在 CloudKit Console 把开发环境的结构部署到生产环境。
+- Debug 的 CloudKit entitlement 与运行时标记均为 Development；Release（包括本地 Release）均为 Production。两边数据隔离；正式测试前须部署数据库结构。家庭同步日志记录环境，旧日志或环境变化必须先备份、核对同一账号和云端版本，再由用户确认合并当前共享资料；不得直接清空已发送标记并重传旧修订。订阅成功标记同样区分环境。
