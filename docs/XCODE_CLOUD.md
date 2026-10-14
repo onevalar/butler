@@ -138,3 +138,11 @@ GitHub 仓库授权已完成，以上工作流已在 App Store Connect 保存并
 - 21:24 真机反馈 CKShare 创建失败；Production 缺 ButlerRevisionV1、ButlerSyncControlV1、cloudkit.share。已在 CloudKit Console 部署开发结构至生产，未删除或迁移用户数据。
 - 21:40 用户确认“邀请家人”和“复制家庭链接”都恢复；真机日志证实系统邀请抽屉打开、有效 iCloud 链接复制。无需新版本或重新构建。
 - 仍有开发安装切换 TestFlight 后的家庭历史不匹配问题，生产同步尚未验证恢复；前文 pending=0 仅为调试安装环境，不能代表两个环境的数据互通。必须保留防止旧数据复活的检查，并另行实现明确的环境切换／恢复方案。
+
+### Build 41（2026-10-14）
+
+- 按用户要求启动 [Build 41](https://appstoreconnect.apple.com/teams/52049831-307a-44f3-95af-623b83d68dc0/xcode-cloud/products/ECE4419A-60C4-420A-A42F-FEB1AC95BFB8/builds/b04310b0-65a3-4214-8959-c7386f40a0a9/summary)，核对源码为 `999d6218c1111f545163322b821dac680348f243`。包含单人邀请、App 直达／粘贴接收入口，以及显式备份后恢复生产家庭同步；创建者手机的生产恢复已验证，真实跨账号加入及双向同步仍需双方更新验收。
+- 云端 Xcode 26.3：788/789 测试通过，1 项既有跳过，没有失败。Test、Archive 均 Succeeded；归档日志确认 app-store 分发签名及上传准备通过。4 条测试警告和1条归档警告仍为既有 WeatherStoreTests 尾随闭包、远程通知代理 Swift 6 隔离迁移提示。
+- 安装包于23:39进入 TestFlight，自动分发 Post-Actions 长时间排队，因此直接在 TestFlight 保存本次中文说明、关联现有内部 test（1人）及外部 test（3人），勾选 Automatically notify testers 并提交 Beta Review。未启动第二次构建，未提交正式 App Store 上架。
+- [1.0（41）](https://appstoreconnect.apple.com/teams/52049831-307a-44f3-95af-623b83d68dc0/apps/6815130996/testflight/ios/84ca76eb-3bd9-41a7-aa18-42d3110d4fae) 已显示 Testing，Groups (2) 已核对；外部组 Builds 中同样为 Testing，且已有外部测试者安装41的回执。该状态确认 TestFlight 已可分发，不表示家庭邀请跨账号验收完成。最终核验时云工作流的自动分发动作仍排队，不将手动发布成功记成它们已成功。
+- 发布截图保存于 `build/testflight-release-41/external-testing.jpg`（本地构建资料，不纳入源码）。本记录仅保存结果，不触发新构建。
