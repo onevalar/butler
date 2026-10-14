@@ -313,10 +313,14 @@ final class BriefService {
                 }
                 publish(result, signature: sig, local: local)
                 defaults.removeObject(forKey: Self.failureKey)
-                let displayDeadline = (context.boundaries + answer.dependencies.flatMap(\.boundaries)
-                    + (weather?.hours ?? []).map { $0.date.addingTimeInterval(3600) }
-                    + [midnight] + [weather?.observedAt.addingTimeInterval(7200)].compactMap { $0 })
-                    .filter { $0 > completedAt }.min() ?? midnight
+                var displayBoundaries: [Date] = context.boundaries
+                displayBoundaries.append(contentsOf: answer.dependencies.flatMap(\.boundaries))
+                if let weather {
+                    displayBoundaries.append(contentsOf: (weather.hours ?? []).map { $0.date.addingTimeInterval(3600) })
+                    displayBoundaries.append(weather.observedAt.addingTimeInterval(7200))
+                }
+                displayBoundaries.append(midnight)
+                let displayDeadline = displayBoundaries.filter { $0 > completedAt }.min() ?? midnight
                 store(Cached(signature: sig, scope: scope, brief: result, at: completedAt, reviewAfter: deadline,
                     dependencies: answer.dependencies, displaySignature: displaySignature, displayValidUntil: displayDeadline))
                 nextCheckAt = (answer.dependencies.flatMap(\.boundaries) + [nextCheckAt ?? midnight, deadline])
