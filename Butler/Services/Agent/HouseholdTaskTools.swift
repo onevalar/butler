@@ -146,3 +146,12 @@ extension ButlerTools {
         return revised
     }
 }
+
+extension PendingChange {
+    var editableReminder: TimedReminder? {
+        switch kind {
+        case .reminder(let task), .taskPlan(let task, _): return task.allowsSimpleTimeEdit ? task : nil
+        default: return nil
+        }
+    }
+}

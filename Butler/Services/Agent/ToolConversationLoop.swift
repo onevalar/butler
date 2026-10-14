@@ -32,7 +32,13 @@ enum ToolConversationLoop {
                 }
                 return reply.text.isEmpty ? "好的。" : reply.text
             }
-            for call in reply.calls.prefix(12) {
+            for (index, call) in reply.calls.enumerated() {
+                // Every advertised call needs a response, even when a batched request
+                // exceeds the execution budget. Never leave unmatched calls in history.
+                guard index < 12 else {
+                    messages.append(.tool(id: call.id, result: #"{"error":"本轮工具数量超过12项，此项未执行；请拆分到下一轮。"}"#))
+                    continue
+                }
                 try Task.checkCancellation()
                 let output: String
                 if let previous = completed[call.id] {

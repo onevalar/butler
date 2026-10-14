@@ -162,6 +162,16 @@ final class ChatScrollPolicyTests: XCTestCase {
         XCTAssertNil(policy.takeScroll())
     }
 
+    @MainActor func testKeyboardResizeDoesNotRaceNativeSizeAnchoring() async {
+        let policy = atBottom()
+        policy.geometryChanged(to: geometry(content: 1600, viewport: 320, bottom: 40))
+        XCTAssertNil(policy.takeScroll())
+        policy.geometryChanged(to: geometry(offset: 1320, content: 1600, viewport: 320, bottom: 40))
+        XCTAssertNil(policy.takeScroll())
+        XCTAssertTrue(policy.followingBottom)
+        XCTAssertFalse(policy.showsReturnToLatest)
+    }
+
     @MainActor func testRapidKeyboardAndComposerLayoutUsesOneImmediateCorrection() async {
         let policy = atBottom()
         policy.geometryChanged(to: geometry(content: 1_400))
@@ -278,7 +288,7 @@ final class ChatScrollPolicyTests: XCTestCase {
         XCTAssertEqual(policy.takeScroll(), .animated)
         XCTAssertNil(policy.takeScroll())
         policy.geometryChanged(to: geometry(offset: 200, content: 1_800, viewport: 280))
-        XCTAssertEqual(policy.takeScroll(), .immediate, "Keyboard geometry must not start another animated jump")
+        XCTAssertNil(policy.takeScroll(), "Native anchoring owns keyboard resizing; do not queue another jump")
     }
 
     @MainActor func testExplicitJumpOverridesOldMomentumButNewTouchStillCancelsIt() async {

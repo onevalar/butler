@@ -13,9 +13,9 @@ final class ChatReplyRenderingTests: XCTestCase {
         progress.begin(turn.id)
         let stage = "正在整理结果…"
         let bubble = try render(ChatReplyBubble(turn: turn, progress: progress, workingStage: stage))
-        // 320 minus trailing spacer (40), HStack gap (8), and padding (28).
-        let status = try render(ChatWorkingIndicator(label: stage), width: 244)
-        XCTAssertEqual(bubble.size.height, status.size.height + 18, accuracy: 1,
+        // Status sits outside the reply bubble with only four-point side insets.
+        let status = try render(ChatWorkingIndicator(label: stage), width: 312)
+        XCTAssertEqual(bubble.size.height, status.size.height + 12, accuracy: 1,
                        "Waiting must not add placeholder Markdown or a second status caption")
     }
 
@@ -31,10 +31,10 @@ final class ChatReplyRenderingTests: XCTestCase {
         turn.replyState = .completed
         // Completed state must win even before transient progress is cleared.
         let completed = try render(ChatReplyBubble(turn: turn, progress: progress, workingStage: "正在查看任务和提醒…"))
-        let streamingStatus = try render(ChatWorkingIndicator(label: "正在回复…"), width: 244)
-        let toolStatus = try render(ChatWorkingIndicator(label: "正在查看任务和提醒… · 上文待更新"), width: 244)
-        XCTAssertEqual(streaming.size.height - completed.size.height, streamingStatus.size.height + 8, accuracy: 1)
-        XCTAssertEqual(toolPass.size.height - completed.size.height, toolStatus.size.height + 8, accuracy: 1)
+        let streamingStatus = try render(ChatWorkingIndicator(label: "正在回复…"), width: 312)
+        let toolStatus = try render(ChatWorkingIndicator(label: "正在查看任务和提醒… · 上文待更新"), width: 312)
+        XCTAssertEqual(streaming.size.height - completed.size.height, streamingStatus.size.height + 20, accuracy: 1)
+        XCTAssertEqual(toolPass.size.height - completed.size.height, toolStatus.size.height + 20, accuracy: 1)
     }
 
     func testReplyStatesInBothThemesAndLargeText() throws {

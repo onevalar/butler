@@ -27,6 +27,11 @@ enum JevPrefetchPlanner {
         let trimmed = request.trimmingCharacters(in: .whitespacesAndNewlines)
         let greetings: Set<String> = ["你好", "你好！", "你好!", "您好", "嗨", "hi", "hello", "早上好", "晚上好"]
         guard !trimmed.isEmpty, !greetings.contains(trimmed.lowercased()) else { return result("not_needed") }
+        // A conservative fast negative only skips an optional optimization; all
+        // tools remain available to the main model, even for mixed requests.
+        guard !["提醒", "闹钟", "日程", "安排", "改成", "改到", "几点", "早上", "明天", "下午", "晚上"].contains(where: trimmed.contains) else {
+            return result("not_needed")
+        }
         guard judge.isAvailable else { return result("unavailable") }
         guard timeout > .zero else { return result("timeout") }
 

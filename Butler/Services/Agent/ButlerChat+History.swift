@@ -90,6 +90,7 @@ extension ButlerChat {
                                           profile: self?.defaults.string(forKey: "butlerProfile") ?? "")
                                   },
                                   tools: { tools?.toolJSON ?? "[]" },
+                                  configuration: { [weak self] in ChatModelConfiguration.load(self?.defaults ?? .standard) },
                                   onText: { [weak self] text in
                                       guard let self else { return }
                                       if !text.isEmpty, self.replyProgress.text.isEmpty {

@@ -23,6 +23,10 @@ extension ButlerTools {
             tool("get_settings", "读取可修改配置、当前值和允许的值；不返回密钥。", [:]),
             tool("propose_settings", "提出设置修改，确认后才生效。value使用get_settings中的格式，先读再改；系统权限不能通过这个工具授权。", ["changes": ["type": "array", "minItems": 1, "maxItems": 9, "items": object(["key": string, "value": string])]]),
             tool("get_tasks", "读取任务和规则、revision、历史活动及未来提醒预览。id为null列出任务（含已完成/取消）；具体任务用id读取。", ["id": optionalString]),
+            tool("propose_task_time", "修改已有任务的日期/时段或具体时间，确认后才生效；先get_tasks取得id/revision。只说今天早上、明天下午等，time=YYYY-MM-DD，period=day/morning/noon/afternoon/evening；不追问几点、不编造钟点。具体时间time=YYYY-MM-DD HH:mm，period=null。保留原事项、家人设置和暂停状态。仅用于单次任务；复杂重复规则用propose_task_plan。", [
+                "id": string, "expected_revision": ["type": "integer"], "time": string, "time_zone": string,
+                "period": ["type": ["string", "null"], "enum": ["day", "morning", "noon", "afternoon", "evening", NSNull()]]
+            ]),
             tool("propose_task_plan", "创建或替换任务提醒规则，确认后生效。id=null创建；修改先get_tasks，传id和expected_revision。时间为指定time_zone的YYYY-MM-DD HH:mm。phases是独立阶段规则的并集：各自从start起按一次/每天/每周或interval_minutes执行，不会因下一阶段开始而自动停止；分段需求必须给前段明确的end或max_occurrences。同一时刻去重。max_occurrences包含首次，按阶段开始累计，不是从当前重新计数。interval_minutes不能与daily/weekly并用，且必须有阶段或全局截止/次数。end和end_time为最后允许提醒的时间（含）。不要把停止提醒说成任务完成；auto_complete_at只在用户明确要求自动完成时设置，到该时刻不再提醒。未知关键时间/次数应询问。" + TaskFamilyArgs.guidance, [
                 "id": optionalString, "expected_revision": optionalInt, "text": string, "time_zone": string,
                 "end_time": optionalString, "auto_complete_at": optionalString,
@@ -98,6 +102,37 @@ extension ButlerTools {
             return try encode(["tasks": try values.map { try taskDescription($0) }, "total": reminders.reminders.count,
                                "truncated": input.id == nil && reminders.reminders.count > values.count,
                                "schedule_warning": reminders.scheduleWarning as Any? ?? NSNull()] as [String: Any])
+        case "propose_task_time":
+            struct Input: Decodable {
+                let id: UUID; let expected_revision: Int; let time: String
+                let time_zone: String; let period: ArrangementPeriod?
+            }
+            let input = try JSONDecoder().decode(Input.self, from: data)
+            try requireTaskRevision(input.id, input.expected_revision)
+            guard var reminder = reminders.reminder(id: input.id),
+                  reminder.status == .active || reminder.status == .paused else { throw ToolError("任务已结束，请先重新开启") }
+            guard reminder.allowsSimpleTimeEdit else { throw ToolError("这个任务含重复或分段规则，请用propose_task_plan保留完整规则") }
+            guard let zone = TimeZone(identifier: input.time_zone) else { throw ToolError("时区无效") }
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.calendar = Calendar(identifier: .gregorian)
+            formatter.timeZone = zone
+            formatter.dateFormat = input.period == nil ? "yyyy-MM-dd HH:mm" : "yyyy-MM-dd"
+            formatter.isLenient = false
+            guard let date = formatter.date(from: input.time), formatter.string(from: date) == input.time else {
+                throw ToolError("日期安排用YYYY-MM-DD和period，定时提醒用YYYY-MM-DD HH:mm和period=null")
+            }
+            var calendar = Calendar(identifier: .gregorian); calendar.timeZone = zone
+            guard input.period != nil ? date >= calendar.startOfDay(for: .now) : date > .now else {
+                throw ToolError("所选时间已过去，请核对日期")
+            }
+            reminder.fireDate = date; reminder.timePeriod = input.period
+            reminder.phases = nil; reminder.timeZoneIdentifier = input.time_zone
+            try ReminderSchedule.validate(reminder)
+            add(.taskPlan(reminder, expectedRevision: input.expected_revision), title: reminder.text,
+                detail: ReminderSchedule.friendlySummary(reminder))
+            return try encode(["status": "waiting_for_user_confirmation", "saved": false,
+                               "task": try taskDescription(reminder)] as [String: Any])
         case "propose_task_plan":
             struct Input: Decodable {
                 struct Phase: Decodable { let start: String; let end: String?; let `repeat`: String; let interval_minutes: Int?; let max_occurrences: Int? }

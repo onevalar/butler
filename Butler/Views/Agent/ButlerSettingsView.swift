@@ -50,7 +50,7 @@ struct ButlerSettingsView: View {
                     LabeledContent("习惯和偏好", value: "\(chat.tools?.notes.records.count ?? 0) 条")
                 }
                 NavigationLink { ModelSettingsPage(chat: chat, hasOtherWork: hasOtherWork) } label: {
-                    LabeledContent("对话模型", value: chat.connection.isLoggedIn ? "GPT-6 Sol" : "未登录")
+                    LabeledContent("对话模型", value: chat.connection.isLoggedIn ? ChatModelConfiguration.name(ChatModelConfiguration.load(chat.defaults).model) : "未登录")
                 }
                 NavigationLink { ScreenshotSetupView() } label: {
                     Label("从其他 App 采集", systemImage: "camera.viewfinder")
@@ -165,6 +165,9 @@ struct ProfileSettingsPage: View {
 
 /// 对话模型: sign in with the subscription.
 struct ModelSettingsPage: View {
+    @AppStorage(ChatModelConfiguration.modelKey) private var selectedModel = "gpt-6-sol"
+    @AppStorage(ChatModelConfiguration.effortKey) private var selectedEffort = "low"
+    @State private var customModel = ""
     @Bindable var chat: ButlerChat
     let hasOtherWork: Bool
     @Environment(\.openURL) private var openURL
@@ -173,7 +176,7 @@ struct ModelSettingsPage: View {
         Form {
             Section {
                 if chat.connection.isLoggedIn {
-                    Label("已登录 · GPT-6 Sol", systemImage: "checkmark.circle.fill").foregroundStyle(.blue)
+                    Label("已登录 ChatGPT", systemImage: "checkmark.circle.fill").foregroundStyle(.blue)
                     Button("退出登录", role: .destructive) { chat.signOut() }
                         .disabled(chat.working || hasOtherWork)
                 } else if let code = chat.connection.deviceCode {
@@ -196,6 +199,31 @@ struct ModelSettingsPage: View {
             } footer: {
                 Text("登录即表示同意：你说的话、拍的照片和回答需要的相关库存、笔记会发给你登录的 OpenAI 账号处理；库存、笔记和对话记录保存在这台 iPhone。退出登录后不再发送。")
             }
+            .glassRows()
+            Section {
+                Picker("模型", selection: $selectedModel) {
+                    ForEach(ChatModelConfiguration.models, id: \.self) { model in
+                        Text(ChatModelConfiguration.name(model)).tag(model)
+                    }
+                    if !ChatModelConfiguration.models.contains(selectedModel) {
+                        Text(selectedModel).tag(selectedModel)
+                    }
+                }
+                Picker("思考强度", selection: $selectedEffort) {
+                    ForEach(ChatModelConfiguration.efforts, id: \.self) { effort in
+                        Text(ChatModelConfiguration.effortLabel(effort)).tag(effort)
+                    }
+                }
+                DisclosureGroup("使用其他模型") {
+                    TextField("模型 ID", text: $customModel)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    Button("使用此模型") { selectedModel = customModel.trimmingCharacters(in: .whitespacesAndNewlines) }
+                        .disabled(customModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            } header: { Text("模型与思考") } footer: {
+                Text("轻量适合日常安排，深入思考通常等待更久。下一条消息开始使用新设置；可用模型以你的账号权限为准，不支持时会直接提示，不会偷偷换模型。")
+            }
+            .disabled(chat.working || hasOtherWork)
             .glassRows()
         }
         .glassList()

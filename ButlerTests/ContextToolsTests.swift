@@ -43,7 +43,7 @@ final class ContextToolsTests: XCTestCase {
     func testAllNewToolSchemasAreStrictIncludingNestedObjects() throws {
         let schemas = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(("[" + ButlerTools.contextTools + "]").utf8)) as? [[String: Any]])
         XCTAssertEqual(Set(schemas.compactMap { $0["name"] as? String }),
-                       Set(["get_current_context", "get_settings", "propose_settings", "get_tasks", "propose_task_plan", "propose_task_action", "propose_task_sharing", "propose_nudge", "propose_household_rule", "propose_quiet_hours"]))
+                       Set(["get_current_context", "get_settings", "propose_settings", "get_tasks", "propose_task_time", "propose_task_plan", "propose_task_action", "propose_task_sharing", "propose_nudge", "propose_household_rule", "propose_quiet_hours"]))
         func inspect(_ value: Any) {
             if let object = value as? [String: Any] {
                 if object["type"] as? String == "object" {
@@ -103,6 +103,52 @@ final class ContextToolsTests: XCTestCase {
         XCTAssertNotNil(invalid["error"])
         XCTAssertTrue(tools.pending.isEmpty)
         XCTAssertNil(tools.settingsDefaults.object(forKey: "appearanceMode"))
+    }
+
+    func testVagueTimeEditPreservesTaskIdentitySharingAndPausedState() async throws {
+        var original = TimedReminder(text: "洗头", fireDate: .now.addingTimeInterval(86400))
+        original.timePeriod = .morning
+        original.status = .paused
+        original.sharing = TaskSharing(scope: .people, createdBy: UUID(), assignee: UUID())
+        let tools = try makeTools(initialReminders: [original])
+        let result = try await call(tools, "propose_task_time", [
+            "id": original.id.uuidString, "expected_revision": original.revision,
+            "time": "2099-01-02", "period": "morning", "time_zone": "Asia/Shanghai"
+        ])
+        XCTAssertNil(result["error"])
+        XCTAssertEqual(tools.reminders.reminder(id: original.id)?.fireDate, original.fireDate)
+        let proposal = try XCTUnwrap(tools.pending.first)
+        XCTAssertEqual(proposal.editableReminder?.timePeriod, .morning)
+        XCTAssertTrue(ReminderSchedule.preview(try XCTUnwrap(proposal.editableReminder)).isEmpty)
+        // Editing on the card must keep the revision check and the same task ID.
+        _ = try tools.reviseReminderTime(of: proposal.id, date: try XCTUnwrap(proposal.editableReminder).fireDate, period: .afternoon)
+        XCTAssertEqual(tools.confirmAll().first?.hasPrefix("✓"), true)
+        let edited = try XCTUnwrap(tools.reminders.reminder(id: original.id))
+        XCTAssertEqual(tools.reminders.reminders.count, 1)
+        XCTAssertEqual(edited.timePeriod, .afternoon)
+        XCTAssertEqual(edited.sharing, original.sharing)
+        XCTAssertEqual(edited.status, .paused)
+        XCTAssertEqual(edited.revision, original.revision + 1)
+    }
+
+    func testTimeCorrectionCanChooseClockAndRejectStaleOrComplexTask() async throws {
+        var original = TimedReminder(text: "买菜", fireDate: .now.addingTimeInterval(86400))
+        original.timePeriod = .day
+        let tools = try makeTools(initialReminders: [original])
+        let fields: [String: Any] = ["id": original.id.uuidString, "expected_revision": original.revision,
+            "time": "2099-01-02 08:20", "period": NSNull(), "time_zone": "Asia/Shanghai"]
+        let result = try await call(tools, "propose_task_time", fields)
+        XCTAssertNil(result["error"])
+        XCTAssertNil(tools.pending.first?.editableReminder?.timePeriod)
+        _ = tools.confirmAll()
+        XCTAssertEqual(ReminderSchedule.preview(try XCTUnwrap(tools.reminders.reminder(id: original.id))).count, 1)
+        let stale = try await call(tools, "propose_task_time", fields)
+        XCTAssertNotNil(stale["error"])
+        original.timePeriod = nil; original.repeats = .daily
+        let repeating = try makeTools(initialReminders: [original])
+        let rejected = try await call(repeating, "propose_task_time", fields)
+        XCTAssertNotNil(rejected["error"])
+        XCTAssertTrue(repeating.pending.isEmpty)
     }
 
     func testCreateAndUpdatePhasedTaskOnlyAfterConfirmation() async throws {

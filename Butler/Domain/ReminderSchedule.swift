@@ -282,3 +282,13 @@ extension TimedReminder {
         return ReminderSchedule.calendar(for: self).date(bySettingHour: timePeriod.reviewHour, minute: 0, second: 0, of: fireDate)
     }
 }
+
+// A single unbounded occurrence can use the same date/time editor as a new arrangement.
+extension TimedReminder {
+    var allowsSimpleTimeEdit: Bool {
+        guard repeats == .none, endDate == nil, autoCompleteAt == nil else { return false }
+        guard let phases else { return true }
+        return phases.count == 1 && phases[0].repeats == .none && phases[0].endDate == nil
+            && phases[0].intervalMinutes == nil && phases[0].maxOccurrences == nil
+    }
+}

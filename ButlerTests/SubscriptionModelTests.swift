@@ -10,6 +10,21 @@ final class SubscriptionModelTests: XCTestCase {
         try stream.consume("")
     }
 
+    func testSelectedModelAndEffortReachRequestAndMatchingResponseIsAccepted() throws {
+        let selected = ChatModelConfiguration(model: "gpt-6-luna", effort: "high")
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: SubscriptionModel.requestBody(
+            [.user("明天买菜")], configuration: selected)) as? [String: Any])
+        XCTAssertEqual(body["model"] as? String, selected.model)
+        XCTAssertEqual((body["reasoning"] as? [String: String])?["effort"], selected.effort)
+        var stream = SubscriptionStream(expectedModel: selected.model)
+        try event(["type": "response.completed", "response": ["id": "r", "model": "gpt-6-luna-2026-10-01", "output": [
+            ["type": "message", "content": [["type": "output_text", "text": "请确认。"]]]
+        ]]], into: &stream)
+        XCTAssertEqual(try stream.finish().text, "请确认。")
+        var wrong = SubscriptionStream(expectedModel: selected.model)
+        XCTAssertThrowsError(try event(["type": "response.completed", "response": ["id": "r", "model": "gpt-6-sol"]], into: &wrong))
+    }
+
     func testCompletedToolCallRetainsOpaqueReasoningForNextRequest() throws {
         var stream = SubscriptionStream()
         try event(["type": "response.output_item.done", "item": ["type": "reasoning", "id": "r", "encrypted_content": "opaque-test"]], into: &stream)

@@ -13,7 +13,8 @@ struct ChatReplyBubble: View {
     var body: some View {
         let replying = turn.replyState == .answering && progress.turnID == turn.id
         let reply = turn.displayedReply(using: progress)
-        if replying || !reply.isEmpty {
+        VStack(alignment: .leading, spacing: 8) {
+          if !reply.isEmpty || turn.partialReply != nil {
             HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 8) {
                     if !reply.isEmpty {
@@ -21,9 +22,7 @@ struct ChatReplyBubble: View {
                             .foregroundStyle(turn.failed && turn.partialReply == nil ? Color.red : .primary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    if replying {
-                        ChatWorkingIndicator(label: progress.status(stage: workingStage))
-                    } else if turn.partialReply != nil {
+                    if !replying, turn.partialReply != nil {
                         Text("未完成的过程文字 · 不代表执行结果")
                             .font(.caption).foregroundStyle(.secondary)
                     }
@@ -36,6 +35,11 @@ struct ChatReplyBubble: View {
                 .glassCard(radius: 18)
                 Spacer(minLength: 40)
             }
+          }
+          if replying {
+              ChatWorkingIndicator(label: progress.status(stage: workingStage))
+                  .padding(.horizontal, 4).padding(.vertical, 6)
+          }
         }
     }
 }

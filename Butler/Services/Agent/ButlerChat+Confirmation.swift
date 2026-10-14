@@ -309,8 +309,7 @@ extension ButlerTools {
     @discardableResult
     func reviseReminderTime(of id: UUID, date: Date, period: ArrangementPeriod?) throws -> PendingChange {
         guard let index = pending.firstIndex(where: { $0.id == id }),
-              case .reminder(var reminder) = pending[index].kind,
-              reminder.repeats == .none, reminder.phases == nil else { throw ToolError("这个安排已改变，请重新查看") }
+              var reminder = pending[index].editableReminder else { throw ToolError("这个安排已改变，请重新查看") }
         let calendar = ReminderSchedule.calendar(for: reminder)
         guard date.timeIntervalSince1970.isFinite,
               period != nil ? date >= calendar.startOfDay(for: .now) : date > Date.now else {
@@ -318,9 +317,13 @@ extension ButlerTools {
         }
         reminder.fireDate = period == nil ? date : calendar.startOfDay(for: date)
         reminder.timePeriod = period
+        reminder.phases = nil
         try ReminderSchedule.validate(reminder)
         let old = pending[index]
-        var revised = PendingChange(kind: .reminder(reminder), title: old.title,
+        let kind: PendingChange.Kind
+        if case .taskPlan(_, let revision) = old.kind { kind = .taskPlan(reminder, expectedRevision: revision) }
+        else { kind = .reminder(reminder) }
+        var revised = PendingChange(kind: kind, title: old.title,
             detail: ReminderSchedule.friendlySummary(reminder), requestTurnID: old.requestTurnID)
         revised.id = old.id
         var next = pending; next[index] = revised

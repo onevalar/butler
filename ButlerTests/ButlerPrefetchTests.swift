@@ -31,6 +31,44 @@ final class ButlerPrefetchTests: XCTestCase {
         try object(XCTUnwrap(results.first { $0.call.name == name }).output)
     }
 
+    func testBatchedCallsKeepCompleteReceiptsWhenExecutionLimitIsReached() async throws {
+        let model = PrefetchModel()
+        let calls = (0..<14).map { LocalToolCall(id: "c\($0)", name: "get_tasks", arguments: #"{"id":null}"#) }
+        model.steps = [
+            { _ in LocalModelReply(text: "", calls: calls) },
+            { history in
+                let results = history.compactMap { message -> (String, String)? in
+                    if case .tool(let id, let result) = message { return (id, result) }
+                    return nil
+                }
+                XCTAssertEqual(Set(results.map { $0.0 }), Set(calls.map(\.id)))
+                XCTAssertTrue(results.suffix(2).allSatisfy { $0.1.contains("未执行") })
+                return LocalModelReply(text: "请确认。", calls: [])
+            }
+        ]
+        var executed = 0
+        var history: [LocalAgentMessage] = [.user("测试批量请求")]
+        let answer = try await ToolConversationLoop.run(model: model, messages: &history, execute: { _ in
+            executed += 1; return "{}"
+        })
+        XCTAssertEqual(executed, 12)
+        XCTAssertEqual(answer, "请确认。")
+    }
+
+    func testTaskCorrectionPreloadsFreshRevisionWithoutNetworkJudgment() async throws {
+        let judge = PrefetchJudge()
+        let (tools, _) = try makeTools(judge: judge)
+        let reminder = TimedReminder(text: "洗头", fireDate: .now.addingTimeInterval(86400))
+        try tools.reminders.add(reminder)
+        let snapshot = try await ButlerPrefetch.prepare(request: "这个改成今天早上", enabled: true, tools: tools)
+        XCTAssertTrue(judge.requests.isEmpty)
+        XCTAssertEqual(snapshot.map { $0.call.name }, ["get_tasks"])
+        let tasks = try XCTUnwrap(try result(snapshot, named: "get_tasks")["tasks"] as? [[String: Any]])
+        XCTAssertEqual(tasks.first?["id"] as? String, reminder.id.uuidString)
+        XCTAssertEqual(tasks.first?["revision"] as? Int, reminder.revision)
+        XCTAssertTrue(tools.pending.isEmpty)
+    }
+
     func testPrepareBatchesJudgmentsAndReturnsActualInventoryAndNotes() async throws {
         let judge = PrefetchJudge()
         let (tools, _) = try makeTools(judge: judge)

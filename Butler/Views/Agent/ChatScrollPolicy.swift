@@ -135,7 +135,12 @@ import Observation
 
         guard followingBottom, !userIsScrolling, new.distanceFromBottom > 1 else { return }
         if let old {
-            guard !new.hasSameLayout(as: old) else { return }
+            // Native size-change anchoring owns keyboard / detent resizing. Do not
+            // race it with another bottom jump against a transient lazy content size.
+            guard new.containerHeight == old.containerHeight,
+                  new.containerWidth == old.containerWidth,
+                  new.topInset == old.topInset, new.bottomInset == old.bottomInset,
+                  new.contentHeight != old.contentHeight else { return }
         }
         // Streaming and keyboard/composer geometry follow without restarting an
         // animation on every update. Only an explicit jump requests animation.

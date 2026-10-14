@@ -11,6 +11,7 @@ final class SubscriptionModel: LocalAgentModel {
     private let diagnostics: (String) -> Void
     private let preserveCredentials: Bool
     private let onText: (String) -> Void
+    private let configuration: @MainActor () -> ChatModelConfiguration
 
     init(connection: SubscriptionConnection, network: URLSession = .shared,
          instructions: @escaping @MainActor () -> String = { SubscriptionModel.instructions },
@@ -18,6 +19,7 @@ final class SubscriptionModel: LocalAgentModel {
          beforeRequest: @escaping () throws -> Void = {},
          diagnostics: @escaping (String) -> Void = ChatDiagnostics.log,
          preserveCredentials: Bool = false,
+         configuration: @escaping @MainActor () -> ChatModelConfiguration = { ChatModelConfiguration() },
          onText: @escaping (String) -> Void = { _ in }) {
         self.connection = connection
         self.network = network
@@ -27,6 +29,7 @@ final class SubscriptionModel: LocalAgentModel {
         self.diagnostics = diagnostics
         self.preserveCredentials = preserveCredentials
         self.onText = onText
+        self.configuration = configuration
     }
 
     // No executor-bound cleanup. Avoid the iOS 26.2 isolated-deinit runtime fault
@@ -83,7 +86,8 @@ final class SubscriptionModel: LocalAgentModel {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.setValue("butler_ios", forHTTPHeaderField: "originator")
-        request.httpBody = try Self.requestBody(messages, instructions: instructions(), toolJSON: tools())
+        let selected = configuration()
+        request.httpBody = try Self.requestBody(messages, instructions: instructions(), toolJSON: tools(), configuration: selected)
         try Task.checkCancellation()
         try beforeRequest() // Every POST, including retries, must pass the caller's budget.
         let sent = Date.now
@@ -103,7 +107,7 @@ final class SubscriptionModel: LocalAgentModel {
             }
             throw SubscriptionError.rejected(status, Self.serviceMessage(body))
         }
-        var stream = SubscriptionStream()
+        var stream = SubscriptionStream(expectedModel: selected.model)
         var shown = ""
         var lastShown = Date.distantPast
         var sawText = false
@@ -152,7 +156,8 @@ final class SubscriptionModel: LocalAgentModel {
     }
 
     static func requestBody(_ messages: [LocalAgentMessage], instructions: String = SubscriptionModel.instructions,
-                            toolJSON: String = SubscriptionModel.toolJSON) throws -> Data {
+                            toolJSON: String = SubscriptionModel.toolJSON,
+                            configuration: ChatModelConfiguration = ChatModelConfiguration()) throws -> Data {
         var input: [[String: Any]] = []
         for message in messages {
             switch message {
@@ -186,13 +191,13 @@ final class SubscriptionModel: LocalAgentModel {
             }
         }
         let tools = try JSONSerialization.jsonObject(with: Data(toolJSON.utf8))
-        var body: [String: Any] = ["model": "gpt-6-sol", "reasoning": ["effort": "low"],
+        var body: [String: Any] = ["model": configuration.model, "reasoning": ["effort": configuration.effort],
             "instructions": instructions, "input": input, "stream": true, "store": false,
             "include": ["reasoning.encrypted_content"]]
         if let list = tools as? [Any], !list.isEmpty {
             body["tools"] = list
             body["tool_choice"] = "auto"
-            body["parallel_tool_calls"] = false
+            body["parallel_tool_calls"] = true
         }
         return try JSONSerialization.data(withJSONObject: body)
     }
@@ -216,6 +221,7 @@ final class SubscriptionModel: LocalAgentModel {
 
 /// SSE framing is independent of network chunks; partial calls never execute.
 struct SubscriptionStream {
+    var expectedModel = "gpt-6-sol"
     private var dataLines: [String] = []
     private var output: [[String: Any]] = []
     private var deltas = ""
@@ -247,7 +253,7 @@ struct SubscriptionStream {
         case "response.completed":
             guard let response = event["response"] as? [String: Any], response["id"] is String else { throw SubscriptionError.invalidResponse }
             // Dated snapshots ("gpt-6-sol-2026-…") are the same model; anything else is a silent fallback.
-            if let model = response["model"] as? String, !model.hasPrefix("gpt-6-sol") { throw SubscriptionError.invalidResponse }
+            if let model = response["model"] as? String, model != expectedModel && !model.hasPrefix(expectedModel + "-") { throw SubscriptionError.invalidResponse }
             // Subscription streams can finish with output: [] after emitting complete items.
             if let items = response["output"] as? [[String: Any]], !items.isEmpty { output = items }
             completed = true

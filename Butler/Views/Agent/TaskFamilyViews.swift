@@ -7,6 +7,7 @@ enum TaskFamilyEdit {
         s.scope = .personal
         if s.assignee != me { s.assignee = nil }
         s.notify = s.notify.intersection([me])
+        if s.escalateTo != me { s.escalateTo = nil; s.escalateAfter = nil }
         return s.normalized()
     }
 
@@ -66,82 +67,6 @@ enum TaskFamilyEdit {
     }
 }
 
-/// The menu items for each of the three choices; the same on the task page and on the confirm card.
-struct TaskFamilyMenus {
-    let sharing: TaskSharing
-    let apply: (TaskSharing) -> Void
-    private var store: HouseholdStore { .shared }
-    private var me: UUID? { store.state?.me }
-    private var others: [HouseholdMember] { store.members.filter { $0.id != me } }
-
-    private func mark(_ on: Bool, _ symbol: String) -> String { on ? "checkmark" : symbol }
-
-    @ViewBuilder var visibility: some View {
-        if let me {
-            Button { apply(TaskFamilyEdit.onlyMe(sharing, me: me)) } label: {
-                Label("只有我", systemImage: mark(sharing.scope == .personal, "lock"))
-            }
-            Button { apply(TaskFamilyEdit.everyone(sharing)) } label: {
-                Label("全家", systemImage: mark(sharing.scope == .household && sharing.hiddenFrom.isEmpty, "house"))
-            }
-            if !others.isEmpty {
-                Menu("只给…看") {
-                    ForEach(others) { member in
-                        Button { apply(TaskFamilyEdit.togglePerson(sharing, member.id)) } label: {
-                            Label(member.name, systemImage: mark(sharing.scope == .people && sharing.people.contains(member.id), "person"))
-                        }
-                    }
-                }
-                Menu("全家，但不让…看到") {
-                    ForEach(others) { member in
-                        Button { apply(TaskFamilyEdit.toggleHidden(sharing, member.id)) } label: {
-                            Label(member.name, systemImage: mark(sharing.scope == .household && sharing.hiddenFrom.contains(member.id), "eye.slash"))
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder var assignee: some View {
-        Button { apply(TaskFamilyEdit.assign(sharing, nil)) } label: {
-            Label("没人负责", systemImage: mark(sharing.assignee == nil, "minus"))
-        }
-        ForEach(store.members) { member in
-            Button { apply(TaskFamilyEdit.assign(sharing, member.id)) } label: {
-                Label(member.id == me ? "我" : member.name, systemImage: mark(sharing.assignee == member.id, "person"))
-            }
-        }
-    }
-
-    @ViewBuilder var escalation: some View {
-        Button { apply(TaskFamilyEdit.escalate(sharing, to: nil, after: nil)) } label: {
-            Label("不用再提醒别人", systemImage: mark(sharing.escalateTo == nil, "minus"))
-        }
-        ForEach(store.members) { member in
-            Menu(member.id == me ? "提醒我" : "提醒\(member.name)") {
-                ForEach([15, 30, 60, 120], id: \.self) { minutes in
-                    Button { apply(TaskFamilyEdit.escalate(sharing, to: member.id, after: minutes)) } label: {
-                        Label("过 \(HouseholdNames.duration(minutes))还没完成",
-                              systemImage: mark(sharing.escalateTo == member.id && sharing.escalateAfter == minutes, "clock"))
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder var notify: some View {
-        Button { apply(TaskFamilyEdit.notifyDefault(sharing)) } label: {
-            Label(sharing.assignee == nil ? "记下的人" : "负责的人", systemImage: mark(sharing.notify.isEmpty, "person.crop.circle.badge.checkmark"))
-        }
-        ForEach(store.members) { member in
-            Button { apply(TaskFamilyEdit.toggleNotify(sharing, member.id)) } label: {
-                Label(member.id == me ? "我" : member.name, systemImage: mark(!sharing.notify.isEmpty && sharing.notify.contains(member.id), "bell"))
-            }
-        }
-    }
-}
-
 /// 任务 › 家人: who can see it, who does it, who is reminded, and who wrote it down.
 struct TaskFamilySection: View {
     let task: TimedReminder
@@ -151,14 +76,8 @@ struct TaskFamilySection: View {
     var body: some View {
         let names = store.names
         let sharing = task.sharing ?? TaskSharing(scope: .personal, createdBy: names.me)
-        let menus = TaskFamilyMenus(sharing: sharing, apply: apply)
         Section {
-            Menu { menus.visibility } label: { row("谁能看到", visibility(sharing, names)) }
-            Menu { menus.assignee } label: { row("谁负责", names.name(sharing.assignee).map { $0 == "你" ? "我" : $0 } ?? "没人负责") }
-            Menu { menus.notify } label: { row("到点提醒", reminded(sharing, names)) }
-            if task.repeats == .none, task.phases == nil {
-                Menu { menus.escalation } label: { row("没人处理时", escalation(sharing, names)) }
-            }
+            TaskFamilyCardLine(sharing: sharing, disabled: false, apply: apply)
             if let creator = store.member(sharing.createdBy), creator.id != names.me {
                 HStack(spacing: 8) {
                     Text("谁记的")
@@ -175,61 +94,146 @@ struct TaskFamilySection: View {
         .glassRows()
     }
 
-    private func row(_ title: String, _ value: String) -> some View {
-        HStack(spacing: 8) {
-            Text(title).foregroundStyle(.primary)
-            Spacer(minLength: 12)
-            Text(value).foregroundStyle(.secondary).lineLimit(1)
-            Image(systemName: "chevron.up.chevron.down").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
-        }
-        .contentShape(Rectangle())
-    }
 
-    private func visibility(_ s: TaskSharing, _ names: HouseholdNames) -> String {
-        switch s.scope {
-        case .personal: return "只有我"
-        case .household: return s.hiddenFrom.isEmpty ? "全家" : "全家（不给\(names.list(s.hiddenFrom))看）"
-        case .people:
-            let others = s.people.union([s.createdBy].compactMap { $0 }).subtracting([names.me].compactMap { $0 })
-            return others.isEmpty ? "只有我" : "我和\(names.list(others))"
-        }
-    }
-
-    private func escalation(_ s: TaskSharing, _ names: HouseholdNames) -> String {
-        guard let next = s.escalateTo, let after = s.escalateAfter else { return "不用" }
-        let who = names.name(next).map { $0 == "你" ? "我" : $0 } ?? "家人"
-        return "\(HouseholdNames.duration(after))后提醒\(who)"
-    }
-
-    private func reminded(_ s: TaskSharing, _ names: HouseholdNames) -> String {
-        s.reminded.map { names.name($0) == "你" ? "我" : (names.name($0) ?? "家人") }.sorted().joined(separator: "、")
-    }
 }
 
-/// On the confirm card: the decision in one line, tappable to change before confirming.
+/// One review entry, with a flat editor instead of menus inside menus.
 struct TaskFamilyCardLine: View {
     let sharing: TaskSharing
     let disabled: Bool
     let apply: (TaskSharing) -> Void
+    @State private var editing = false
 
     var body: some View {
-        let menus = TaskFamilyMenus(sharing: sharing, apply: apply)
-        Menu {
-            Menu("谁能看到") { menus.visibility }
-            Menu("谁负责") { menus.assignee }
-            Menu("到点提醒") { menus.notify }
-            Menu("没人处理时") { menus.escalation }
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "person.2")
-                Text(HouseholdStore.shared.names.summary(sharing))
-                Image(systemName: "chevron.down").font(.caption2.weight(.semibold))
+        Button { editing = true } label: {
+            HStack(alignment: .center, spacing: 8) {
+                Image(systemName: "person.2").accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(TaskFamilyEditor.visibilityLabel(sharing))
+                    Text("提醒" + HouseholdStore.shared.names.list(sharing.reminded))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .multilineTextAlignment(.leading)
+                Image(systemName: "chevron.right").font(.caption.weight(.semibold))
             }
-            .font(.subheadline)
-            .foregroundStyle(.tint)
+            .font(.subheadline).frame(minHeight: 44)
             .contentShape(Rectangle())
         }
-        .disabled(disabled)
-        .accessibilityLabel("修改家人设置：\(HouseholdStore.shared.names.summary(sharing))")
+        .buttonStyle(.plain).disabled(disabled)
+        .accessibilityLabel("家人设置：\(HouseholdStore.shared.names.summary(sharing))")
+        .sheet(isPresented: $editing) {
+            TaskFamilyEditor(sharing: sharing, apply: apply)
+        }
+    }
+}
+
+struct TaskFamilyEditor: View {
+    @State private var draft: TaskSharing
+    @State private var advanced: Bool
+    let apply: (TaskSharing) -> Void
+    @Environment(\.dismiss) private var dismiss
+    private var store: HouseholdStore { .shared }
+
+    init(sharing: TaskSharing, apply: @escaping (TaskSharing) -> Void) {
+        _draft = State(initialValue: sharing)
+        _advanced = State(initialValue: !sharing.notify.isEmpty || sharing.escalateTo != nil || !sharing.hiddenFrom.isEmpty)
+        self.apply = apply
+    }
+
+    static func visibilityLabel(_ s: TaskSharing) -> String {
+        let names = HouseholdStore.shared.names
+        switch s.scope {
+        case .personal: return "只有我可见"
+        case .household: return s.hiddenFrom.isEmpty ? "全家可见" : "全家可见（除\(names.list(s.hiddenFrom))）"
+        case .people: return names.list(s.people.union([s.createdBy].compactMap { $0 })) + "可见"
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("谁能看到") {
+                    choice("只有我", selected: draft.scope == .personal) {
+                        if let me = store.state?.me { draft = TaskFamilyEdit.onlyMe(draft, me: me) }
+                    }
+                    choice("全家", selected: draft.scope == .household && draft.hiddenFrom.isEmpty) {
+                        draft = TaskFamilyEdit.everyone(draft)
+                    }
+                    choice("选择家人", selected: draft.scope == .people) {
+                        draft.scope = .people; draft.hiddenFrom = []; draft = draft.normalized()
+                    }
+                    if draft.scope == .people {
+                        ForEach(store.members.filter { $0.id != draft.createdBy }) { member in
+                            Toggle(member.name, isOn: Binding(get: { draft.people.contains(member.id) }, set: { on in
+                                if on { draft.people.insert(member.id) }
+                                else {
+                                    draft.people.remove(member.id)
+                                    if draft.assignee == member.id { draft.assignee = nil }
+                                    draft.notify.remove(member.id)
+                                    if draft.escalateTo == member.id { draft.escalateTo = nil; draft.escalateAfter = nil }
+                                }
+                                draft = draft.normalized()
+                            }))
+                        }
+                    }
+                }
+                Section {
+                    Picker("交给谁", selection: Binding(get: { draft.assignee }, set: { draft = TaskFamilyEdit.assign(draft, $0) })) {
+                        Text("我来处理").tag(store.state?.me)
+                        Text("暂不指定").tag(UUID?.none)
+                        ForEach(store.members.filter { $0.id != store.state?.me }) { member in
+                            Text(member.name).tag(Optional(member.id))
+                        }
+                    }
+                } footer: {
+                    Text("默认提醒负责的人；未指定时提醒创建人。")
+                }
+                Section {
+                    DisclosureGroup("更多提醒设置", isExpanded: $advanced) {
+                        ForEach(store.members) { member in
+                            Toggle("提醒\(member.name)", isOn: Binding(get: { draft.reminded.contains(member.id) }, set: { _ in
+                                draft = TaskFamilyEdit.toggleNotify(draft, member.id)
+                            }))
+                        }
+                        Picker("未处理时再提醒", selection: Binding(get: { draft.escalateTo }, set: {
+                            draft = TaskFamilyEdit.escalate(draft, to: $0, after: $0 == nil ? nil : (draft.escalateAfter ?? 30))
+                        })) {
+                            Text("不用").tag(UUID?.none)
+                            ForEach(store.members) { member in Text(member.name).tag(Optional(member.id)) }
+                        }
+                        if draft.escalateTo != nil {
+                            Picker("等待多久", selection: Binding(get: { draft.escalateAfter ?? 30 }, set: { draft.escalateAfter = $0 })) {
+                                ForEach([15, 30, 60, 120], id: \.self) { minutes in
+                                    Text(HouseholdNames.duration(minutes)).tag(minutes)
+                                }
+                            }
+                        }
+                        if !draft.hiddenFrom.isEmpty {
+                            Text("当前不向\(store.names.list(draft.hiddenFrom))显示。可在上方重新选择可见家人。")
+                                .font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("家人设置").navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) { Button("完成") { apply(draft.normalized()); dismiss() } }
+            }
+        }
+        .presentationDetents([.large])
+    }
+
+    private func choice(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Text(title).foregroundStyle(.primary)
+                Spacer()
+                if selected { Image(systemName: "checkmark").foregroundStyle(.tint) }
+            }
+            .contentShape(Rectangle())
+        }
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }

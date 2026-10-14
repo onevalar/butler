@@ -48,12 +48,13 @@ struct ButlerChatView: View {
     @State var hasImportedFiles = false
     @State private var pickedPhotos: [PhotosPickerItem] = []
     @State private var showingSettings = false
-    @State private var position = ScrollPosition(edge: .bottom)
+    @AppStorage(ChatModelConfiguration.modelKey) private var selectedModel = "gpt-6-sol"
     @FocusState var composing: Bool
 
     var body: some View {
         NavigationStack {
-            Group {
+            GeometryReader { viewport in
+              ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 14) {
                         if case .brief(let reminder) = chat.scope {
@@ -65,7 +66,7 @@ struct ButlerChatView: View {
                             .padding(.vertical, 8)
                         }
                         if chat.turns.isEmpty { welcome }
-                        ForEach(chat.turns) { turn in turnView(turn) }
+                        ForEach(chat.turns) { turn in turnView(turn).id(turn.id) }
                         if chat.working, chat.replyProgress.turnID == nil {
                             workingIndicator
                         }
@@ -77,15 +78,17 @@ struct ButlerChatView: View {
                             ShareInboxView(chat: chat, hasOtherWork: hasOtherWork || loadingAttachments, refreshID: inboxRefresh)
                         }
                         Color.clear.frame(height: 1).padding(.bottom, 12)
+                            .id("chat-bottom")
                             .onScrollVisibilityChange { chat.scrollPolicy.bottomVisibilityChanged($0) }
                     }
+                    .frame(width: max(0, viewport.size.width - 32), alignment: .leading)
                     .scrollTargetLayout()
                     .padding(.horizontal, 16).padding(.top, 12)
                 }
                 .scrollDismissesKeyboard(.interactively)
                 .scrollEdgeEffectHidden(for: .bottom)
                 .defaultScrollAnchor(chat.scrollPolicy.followingBottom ? .bottom : .top, for: .initialOffset)
-                .scrollPosition($position)
+                .defaultScrollAnchor(chat.scrollPolicy.followingBottom ? .bottom : .top, for: .sizeChanges)
                 .onScrollTargetVisibilityChange(idType: UUID.self) { ids in
                     chat.scrollPolicy.positionChanged(to: ids.first)
                 }
@@ -109,7 +112,7 @@ struct ButlerChatView: View {
                 .onAppear {
                     chat.scrollPolicy.appear(validTurnIDs: Set(chat.turns.map(\.id)))
                     if !chat.scrollPolicy.followingBottom, let id = chat.scrollPolicy.visibleTurnID {
-                        position.scrollTo(id: id, anchor: .top)
+                        proxy.scrollTo(id, anchor: .top)
                     }
                 }
                 .onDisappear { chat.scrollPolicy.disappear() }
@@ -117,11 +120,12 @@ struct ButlerChatView: View {
                     // Coalesce layout notifications, not a guessed keyboard duration. A new
                     // request, user touch, or disappearance cancels this view-owned task.
                     await Task.yield()
-                    guard !Task.isCancelled, chat.scrollPolicy.takeScroll() != nil else { return }
-                    var transaction = Transaction(animation: nil)
-                    transaction.disablesAnimations = true
-                    withTransaction(transaction) { position.scrollTo(edge: .bottom) }
+                    guard !Task.isCancelled, let scroll = chat.scrollPolicy.takeScroll() else { return }
+                    var transaction = Transaction(animation: scroll == .animated && !reduceMotion ? .easeOut(duration: 0.22) : nil)
+                    transaction.disablesAnimations = scroll != .animated || reduceMotion
+                    withTransaction(transaction) { proxy.scrollTo("chat-bottom", anchor: .bottom) }
                 }
+            }
             }
             .background { ButlerBackground() }
             .overlay(alignment: .bottomTrailing) {
@@ -221,9 +225,8 @@ struct ButlerChatView: View {
                     }
                 }
             }
-            .onChange(of: composing) { _, focused in
-                if focused { onNeedsRoom?() }
-            }
+            // The system sheet already accommodates the keyboard. Changing detents
+            // after focus starts a second resize and invalidates lazy scroll offsets.
             .onAppear { visible = true }
             .onDisappear {
                 visible = false
@@ -327,8 +330,8 @@ struct ButlerChatView: View {
 
     private var statusLine: String {
         guard chat.connection.isLoggedIn else { return "未登录" }
-        if chat.jev.isAvailable { return "GPT-6 Sol · Jev 已启用" }
-        return chat.jev.isConfigured ? "GPT-6 Sol · Jev 已关闭" : "GPT-6 Sol"
+        if chat.jev.isAvailable { return "\(ChatModelConfiguration.name(selectedModel)) · Jev 已启用" }
+        return chat.jev.isConfigured ? "\(ChatModelConfiguration.name(selectedModel)) · Jev 已关闭" : ChatModelConfiguration.name(selectedModel)
     }
 
     // MARK: - Conversation
@@ -402,14 +405,16 @@ struct ButlerChatView: View {
     private func turnView(_ turn: ChatTurn) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             if let names = turn.photos, !names.isEmpty, let directory = chat.photoDirectory {
-                HStack(spacing: 6) {
-                    Spacer(minLength: 48)
+                ScrollView(.horizontal) {
+                  HStack(spacing: 6) {
                     ForEach(names, id: \.self) { name in
                         ChatAttachmentThumbnail(url: directory.appendingPathComponent(name))
                             .frame(width: 110, height: 110)
                             .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                     }
+                  }
                 }
+                .defaultScrollAnchor(.trailing)
             }
             if turn.question != "确认操作" || turn.confirmationIDs?.isEmpty != false {
             HStack {
@@ -490,13 +495,22 @@ struct ButlerChatView: View {
         let blocked = chat.working || hasOtherWork || loadingAttachments
         return VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(pending.enumerated()), id: \.element.id) { index, change in
-                HStack(alignment: .center, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("\(index + 1). \(change.title)").font(.body.weight(.medium))
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .top, spacing: 8) {
+                        Text(change.title).font(.body.weight(.medium))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Button { chat.discard(ids: [change.id]) } label: {
+                            Image(systemName: "xmark").font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary).frame(width: 32, height: 32)
+                        }
+                        .buttonStyle(.plain).disabled(blocked)
+                        .accessibilityLabel("去掉\(change.title)")
+                    }
+                    VStack(alignment: .leading, spacing: 10) {
                         if let detail = ConfirmationPresentation.detail(change.detail, title: change.title) {
                             Text(detail).font(.subheadline).foregroundStyle(.secondary)
                         }
-                        if case .reminder(let reminder) = change.kind, reminder.repeats == .none, reminder.phases == nil {
+                        if let reminder = change.editableReminder {
                             ArrangementTimeControl(reminder: reminder, disabled: blocked) { date, period in
                                 chat.reviseReminderTime(of: change.id, date: date, period: period)
                             }
@@ -513,14 +527,7 @@ struct ButlerChatView: View {
                             EmptyView()
                         }
                     }
-                    Spacer(minLength: 0)
-                    Button { chat.discard(ids: [change.id]) } label: {
-                        Image(systemName: "minus.circle.fill").font(.title3).symbolRenderingMode(.hierarchical).foregroundStyle(.secondary)
-                            .frame(width: 44, height: 44).contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(blocked)
-                    .accessibilityLabel("去掉\(change.title)")
+
                 }
                 .padding(.horizontal, 18).padding(.vertical, 12)
                 if index < pending.count - 1 { RowDivider(inset: 18) }
