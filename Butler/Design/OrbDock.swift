@@ -384,7 +384,7 @@ private struct VoiceOrbLight: View {
                     .color(palette.glow[0].0), .color(palette.glow[1].0), .color(palette.glow[2].0),
                     .float(Float(palette.glow[0].1)), .float(Float(palette.glow[1].1)), .float(Float(palette.glow[2].1))))
                 .frame(width: diameter / 0.86, height: diameter / 0.86)
-                .opacity(0.72 + audio * 0.28)
+                .opacity(0.72 + Double(audio) * 0.28)
                 .blur(radius: 1.3 - audio * 0.35)
                 .scaleEffect(x: bounds.width / diameter, y: 1)
                 .position(x: center.x + tilt.width * 2.5, y: center.y + tilt.height * 2.5)
@@ -395,10 +395,10 @@ private struct VoiceOrbLight: View {
                 .position(center)
             topReflection.fill(LinearGradient(colors: [.white.opacity(palette.spec), .white.opacity(0)],
                                               startPoint: .top, endPoint: .bottom))
-                .opacity(1 - pressure * 0.72)
+                .opacity(1 - Double(pressure) * 0.72)
                 .blur(radius: 1.8)
                 .offset(x: -tilt.width * 2, y: -tilt.height * 1.4)
-            Ellipse().fill(.white.opacity(0.9 * (1 - pressure * 0.85)))
+            Ellipse().fill(.white.opacity(0.9 * (1 - Double(pressure) * 0.85)))
                 .frame(width: bounds.width * 0.14, height: diameter * 0.07)
                 .rotationEffect(.degrees(-25))
                 .position(x: bounds.minX + bounds.width * 0.30 - tilt.width * 2,

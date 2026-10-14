@@ -1,3 +1,8 @@
+## 2026-10-14 真机同步恢复及云构建兼容修复
+
+- 已覆盖安装修复版并成功启动；真机日志北京时间 20:07:32、20:08:08 连续返回 household sync completed; pending=0; joining=false。原家庭及本机数据保留，真实云端写入恢复；未用第二个 iCloud 账号进行真实邀请／双向验收。
+- Build 39 在 Xcode 26.3 编译 OrbDock.swift 时报告 opacity 表达式减法歧义；本机 Xcode 27.0 编译通过不足以证明云端兼容。将音量与按压的透明度运算显式转为 Double，不改变数值、几何或动效。保留云端必过测试，修复后重新构建。
+
 ## 2026-10-14 真机定位 CloudKit 写入失败
 
 - 用户重新打开家庭页后，18:56 新日志仍反复出现 Atomic failure。先停止启动云构建，安装增加逐项根因诊断的版本。18:59 真机明确返回 CKError.invalidArguments：控制记录 __control__ 为非法 ID，导致整个原子批次失败。

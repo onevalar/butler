@@ -118,3 +118,9 @@ GitHub 仓库授权已完成，以上工作流已在 App Store Connect 保存并
 - [构建37](https://appstoreconnect.apple.com/teams/52049831-307a-44f3-95af-623b83d68dc0/xcode-cloud/products/ECE4419A-60C4-420A-A42F-FEB1AC95BFB8/builds/4d791bc5-4733-4bf3-abf8-5d808034ffcf/summary) 的 Test、Archive、Internal Testing 和 External Testing 均 Succeeded；外部经过 Pending Beta Review 后完成。测试页显示716/717通过，无失败；3条警告均为 WeatherStoreTests 未标记 loader 尾随闭包的弃用提示。
 - TestFlight `1.0 (37)` 状态 Testing，已核对 Groups (2)：内部 test（1人）和外部 test（2人）。云端时长11分钟，Usage10分钟。手机安装/通知送达未验证。
 - 本记录仅保存发布结果，不再触发构建。
+
+### Build 39 编译失败及修复（2026-10-14）
+
+- 整合提交 62e1ece 及真机 CloudKit 非法控制记录 ID 修复 9fb6469 均已推送 main；本机完整 779 项测试、1 项既有跳过、0 失败，Release 签名构建成功。
+- 手动启动 [Build 39](https://appstoreconnect.apple.com/teams/52049831-307a-44f3-95af-623b83d68dc0/xcode-cloud/products/ECE4419A-60C4-420A-A42F-FEB1AC95BFB8/builds/0cc21281-4b0e-414e-854e-b95855eca882/summary)，后台核对提交为 9fb6469ee44f80658f58b7a18a061655e9481f7b，Xcode 26.3。Test 在 OrbDock.swift:398 报告 Ambiguous use of operator '-'，必过测试阻止内外部 TestFlight 分发。显式转换透明度参数为 Double 后重新构建，不能分发 39。
+- 真机诊断明确拒绝旧控制记录 __control__，新编号修复已通过完整回归；手机重连后成功安装并启动，20:07:32、20:08:08 日志连续显示 pending=0; joining=false，真实云端写入恢复。第二个 iCloud 账号的真实邀请／双向验收仍待完成。
