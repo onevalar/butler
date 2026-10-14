@@ -7,6 +7,8 @@
 - 全套 786 项测试、1 项既有跳过、0 失败。覆盖单人邀请保存回执／URL 缺失／保存失败／冲突保留参与者、复制与分享 URL、旧环境恢复备份及无重复上传、账号和云端版本变化拒绝恢复、缺失历史跨重启暂停，以及既有家庭物品和日程双向回归。测试传输为替身，不代表真实跨账号验收。
 - Release 构建与签名验证通过，覆盖安装 AnValar iPhone（安装序列 2300），成功启动。22:52 真机日志确认 environment=Production; recovery=true；已请用户在家庭页恢复并生成新邀请，实际恢复与第二账号接受结果待核对。未删除家庭、未重置云端、未启动新的 TestFlight 构建。
 
+- 23:05 真机复核：用户确认同步完成、链接已复制；日志记录 recovery completed; pending=0，并连续四次 sync completed; pending=0; joining=false。邀请入口记录 single-use invitation ready/presented，复制入口记录 single-use invitation ready/copied locally。正式环境本机恢复与两入口生成已确认；过程中另有两次 SyncFailure 拦截（恢复前／同步重叠时），随后重试成功。第二个真实 iCloud 账号接受及双向数据验收仍待验证。
+
 ## 2026-10-14 TestFlight 家庭邀请生产结构缺失
 
 - 用户报告 Build 40 邀请与复制入口同时失败。读取手机日志：21:24–21:27 CKError.invalidArguments 明确返回 Cannot create new type cloudkit.share in production schema；不是网络临时错误，现有通用提示误导。
