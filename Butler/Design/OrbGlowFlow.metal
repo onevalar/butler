@@ -31,7 +31,7 @@ static float gf_fbm(float2 p) {
 }
 
 /// Drawn into the orb's 200 × 200 space. `phase` is the orb's own clock (it runs faster while active).
-[[ stitchable ]] half4 orbGlowFlow(float2 position, half4 color, float4 bounds,
+static half4 gf_flowColor(float2 position, half4 color, float4 bounds,
                                    float phase,
                                    half4 c0, half4 c1, half4 c2,   // opaque colours
                                    float s0, float s1, float s2) { // their strengths
@@ -78,6 +78,12 @@ static float gf_fbm(float2 p) {
     return half4(half3(col * a), half(a));
 }
 
+[[ stitchable ]] half4 orbGlowFlow(float2 position, half4 color, float4 bounds,
+                                   float phase, half4 c0, half4 c1, half4 c2,
+                                   float s0, float s1, float s2) {
+    return gf_flowColor(position, color, bounds, phase, c0, c1, c2, s0, s1, s2);
+}
+
 // The finger depresses the front surface. The changed normal bends reflection locally;
 // this is a height field, not an outlined ring or a second sphere fading over the first.
 [[ stitchable ]] half4 orbContactSurface(float2 position, half4 color, float4 bounds, float pressure, float2 contact) {
@@ -92,4 +98,14 @@ static float gf_fbm(float2 p) {
     float a = 0.24 * (1.0 - exp(-abs(delta) * 3.0)) * mask;
     float3 ink = delta > 0 ? float3(1.0) : float3(0.26, 0.29, 0.33);
     return half4(half3(ink * a), half(a));
+}
+
+// Match the existing stretched-square light in final local bounds, avoiding shaded
+// pixels that would subsequently be compressed away for a tall narrow droplet.
+[[ stitchable ]] half4 orbGlowFlowRect(float2 position, half4 color, float4 bounds,
+                                      float phase, half4 c0, half4 c1, half4 c2,
+                                      float s0, float s1, float s2) {
+    float2 unitPosition = (position - bounds.xy) / bounds.zw;
+    return gf_flowColor(unitPosition * 200.0, color, float4(0, 0, 200, 200),
+                       phase, c0, c1, c2, s0, s1, s2);
 }

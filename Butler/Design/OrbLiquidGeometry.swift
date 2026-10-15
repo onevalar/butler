@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 /// One reversible path from a suspended drop to the dock. The geometry, not two
 /// overlapping glass layers, makes and breaks the neck at the contact point.
@@ -161,6 +162,15 @@ struct VoiceGeometry: Sendable, Equatable {
         return boundedSpan - topReach
     }
 
+    /// Analytic form of the same rounded profile used by the reference contour.
+    /// Its area is pi * radiusX * radiusY: the asymmetric term integrates to zero.
+    func profile(centerY: CGFloat) -> VoiceProfile {
+        let halfHeight = (topReach + bottom) / 2
+        return VoiceProfile(centerY: centerY + (bottom - topReach) / 2,
+                            radiusY: halfHeight, area: area,
+                            bias: 0.44 * transfer * (1 - detachment))
+    }
+
     func contours(width: CGFloat, height: CGFloat, centerY: CGFloat) -> [[CGPoint]] {
         let count = 240
         let span = topReach + bottom
@@ -191,9 +201,138 @@ struct VoiceGeometry: Sendable, Equatable {
 /// Shared trajectory for the released glass and its embedded cancellation mark.
 struct VoiceReturnPose {
     var progress: CGFloat
-    var fall: CGFloat { min(1, max(0, progress / 0.70)) }
-    var offset: CGFloat { VoiceGeometry.reach * (1 - fall * fall) }
-    var impact: CGFloat { 0.62 * exp(-pow((progress - 0.77) / 0.085, 2)) }
+    static let duration: Double = 0.36
+    var fall: CGFloat { VoiceGeometry.smooth(progress / 0.65) }
+    var offset: CGFloat { VoiceGeometry.reach * retainedDisplacement }
+    var impact: CGFloat {
+        let t = max(0, min(1, (progress - 0.60) / 0.40))
+        return 0.34 * pow(sin(.pi * t), 2)
+    }
     var cancelOpacity: CGFloat { 1 - VoiceGeometry.smooth(progress / 0.60) }
     func centerY(dockY: CGFloat) -> CGFloat { dockY - offset }
+}
+
+/// Sixteen tangent-continuous cubic segments replace 482 short straight edges.
+/// Top/bottom retain horizontal tangents, including the rounded foot of the drop.
+struct VoiceProfile: Equatable {
+    var centerY: CGFloat
+    var radiusY: CGFloat
+    var area: CGFloat
+    var bias: CGFloat
+    var radiusX: CGFloat { area / (.pi * radiusY) }
+
+    private static let samples: [(sin: CGFloat, cos: CGFloat)] = (0...16).map {
+        let angle = CGFloat($0) * .pi / 8
+        return (sin(angle), cos(angle))
+    }
+
+    func path(centerX: CGFloat) -> Path {
+        let a = radiusX, h = radiusY, b = bias
+        let tangentScale = CGFloat.pi / 24
+        func point(_ t: (sin: CGFloat, cos: CGFloat)) -> CGPoint {
+            CGPoint(x: centerX + a * t.sin * (1 + b * t.cos), y: centerY - h * t.cos)
+        }
+        func tangent(_ t: (sin: CGFloat, cos: CGFloat)) -> CGSize {
+            CGSize(width: a * (t.cos + b * (t.cos * t.cos - t.sin * t.sin)) * tangentScale,
+                   height: h * t.sin * tangentScale)
+        }
+        return Path { path in
+            path.move(to: point(Self.samples[0]))
+            for index in 1..<Self.samples.count {
+                let p0 = point(Self.samples[index - 1]), p1 = point(Self.samples[index])
+                let d0 = tangent(Self.samples[index - 1]), d1 = tangent(Self.samples[index])
+                path.addCurve(to: p1, control1: CGPoint(x: p0.x + d0.width, y: p0.y + d0.height),
+                              control2: CGPoint(x: p1.x - d1.width, y: p1.y - d1.height))
+            }
+            path.closeSubpath()
+        }
+    }
+}
+
+extension VoiceReturnPose {
+    var retainedDisplacement: CGFloat { 1 - fall }
+    var rounding: CGFloat { VoiceGeometry.smooth(progress / 0.28) }
+
+    /// Begin at the actual released silhouette, even if separation is incomplete.
+    /// Previously release immediately replaced it with a sphere at a fixed height.
+    func profile(from source: VoiceProfile, dockY: CGFloat) -> VoiceProfile {
+        let resting = VoiceGeometry(barWidth: 62 + 38 * impact).profile(centerY: dockY)
+        return VoiceProfile(centerY: dockY + (source.centerY - dockY) * retainedDisplacement,
+                            radiusY: source.radiusY + (resting.radiusY - source.radiusY) * rounding,
+                            area: source.area + (resting.area - source.area) * rounding,
+                            bias: source.bias * (1 - rounding))
+    }
+}
+
+/// Every direction has immediate visual feedback. Cancellation remains vertical;
+/// lateral/downward movement only displaces the held body against a soft tether.
+enum VoiceDragResponse {
+    static func offset(for translation: CGSize, reducedMotion: Bool = false) -> CGSize {
+        // A single radial resistance preserves a diagonal's direction. Separate
+        // tanh curves with different axis limits flattened lower-quadrant motion.
+        let x = translation.width, y = max(0, translation.height)
+        let xLimit: CGFloat = reducedMotion ? 12 : 36
+        let yLimit: CGFloat = reducedMotion ? 5 : 14
+        let distance = hypot(x / xLimit, y / yLimit)
+        guard distance > 0 else { return .zero }
+        let resistance = tanh(distance * 0.65) / distance
+        return CGSize(width: max(-xLimit, min(xLimit, x * resistance)),
+                      height: min(yLimit, y * resistance))
+    }
+}
+
+/// A single area-preserving strain and rotation shared by the glass, light and mark.
+/// Direction uses the real finger vector, not the saturated visual displacement.
+struct VoiceDragDeformation {
+    let translation: CGSize
+    let extent: CGFloat
+    var recovery: CGFloat = 1
+    var contact = CGSize.zero
+
+    /// Strain follows the tether from the moved glass to the current finger,
+    /// including an off-centre initial press. Fade that offset in with movement
+    /// so pressing near the rim alone does not suddenly stretch the whole ball.
+    var pullVector: CGSize {
+        let offset = VoiceDragResponse.offset(for: translation)
+        let contactWeight = VoiceGeometry.smooth(hypot(translation.width, translation.height) / 20)
+        return CGSize(width: translation.width - offset.width + contact.width * contactWeight,
+                      height: translation.height - offset.height + contact.height * contactWeight)
+    }
+
+    var liftWeight: CGFloat { VoiceGeometry.smooth(extent / 0.65) }
+    var angle: CGFloat {
+        let up = max(0, -translation.height)
+        let direction = atan2(translation.width, max(1, up))
+        return max(-1.05, min(1.05, direction)) * VoiceGeometry.smooth(up / 24) * recovery
+    }
+    var strain: CGAffineTransform {
+        // Preserve the approved upper-quadrant pull; below the dock the strain
+        // axis is the current finger-to-glass direction, not just gesture origin.
+        let lowerWeight = VoiceGeometry.smooth(translation.height / 20)
+        let x = translation.width + (pullVector.width - translation.width) * lowerWeight
+        let down = max(0, translation.height)
+        let y = down + (pullVector.height - down) * lowerWeight
+        let length = hypot(x, y)
+        guard length > 0 else { return .identity }
+        let u = x / length, v = y / length
+        let movement = hypot(translation.width, max(0, translation.height))
+        let stretch = 1 + 0.28 * tanh(movement / 65) * (1 - liftWeight) * recovery
+        let inverse = 1 / stretch
+        return CGAffineTransform(a: stretch * u * u + inverse * v * v,
+                                 b: (stretch - inverse) * u * v,
+                                 c: (stretch - inverse) * u * v,
+                                 d: stretch * v * v + inverse * u * u, tx: 0, ty: 0)
+    }
+    var transform: CGAffineTransform { strain.concatenating(CGAffineTransform(rotationAngle: angle)) }
+    func centeredTransform(in bounds: CGRect) -> CGAffineTransform {
+        var t = transform
+        t.tx = bounds.midX - t.a * bounds.midX - t.c * bounds.midY
+        t.ty = bounds.midY - t.b * bounds.midX - t.d * bounds.midY
+        return t
+    }
+    func center(profile: VoiceProfile, dock: CGPoint, offset: CGSize) -> CGPoint {
+        let lift = dock.y - profile.centerY
+        return CGPoint(x: dock.x + sin(angle) * lift + offset.width * (1 - liftWeight),
+                       y: dock.y - cos(angle) * lift + offset.height)
+    }
 }

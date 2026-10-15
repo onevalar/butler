@@ -89,6 +89,33 @@ final class VoicePressTrialTests: XCTestCase {
         XCTAssertNotNil(interaction.issue)
     }
 
+    func testSidewaysAndDownwardRecordingDragsDoNotCancelOrDuplicateDelivery() async {
+        let recorder = Recorder()
+        let feedback = Feedback()
+        let interaction = make(recorder, feedback)
+        var messages: [String] = []
+        interaction.begin(onTranscript: { messages.append($0) })
+        await wait { recorder.starts.count == 1 }
+        recorder.ready(0)
+        await wait { interaction.phase == .recording }
+        for point in [CGSize(width: -200, height: 0), CGSize(width: 200, height: 20), .zero] {
+            interaction.move(translation: point)
+            XCTAssertFalse(interaction.cancelling)
+            XCTAssertEqual(interaction.phase, .recording)
+        }
+        XCTAssertEqual(feedback.boundaries, 0)
+        interaction.move(translation: CGSize(width: 120, height: -100))
+        XCTAssertTrue(interaction.cancelling)
+        interaction.move(translation: CGSize(width: -90, height: -50))
+        XCTAssertFalse(interaction.cancelling)
+        XCTAssertEqual(feedback.boundaries, 2)
+        interaction.release()
+        await wait { recorder.finishes.count == 1 }
+        recorder.finish(0, text: "测试侧拖后发送")
+        await wait { interaction.phase == .idle }
+        XCTAssertEqual(messages, ["测试侧拖后发送"])
+    }
+
     func testShortDragIsNotMistakenForTapEvenAfterReturningToOrigin() {
         let interaction = VoicePressInteraction(recorder: Recorder(), feedback: Feedback(), now: { 0 })
         var taps = 0
