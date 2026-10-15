@@ -19,10 +19,12 @@ enum InventoryActionError: LocalizedError {
 struct InventoryActions {
     let repository: InventoryRepository
     private let container: ModelContainer
+    private let publishesChanges: Bool
 
-    init(modelContainer: ModelContainer) {
-        repository = InventoryRepository(modelContainer: modelContainer)
+    init(modelContainer: ModelContainer, publishesChanges: Bool = true) {
+        repository = InventoryRepository(modelContainer: modelContainer, publishesChanges: publishesChanges)
         container = modelContainer
+        self.publishesChanges = publishesChanges
     }
 
     /// Switches a product between "track dates" and "only count how many are left" (water, tissues).
@@ -36,8 +38,10 @@ struct InventoryActions {
         product.revision += 1
         product.updatedAt = .now
         try context.save()
-        NotificationCenter.default.post(name: .init("butlerBriefSourcesChanged"), object: nil)
-        WidgetSnapshotPublisher.shared.refresh()
+        if publishesChanges {
+            NotificationCenter.default.post(name: .init("butlerBriefSourcesChanged"), object: nil)
+            WidgetSnapshotPublisher.shared.refresh()
+        }
     }
 
     func close(_ lot: LotFacts, as state: InventoryLotState) throws {

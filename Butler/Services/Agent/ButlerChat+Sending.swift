@@ -243,16 +243,29 @@ extension ButlerChat {
             case .userPhotos(let text, _): request = text; hasPhotos = true
             default: request = ""; hasPhotos = false
             }
+            // Capture invalidation before prefetch so changes during a network read cannot
+            // make an old snapshot look new when the model asks for it again.
+            let readEpoch = ToolReadCacheEpoch(household: tools.household, judge: tools.jev,
+                                               notes: tools.notes, reminders: tools.reminders)
+            let readPolicy = ToolReadExecutionPolicy.butlerReadOnly(epoch: readEpoch)
             let prefetched = try await ButlerPrefetch.prepare(request: request,
                 previousQuestion: previous?.question, previousAnswer: previous?.failed == false ? previous?.answer : nil,
                 hasPhotos: hasPhotos, enabled: jev.prefetchEnabled, tools: tools)
             recordReplyTiming("context_ready")
             var savedFirstResult = false
+            var preparedFirstProposal = false
             var conversation = messages
             let answer = try await ToolConversationLoop.run(model: model, messages: &conversation, prefetched: prefetched,
+                readPolicy: readPolicy,
                 execute: { call in
+                    let generation = tools.pendingGeneration
                     let output = await tools.execute(call)
                     try Task.checkCancellation()
+                    if !preparedFirstProposal, tools.pendingGeneration != generation, !tools.pending.isEmpty {
+                        preparedFirstProposal = true
+                        // App-state readiness, not screen paint or permission to execute.
+                        self.recordReplyTiming("first_proposal_ready")
+                    }
                     if call.name == "show_inventory" || call.name == "update_shown_list" {
                         guard let files = self.files else { throw ButlerTools.ToolError("清单存储暂时不可用") }
                         self.turns = try files.saveReadOnlyCollections(for: turnID, displayed: tools.displayedCollection,

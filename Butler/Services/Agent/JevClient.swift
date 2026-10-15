@@ -9,11 +9,14 @@ import Security
 protocol ConditionJudge: AnyObject {
     var isConfigured: Bool { get }
     var isEnabled: Bool { get }
+    /// A new token whenever settings affecting judgments change. nil opts out of reuse.
+    var reuseToken: UUID? { get }
     func judge(request: String, questions: [JevClient.Question]) async throws -> [String: Double]
 }
 
 extension ConditionJudge {
     var isEnabled: Bool { true }
+    var reuseToken: UUID? { nil }
     var isAvailable: Bool { isConfigured && isEnabled }
 }
 
@@ -29,13 +32,19 @@ final class JevClient: ConditionJudge {
     private let beforeRequest: () throws -> Void
     private let observeAttempt: (Bool, TimeInterval) -> Void
     var isEnabled: Bool {
-        didSet { if enabledOverride == nil { defaults.set(isEnabled, forKey: "jevEnabled") } }
+        didSet {
+            if oldValue != isEnabled { reuseToken = UUID() }
+            if enabledOverride == nil { defaults.set(isEnabled, forKey: "jevEnabled") }
+        }
     }
     /// Independent switch so the owner can compare prefetch with the original tool flow.
     var prefetchEnabled: Bool {
         didSet { defaults.set(prefetchEnabled, forKey: "jevPrefetchEnabled") }
     }
-    private(set) var isConfigured = false
+    private(set) var isConfigured = false {
+        didSet { if oldValue != isConfigured { reuseToken = UUID() } }
+    }
+    private(set) var reuseToken: UUID? = UUID()
     /// Transport attempts by this client instance, including failures; not a billing total.
     private(set) var callsThisSession = 0
 
@@ -157,11 +166,13 @@ final class JevClient: ConditionJudge {
             status = SecItemAdd(query.merging(attributes) { _, new in new } as CFDictionary, nil)
         }
         guard status == errSecSuccess else { throw SubscriptionError.keychain }
+        reuseToken = UUID() // Replacing an existing key is a configuration change too.
         isConfigured = true
     }
 
     func removeKey() {
         SecItemDelete(query as CFDictionary)
+        reuseToken = UUID()
         isConfigured = false
     }
 

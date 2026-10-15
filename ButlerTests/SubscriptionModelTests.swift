@@ -86,6 +86,20 @@ final class SubscriptionModelTests: XCTestCase {
         return "header.\(payload).signature"
     }
 
+    func testPayloadDiagnosticsExposeOnlyByteCountsNotMessagesOrToolArguments() throws {
+        let instructions = "内部说明：保留用户精度"
+        let tools = #"[{"type":"function","name":"fixture_sensitive_tool"}]"#
+        let body = try SubscriptionModel.requestBody([.user("fixture-private-request")], instructions: instructions, toolJSON: tools)
+        let diagnostic = SubscriptionModel.payloadDiagnostic(body: body, instructions: instructions, toolJSON: tools, messageCount: 1)
+        XCTAssertTrue(diagnostic.contains("bytes=\(body.count)"))
+        XCTAssertTrue(diagnostic.contains("instructions_bytes=\(instructions.utf8.count)"))
+        XCTAssertTrue(diagnostic.contains("tools_bytes=\(tools.utf8.count)"))
+        XCTAssertTrue(diagnostic.contains("messages=1"))
+        XCTAssertFalse(diagnostic.contains("内部说明"))
+        XCTAssertFalse(diagnostic.contains("fixture_sensitive_tool"))
+        XCTAssertFalse(diagnostic.contains("fixture-private-request"))
+    }
+
     func testCredentialsUseAccountClaimAndKeepOmittedRefreshFields() throws {
         let access = try jwt(["exp": 2_000_000_000])
         let identity = try jwt(["sub": "not-account", "https://api.openai.com/auth": ["chatgpt_account_id": "account-test"]])

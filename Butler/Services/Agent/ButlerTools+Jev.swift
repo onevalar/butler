@@ -25,12 +25,24 @@ extension ButlerTools {
 
     /// nil when Jev is off, unconfigured or failed; callers proceed exactly as without Jev.
     func ask(_ questions: [JevClient.Question]) async -> [String: Double]? {
-        guard jev.isAvailable, !request.isEmpty, !questions.isEmpty else { return nil }
+        guard jev.isAvailable else {
+            jevJudgments.invalidateConfiguration()
+            jevFailure = nil
+            return nil
+        }
+        guard !request.isEmpty, !questions.isEmpty else { return nil }
+        let generation = jevJudgments.generation
+        let configuration = jev.reuseToken
+        let context = jevRequest
         do {
-            let answers = try await jev.judge(request: jevRequest, questions: questions)
+            let answers = try await jevJudgments.judge(request: context, questions: questions, using: jev)
+            guard generation == jevJudgments.generation, configuration == jev.reuseToken,
+                  context == jevRequest, jev.isAvailable else { return nil }
             jevFailure = nil
             return answers
         } catch {
+            guard generation == jevJudgments.generation, configuration == jev.reuseToken,
+                  context == jevRequest, jev.isAvailable else { return nil }
             jevFailure = error.localizedDescription
             return nil
         }

@@ -91,13 +91,23 @@ final class ButlerTools {
     let notes: LocalMemoryStore
     let reminders: ReminderStore
     let jev: any ConditionJudge
-    private(set) var pending: [PendingChange] = [] { didSet { pendingDidChange?(pending) } }
+    /// The same household context used for reads and proposals; evaluations supply an isolated store.
+    let household: HouseholdStore
+    private let publishesChanges: Bool
+    @ObservationIgnored private(set) var pendingGeneration: UInt64 = 0
+    private(set) var pending: [PendingChange] = [] {
+        didSet {
+            pendingGeneration &+= 1
+            pendingDidChange?(pending)
+        }
+    }
     var pendingDidChange: (([PendingChange]) -> Void)?
     func restorePending(_ values: [PendingChange]) { pending = values }
     /// The saved conversation, provided by the chat that owns these tools.
     var conversation: (() -> ConversationArchive)?
     /// Why Jev was skipped this turn, if it failed. Reported to the model, never blocks.
     var jevFailure: String?
+    @ObservationIgnored let jevJudgments = JevTurnJudgmentCache()
     var currentContext: (() -> String)?
     var weather: WeatherStore = .shared
     @ObservationIgnored lazy var alarms: AlarmStore = .shared
@@ -133,11 +143,14 @@ final class ButlerTools {
     /// model kept it; it then goes to the card with Jev's concern shown.
     var raisedConcerns: Set<String> = []
 
-    init(container: ModelContainer, notes: LocalMemoryStore, reminders: ReminderStore, jev: any ConditionJudge) {
+    init(container: ModelContainer, notes: LocalMemoryStore, reminders: ReminderStore, jev: any ConditionJudge,
+         household: HouseholdStore? = nil, publishesChanges: Bool = true) {
         self.container = container
         self.notes = notes
         self.reminders = reminders
         self.jev = jev
+        self.household = household ?? .shared
+        self.publishesChanges = publishesChanges
     }
 
     nonisolated deinit {}
@@ -152,6 +165,8 @@ final class ButlerTools {
     private(set) var requestTurnID: UUID?
 
     func beginTurn(request: String, previous: String?, hasPhotos: Bool = false, turnID: UUID? = nil) {
+        jevJudgments.beginTurn()
+        jevFailure = nil
         requestTurnID = turnID
         self.hasPhotos = hasPhotos
         self.request = hasPhotos ? request + "（用户附了照片）" : request
@@ -164,13 +179,16 @@ final class ButlerTools {
 
     func removePending(_ id: UUID) { pending.removeAll { $0.id == id } }
 
-    func endTurn() { requestTurnID = nil }
+    func endTurn() {
+        requestTurnID = nil
+        jevJudgments.endTurn()
+    }
 
     // MARK: - Tool definitions
 
     var toolJSON: String {
         var tools = Self.inventoryTools + "," + Self.contextTools + "," + Self.pendingTools + "," + Self.itemTools + "," + Self.weatherTools + "," + Self.alarmTools + "," + Self.appleReminderTools + "," + Self.systemCalendarTools + "," + Self.taskDisplayTools + "," + Self.healthTools + "," + Self.homeTools
-        tools += "," + Self.contactsTools + "," + Self.travelTools + "," + Self.syncTools + "," + Self.webPageTools + "," + Self.folderTools
+        tools += "," + Self.contactsTools + "," + Self.travelTools + "," + Self.syncTools + "," + Self.webPageTools + "," + Self.folderTools + "," + Self.productGuideTools
         if conversation != nil { tools += "," + Self.conversationTools }
         if jev.isAvailable { tools += "," + Self.jevTool }
         return "[" + tools + "]"
@@ -208,6 +226,7 @@ final class ButlerTools {
         defer { insistedConcern = nil }
         do {
             let data = Data(call.arguments.utf8)
+            if let output = try executeProductGuideTool(call.name, data: data) { return output }
             if let output = try executeAlarmTool(call.name, data: data) { return output }
             if let output = try await executeAppleReminderTool(call.name, data: data) { return output }
             if let output = try executeSystemCalendarTool(call.name, data: data) { return output }
@@ -221,7 +240,7 @@ final class ButlerTools {
             if let output = try await executeFolderTool(call.name, data: data) { return output }
             if let output = try await executeWeatherTool(call.name, data: data) { return output }
             if let output = try executeItemTool(call.name, data: data) { return output }
-            if let output = try executePendingTool(call.name, data: data) { return output }
+            if let output = try await executePendingTool(call.name, data: data) { return output }
             if let output = try executeContextTool(call.name, data: data) { return output }
             switch call.name {
             case "search_inventory":
@@ -396,9 +415,9 @@ final class ButlerTools {
                 guard jev.isAvailable else { throw ToolError("Jev 未启用或未配置，请继续处理，不要调用 Jev") }
                 struct Args: Decodable { var request: String; var question: String; var candidates: [JevClient.Candidate] }
                 let args = try JSONDecoder().decode(Args.self, from: data)
-                let answers = try await jev.judge(request: args.request, questions: args.candidates.map {
+                let answers = try await jevJudgments.judge(request: args.request, questions: args.candidates.map {
                     JevClient.Question(id: $0.id, question: args.question, candidate: $0.text)
-                })
+                }, using: jev)
                 return try encode(["source": "jev", "judgments": args.candidates.compactMap { candidate in
                     answers[candidate.id].map { ["id": candidate.id, "probability": $0] as [String: Any] }
                 }] as [String: Any])
@@ -456,7 +475,7 @@ final class ButlerTools {
                 if (try? activeLot(preview.id.uuidString).revision) != preview.revision { stale.insert(change.id) }
             }
         }
-        let actions = InventoryActions(modelContainer: container)
+        let actions = InventoryActions(modelContainer: container, publishesChanges: publishesChanges)
         var results: [ConfirmationResult] = []
         let adds = selected.compactMap { change -> (PendingChange, InventoryActions.NewItem)? in
             if case .add(let item) = change.kind { return (change, item) }
@@ -496,15 +515,21 @@ final class ButlerTools {
                     guard current.revision == lot.revision else { throw ToolError("物品已改变，请重新查询") }
                     try actions.undo(try inventoryEvent(eventID), for: current)
                 case .note(let memory): try notes.upsert(memory)
-                case .reminder(let reminder): try reminders.add(reminder)
+                case .reminder(let reminder):
+                    try validateTaskFamilyConfirmation(reminder.sharing)
+                    try reminders.add(reminder)
                 case .cancelReminder(let reminder):
                     try requireTaskRevision(reminder.id, reminder.revision)
                     try reminders.remove(reminder.id)
                 case .taskPlan(let reminder, let revision):
                     if let revision {
                         try requireTaskRevision(reminder.id, revision)
+                        try validateTaskFamilyConfirmation(reminder.sharing, replacing: reminders.reminder(id: reminder.id)?.sharing)
                         try reminders.update(reminder)
-                    } else { try reminders.add(reminder) }
+                    } else {
+                        try validateTaskFamilyConfirmation(reminder.sharing)
+                        try reminders.add(reminder)
+                    }
                 case .taskAction(let id, let action, let revision):
                     try requireTaskRevision(id, revision)
                     if let task = reminders.reminder(id: id) { try validateTaskAction(action, reminder: task) }
@@ -527,8 +552,9 @@ final class ButlerTools {
                     guard HouseholdStore.shared.state != nil else { throw ToolError("还没有建立家庭") }
                     HouseholdService.shared.setQuiet(quiet)
                 case .taskSharing(let id, let sharing, let revision):
-                    guard HouseholdStore.shared.state != nil else { throw ToolError("还没有建立家庭") }
-                    try reminders.setSharing(id, sharing, detail: "改为" + HouseholdStore.shared.names.thirdPerson.summary(sharing),
+                    try requireTaskRevision(id, revision)
+                    try validateTaskFamilyConfirmation(sharing, replacing: reminders.reminder(id: id)?.sharing)
+                    try reminders.setSharing(id, sharing, detail: "改为" + household.names.thirdPerson.summary(sharing),
                                              expectedRevision: revision)
                 case .weatherLocation(let selection, let before):
                     try weather.setLocation(selection, expected: before)

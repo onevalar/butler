@@ -99,6 +99,7 @@ struct TimedReminder: Codable, Identifiable, Equatable {
 final class ReminderStore {
     private let file: URL
     private let schedules: Bool
+    private let publishesChanges: Bool
     private var loadFailed = false
     private(set) var reminders: [TimedReminder] = []
     private(set) var scheduleWarning: String?
@@ -118,9 +119,10 @@ final class ReminderStore {
     /// Further alerts this phone owes for a task it may not otherwise remind about ("妈妈还没处理：交水费").
     @ObservationIgnored var extraAlerts: (TimedReminder, Date) -> [(date: Date, body: String)] = { _, _ in [] }
 
-    init(file: URL, schedules: Bool = true) {
+    init(file: URL, schedules: Bool = true, publishesChanges: Bool = true) {
         self.file = file
         self.schedules = schedules
+        self.publishesChanges = publishesChanges
         do {
             let data = try Data(contentsOf: file)
             reminders = try JSONDecoder().decode([TimedReminder].self, from: data)
@@ -427,7 +429,7 @@ final class ReminderStore {
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try JSONEncoder().encode(next).write(to: file, options: .atomic)
         reminders = next
-        NotificationCenter.default.post(name: .init("butlerBriefSourcesChanged"), object: nil)
+        if publishesChanges { NotificationCenter.default.post(name: .init("butlerBriefSourcesChanged"), object: nil) }
         if schedules { WidgetSnapshotPublisher.shared.refresh(); TaskDisplayService.reconcile() }
     }
 

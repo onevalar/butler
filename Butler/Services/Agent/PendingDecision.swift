@@ -37,19 +37,20 @@ extension PendingChange {
 }
 
 extension ButlerTools {
-    static let pendingTools = #"""
+    static var pendingTools: String { #"""
     {"type":"function","name":"get_pending_changes","description":"读取本会话尚未保存的修改，含稳定id、顺序和内容；不能把提案当作真实库存。","strict":true,"parameters":{"type":"object","properties":{},"required":[],"additionalProperties":false}},
-    {"type":"function","name":"discard_pending_changes","description":"按用户要求移除或替换尚未保存的提案。ids须来自get_pending_changes；只移除指定项，替换时随后提出新版本；不修改真实数据，不执行确认。","strict":true,"parameters":{"type":"object","properties":{"ids":{"type":"array","minItems":1,"maxItems":100,"items":{"type":"string"}}},"required":["ids"],"additionalProperties":false}}
-    """#
+    {"type":"function","name":"discard_pending_changes","description":"按用户要求移除尚未保存的提案。ids须来自get_pending_changes；只移除指定项，不修改真实数据，不执行确认。修改受支持的提案使用revise_pending_change，可保持原卡片与其他提案。","strict":true,"parameters":{"type":"object","properties":{"ids":{"type":"array","minItems":1,"maxItems":100,"items":{"type":"string"}}},"required":["ids"],"additionalProperties":false}}
+    """# + "," + pendingRevisionToolJSON }
 
     var pendingContext: String {
-        (try? encode(["saved": false, "changes": pending.enumerated().map { index, change in
-            ["id": change.id.uuidString, "number": index + 1, "title": change.title, "detail": change.detail ?? ""] as [String: Any]
+        (try? encode(["saved": false, "changes": try pending.enumerated().map { index, change in
+            try pendingDescription(change, number: index + 1)
         }] as [String: Any])) ?? "{}"
     }
 
-    func executePendingTool(_ name: String, data: Data) throws -> String? {
+    func executePendingTool(_ name: String, data: Data) async throws -> String? {
         if name == "get_pending_changes" { return pendingContext }
+        if name == "revise_pending_change" { return try await revisePendingChange(data: data) }
         guard name == "discard_pending_changes" else { return nil }
         struct Args: Decodable { let ids: [UUID] }
         let args = try JSONDecoder().decode(Args.self, from: data)

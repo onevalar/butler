@@ -28,13 +28,13 @@ struct TaskFamilyArgs: Decodable, Equatable {
         return String(decoding: data, as: UTF8.self)
     }()
 
-    static let guidance = "family：仅当current_context有household时填写，否则null。visibility：personal只有我、household全家、people只给people里的人；hidden_from全家可见但不让这些人看到；assignee谁负责（优先使用members里的id，也接受当前用户的家人称呼，null没人负责）；notify到点提醒谁（空数组=负责的人，没人负责就提醒创建的人）；escalate_to和escalate_after_minutes：一次性任务到点后这么久还没人完成，再提醒这个人（用户或家庭规则要求时才填，否则null）。先按用户这句话，其次已记住的家庭规则，再由你按内容判断：家务、采购、缴费、孩子和老人的事通常全家可见；交给别人做的事给对方看并提醒对方；看病、体检、私人约会、礼物惊喜等私事只有我。只有涉及隐私又真拿不准时才问一句是/否，其他情况直接给出判断，用户会在卡片上改。修改已有任务的范围用propose_task_sharing。"
+    static let guidance = "family：仅当current_context有household时填写，否则null。visibility：personal仅创建者可见（不一定是当前操作者）、household全家、people创建者加people中指定的成员；hidden_from表示全家可见但排除的人。负责人、通知和升级接收人需要在可见范围内；修改时按工具返回的冲突信息明确调整相关字段，不暗中扩大可见范围。成员使用members中的真实ID，也接受能够唯一确定的个人称呼；公开名字和个人称呼不能混淆。assignee是负责人；notify是通知接收人（空数组沿用产品默认：负责人，否则创建人）；escalate_to和escalate_after_minutes仅在用户或已保存规则要求时设置。可见范围、负责人、通知接收人是独立选择，按本次明确要求和已保存的适用规则判断，临时纠正不自动变成永久规则。新建按需求提出必要范围，有实质隐私歧义才询问；修改只更改指定字段，其余保留，局部变更优先propose_task_update的family patch。这里的完整family对象会替换所有共享字段。"
 }
 
 extension ButlerTools {
     /// Turns the model's family choice into the task's sharing. Outside a household there is none.
     func taskSharing(_ family: TaskFamilyArgs?, existing: TaskSharing?) throws -> TaskSharing? {
-        let household = HouseholdStore.shared
+        let household = self.household
         guard let state = household.state else {
             if let family, family.visibility != "personal" || family.assignee != nil || !family.notify.isEmpty {
                 throw ToolError("还没有建立家庭，任务只属于你自己；family 传 null")
@@ -67,7 +67,7 @@ extension ButlerTools {
 
     /// What the model reads about a task's family side.
     func familyDescription(_ task: TimedReminder) -> [String: Any]? {
-        let names = HouseholdStore.shared.names
+        let names = household.names
         guard names.isActive else { return nil }
         let sharing = task.sharing
         var value: [String: Any] = ["summary": names.summary(sharing)]
@@ -82,7 +82,7 @@ extension ButlerTools {
 
     /// Who is in the household, who is talking, and the rules the butler follows.
     func householdContext() -> [String: Any]? {
-        let household = HouseholdStore.shared
+        let household = self.household
         guard let state = household.state else { return nil }
         let rule: (HouseholdRule, String) -> [String: Any] = { value, scope in
             ["id": value.id.uuidString, "text": value.text, "applies_to": scope,
@@ -99,8 +99,8 @@ extension ButlerTools {
     func notificationPolicy(_ task: TimedReminder) -> String {
         if task.timePeriod != nil { return "日期／时段安排；没有定时通知，供管家结合上下文提示" }
         if reminders.remindsHere(task) { return "由本机按规则尽力安排，实际送达依赖系统" }
-        if let sharing = task.sharing, sharing.isShared, HouseholdStore.shared.state != nil {
-            return "家庭任务，到点提醒\(HouseholdStore.shared.names.list(sharing.reminded))的手机，本机不提醒"
+        if let sharing = task.sharing, sharing.isShared, household.state != nil {
+            return "家庭任务，到点提醒\(household.names.list(sharing.reminded))的手机，本机不提醒"
         }
         return "从其他设备同步，仅显示任务，本机不新增通知"
     }

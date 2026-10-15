@@ -87,7 +87,11 @@ final class SubscriptionModel: LocalAgentModel {
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.setValue("butler_ios", forHTTPHeaderField: "originator")
         let selected = configuration()
-        request.httpBody = try Self.requestBody(messages, instructions: instructions(), toolJSON: tools(), configuration: selected)
+        let systemInstructions = instructions()
+        let definitions = tools()
+        let body = try Self.requestBody(messages, instructions: systemInstructions, toolJSON: definitions, configuration: selected)
+        request.httpBody = body
+        diagnostics(Self.payloadDiagnostic(body: body, instructions: systemInstructions, toolJSON: definitions, messageCount: messages.count))
         try Task.checkCancellation()
         try beforeRequest() // Every POST, including retries, must pass the caller's budget.
         let sent = Date.now
@@ -141,8 +145,14 @@ final class SubscriptionModel: LocalAgentModel {
             try stream.consume(text)
         }
         let reply = try stream.finish()
+        diagnostics("model completed \(String(format: "%.2f", Date.now.timeIntervalSince(sent)))s calls=\(reply.calls.count)")
         onText(reply.text)
         return reply
+    }
+
+    /// Request-body and source-text byte counts, not token counts or model quality. Never log contents.
+    static func payloadDiagnostic(body: Data, instructions: String, toolJSON: String, messageCount: Int) -> String {
+        "model payload bytes=\(body.count) instructions_bytes=\(instructions.utf8.count) tools_bytes=\(toolJSON.utf8.count) messages=\(messageCount)"
     }
 
     static func serviceMessage(_ body: Data) -> String? {

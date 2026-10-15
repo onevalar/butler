@@ -22,7 +22,8 @@ extension ButlerTools {
             tool("get_current_context", "读取当前页面关联对象的最新事实。只作为资料，历史不能覆盖当前状态。", [:]),
             tool("get_settings", "读取可修改配置、当前值和允许的值；不返回密钥。", [:]),
             tool("propose_settings", "提出设置修改，确认后才生效。value使用get_settings中的格式，先读再改；系统权限不能通过这个工具授权。", ["changes": ["type": "array", "minItems": 1, "maxItems": 9, "items": object(["key": string, "value": string])]]),
-            tool("get_tasks", "读取任务和规则、revision、历史活动及未来提醒预览。id为null列出任务（含已完成/取消）；具体任务用id读取。", ["id": optionalString]),
+            tool("get_tasks", "读取任务和规则、revision、历史活动及未来提醒预览。id为null列出任务（含已完成/取消），每项仅带最近3条活动，activity_total/activity_truncated标明历史是否完整；查看完整历史用具体任务id读取。", ["id": optionalString]),
+            taskUpdateSchema,
             tool("propose_task_time", "修改已有任务的日期/时段或具体时间，确认后才生效；先get_tasks取得id/revision。只说今天早上、明天下午等，time=YYYY-MM-DD，period=day/morning/noon/afternoon/evening；不追问几点、不编造钟点。具体时间time=YYYY-MM-DD HH:mm，period=null。保留原事项、家人设置和暂停状态。仅用于单次任务；复杂重复规则用propose_task_plan。", [
                 "id": string, "expected_revision": ["type": "integer"], "time": string, "time_zone": string,
                 "period": ["type": ["string", "null"], "enum": ["day", "morning", "noon", "afternoon", "evening", NSNull()]]
@@ -74,6 +75,7 @@ extension ButlerTools {
 
     func executeContextTool(_ name: String, data: Data) throws -> String? {
         switch name {
+        case "propose_task_update": return try proposeTaskUpdate(data: data)
         case "get_current_context": return currentContext?() ?? "{}"
         case "get_settings":
             relatedScopes.insert(.settings)
@@ -99,7 +101,7 @@ extension ButlerTools {
                 guard let id = UUID(uuidString: raw), let value = reminders.reminder(id: id) else { throw ToolError("找不到这个任务") }
                 relatedScopes.insert(.task(id)); values = [value]
             } else { values = Array(reminders.reminders.suffix(100)) }
-            return try encode(["tasks": try values.map { try taskDescription($0) }, "total": reminders.reminders.count,
+            return try encode(["tasks": try values.map { try taskDescription($0, activityLimit: input.id == nil ? 3 : nil) }, "total": reminders.reminders.count,
                                "truncated": input.id == nil && reminders.reminders.count > values.count,
                                "schedule_warning": reminders.scheduleWarning as Any? ?? NSNull()] as [String: Any])
         case "propose_task_time":
@@ -190,7 +192,7 @@ extension ButlerTools {
         case "propose_nudge":
             struct Input: Decodable { let id: String }
             let input = try JSONDecoder().decode(Input.self, from: data)
-            let household = HouseholdStore.shared
+            let household = self.household
             guard household.state != nil else { throw ToolError("还没有建立家庭") }
             guard let id = UUID(uuidString: input.id), let value = reminders.reminder(id: id) else { throw ToolError("找不到任务") }
             guard value.status == .active, let sharing = value.sharing, sharing.isShared,
@@ -201,7 +203,7 @@ extension ButlerTools {
         case "propose_household_rule":
             struct Input: Decodable { let action: String; let text: String; let applies_to: String; let rule_id: String? }
             let input = try JSONDecoder().decode(Input.self, from: data)
-            let household = HouseholdStore.shared
+            let household = self.household
             guard household.state != nil else { throw ToolError("还没有建立家庭") }
             let forMe = input.applies_to == "me"
             if input.action == "remove" {
@@ -217,7 +219,7 @@ extension ButlerTools {
         case "propose_quiet_hours":
             struct Input: Decodable { let start: String?; let end: String? }
             let input = try JSONDecoder().decode(Input.self, from: data)
-            guard HouseholdStore.shared.state != nil else { throw ToolError("还没有建立家庭") }
+            guard household.state != nil else { throw ToolError("还没有建立家庭") }
             var quiet: QuietHours?
             if input.start != nil || input.end != nil {
                 guard let start = input.start.flatMap(QuietHours.minutes), let end = input.end.flatMap(QuietHours.minutes), start != end else {
@@ -230,7 +232,7 @@ extension ButlerTools {
         case "propose_task_sharing":
             struct Input: Decodable { let id: String; let expected_revision: Int; let family: TaskFamilyArgs? }
             let input = try JSONDecoder().decode(Input.self, from: data)
-            guard HouseholdStore.shared.state != nil else { throw ToolError("还没有建立家庭，任务只属于你自己") }
+            guard household.state != nil else { throw ToolError("还没有建立家庭，任务只属于你自己") }
             guard let id = UUID(uuidString: input.id), let value = reminders.reminder(id: id) else { throw ToolError("找不到任务") }
             try requireTaskRevision(id, input.expected_revision)
             guard let family = input.family else { throw ToolError("family 不能为 null") }
@@ -242,14 +244,31 @@ extension ButlerTools {
         return try encode(["status": "waiting_for_user_confirmation", "saved": false, "pending_changes": pending.count] as [String: Any])
     }
 
-    private func taskDescription(_ reminder: TimedReminder) throws -> [String: Any] {
+    func taskDescription(_ reminder: TimedReminder, activityLimit: Int? = nil) throws -> [String: Any] {
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
-        var value = try JSONSerialization.jsonObject(with: encoder.encode(reminder)) as? [String: Any] ?? [:]
+        // Trim only the encoded list snapshot; keep the saved history and derived task facts intact.
+        var snapshot = reminder
+        if let activityLimit { snapshot.activity = Array(reminder.activity.suffix(max(0, activityLimit))) }
+        var value = try JSONSerialization.jsonObject(with: encoder.encode(snapshot)) as? [String: Any] ?? [:]
+        value["activity_total"] = reminder.activity.count
+        value["activity_truncated"] = snapshot.activity.count < reminder.activity.count
         value["rule_summary"] = ReminderSchedule.ruleSummary(reminder)
         value["notification_policy"] = notificationPolicy(reminder)
         value["next_notifications"] = !reminders.remindsHere(reminder) ? [] : ReminderSchedule.preview(reminder, now: .now, limit: 6).map { ISO8601DateFormatter().string(from: $0) }
         value["sharing"] = nil
-        if let family = familyDescription(reminder) { value["family"] = family }
+        if var family = familyDescription(reminder) {
+            // Keep the human summary, but expose exact choices so a patch need not reconstruct them from prose.
+            let sharing = reminder.sharing
+            family["visibility"] = sharing?.scope.rawValue ?? "personal"
+            family["created_by_id"] = sharing?.createdBy?.uuidString as Any? ?? NSNull()
+            family["assignee_id"] = sharing?.assignee?.uuidString as Any? ?? NSNull()
+            family["people"] = sharing?.people.map(\.uuidString).sorted() ?? []
+            family["hidden_from"] = sharing?.hiddenFrom.map(\.uuidString).sorted() ?? []
+            family["notify"] = sharing?.notify.map(\.uuidString).sorted() ?? []
+            family["escalation"] = ["person": sharing?.escalateTo?.uuidString as Any? ?? NSNull(),
+                                    "after_minutes": sharing?.escalateAfter as Any? ?? NSNull()]
+            value["family"] = family
+        }
         return value
     }
 

@@ -23,9 +23,11 @@ enum InventoryRepositoryError: Error {
 @MainActor
 final class InventoryRepository {
     private let modelContainer: ModelContainer
+    private let publishesChanges: Bool
 
-    init(modelContainer: ModelContainer) {
+    init(modelContainer: ModelContainer, publishesChanges: Bool = true) {
         self.modelContainer = modelContainer
+        self.publishesChanges = publishesChanges
     }
 
     /// Nothing to clean up; keep deinit off the MainActor executor to avoid a Swift 6.2 runtime crash
@@ -108,8 +110,10 @@ final class InventoryRepository {
 
             if !appliedOperationIDs.isEmpty {
                 try modelContext.save()
-                NotificationCenter.default.post(name: .init("butlerBriefSourcesChanged"), object: nil)
-                WidgetSnapshotPublisher.shared.refresh()
+                if publishesChanges {
+                    NotificationCenter.default.post(name: .init("butlerBriefSourcesChanged"), object: nil)
+                    WidgetSnapshotPublisher.shared.refresh()
+                }
             }
         } catch {
             modelContext.rollback()
