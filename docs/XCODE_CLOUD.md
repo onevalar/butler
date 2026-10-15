@@ -174,3 +174,10 @@ GitHub 仓库授权已完成，以上工作流已在 App Store Connect 保存并
 
 - 源码 `6d0a871c502f0403d53083557a48cd3676e1d03f` 已推送，手动启动 Build 46（20a9495b-4569-471f-83ae-2ffe71597f1e）。Archive 成功，但 Xcode 26.3 在 OrbDragRenderingTests.swift:119 报告 Ambiguous use of cos，Test 编译失败；内部／外部分发均 Did Not Run，不分发46。
 - 新测试的角度显式指定 CGFloat，避免新旧编译器数学函数重载推断差异；不改产品代码、不删除断言、不关闭 Required to Pass。此版没有新增 CloudKit 类型、字段或索引。
+
+### 水晶球方向形变与回落：Build 47 发布（2026-10-15）
+
+- 修复提交 `14903bcaecf3186e7f1b3312870bf64509774c11` 已推送 main；包含 `6d0a871` 的全部水晶球拖动、斜向取消、侧下形变与渲染优化，仅额外明确测试角度类型。本机兼容回归8项通过，不改变用户已安装体验的产品代码。
+- [Build 47](https://appstoreconnect.apple.com/teams/52049831-307a-44f3-95af-623b83d68dc0/xcode-cloud/products/ECE4419A-60C4-420A-A42F-FEB1AC95BFB8/builds/2bcbc636-0f11-4462-b00d-fc0b36003278/summary) 源码核对一致，Xcode 26.3；Test 成功，870/871通过、1项既有跳过、无失败。5条测试警告仍为 WeatherStoreTests loader、HouseholdInviteHandler Sendable、AgentScenario schema；Archive及App Store签名导出、上传准备成功，1条既有归档警告。
+- [TestFlight 1.0（47）](https://appstoreconnect.apple.com/teams/52049831-307a-44f3-95af-623b83d68dc0/apps/6815130996/testflight/ios/5d356b96-ba8f-4f63-a0e0-39b795f35cea) 于21:53上传，中文测试说明自动带入；内部test（1人）、外部test（3人）自动关联，外部组Builds中显示Testing。未手动扩大测试范围或重复构建。
+- 发布凭证 `build/testflight-release-47/external-testing.jpg`。本版不改CloudKit结构；发布成功不代表所有特殊手势与真机帧率已验收。Build46仍不分发，本记录提交只保存结果，不触发下一次构建。
