@@ -221,12 +221,16 @@ final class SubscriptionModel: LocalAgentModel {
 
 /// SSE framing is independent of network chunks; partial calls never execute.
 struct SubscriptionStream {
-    var expectedModel = "gpt-6-sol"
+    let expectedModel: String
     private var dataLines: [String] = []
     private var output: [[String: Any]] = []
     private var deltas = ""
     var visibleText: String { deltas }
     private(set) var completed = false
+
+    init(expectedModel: String = "gpt-6-sol") {
+        self.expectedModel = expectedModel
+    }
 
     mutating func consume(_ rawLine: String) throws {
         let line = rawLine.hasSuffix("\r") ? String(rawLine.dropLast()) : rawLine

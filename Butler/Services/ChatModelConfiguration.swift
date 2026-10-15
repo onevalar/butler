@@ -2,8 +2,13 @@ import Foundation
 
 /// User choices travel with each request. The server remains authoritative about account access.
 struct ChatModelConfiguration: Equatable {
-    var model = "gpt-6-sol"
-    var effort = "low"
+    var model: String
+    var effort: String
+
+    nonisolated init(model: String = "gpt-6-sol", effort: String = "low") {
+        self.model = model
+        self.effort = effort
+    }
     static let modelKey = "chatModelID"
     static let effortKey = "chatReasoningEffort"
     static let models = ["gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-luna"]
