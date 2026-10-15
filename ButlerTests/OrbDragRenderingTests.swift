@@ -114,7 +114,7 @@ final class OrbDragRenderingTests: XCTestCase {
 
     func testLowerQuadrantTravelPreservesFingerDirectionWithRadialResistance() {
         for degrees in stride(from: 1.0, through: 179, by: 2) {
-            let radians = degrees * .pi / 180
+            let radians: CGFloat = CGFloat(degrees) * .pi / 180
             for distance: CGFloat in [5, 20, 80, 250] {
                 let vector = CGSize(width: cos(radians) * distance, height: sin(radians) * distance)
                 for reduced in [false, true] {

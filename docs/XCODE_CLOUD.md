@@ -169,3 +169,8 @@ GitHub 仓库授权已完成，以上工作流已在 App Store Connect 保存并
 - 云端测试 5 条警告：3 条既有 WeatherStoreTests loader 尾随闭包提示、1 条既有 HouseholdInviteHandler Sendable 迁移提示，以及 Debug 场景报告的常量 schema 不参与解码提示（AgentScenario.swift:108）。归档 1 条警告。未关闭测试或为分发改动校验。
 - [1.0（45）](https://appstoreconnect.apple.com/teams/52049831-307a-44f3-95af-623b83d68dc0/apps/6815130996/testflight/ios/0dbe4fe9-b4e2-419a-9ba5-3fa3b1cf67c1) 于 16:07 上传，中文测试说明自动带入，内部 test（1 人）和外部 test（3 人）自动关联。外部组 Builds 已显示 Testing，确认可测试；未手动补加组或另起构建。发布凭证：`build/testflight-release-45/external-testing.jpg`。
 - 手机可从 TestFlight 更新。发布结果不代表真实模型响应速度或家庭跨账号行为已完成验收；仍需按测试说明体验。本记录仅保存结果，不触发下一次构建。
+
+### 水晶球交互发布：Build 46 测试编译兼容修复（2026-10-15）
+
+- 源码 `6d0a871c502f0403d53083557a48cd3676e1d03f` 已推送，手动启动 Build 46（20a9495b-4569-471f-83ae-2ffe71597f1e）。Archive 成功，但 Xcode 26.3 在 OrbDragRenderingTests.swift:119 报告 Ambiguous use of cos，Test 编译失败；内部／外部分发均 Did Not Run，不分发46。
+- 新测试的角度显式指定 CGFloat，避免新旧编译器数学函数重载推断差异；不改产品代码、不删除断言、不关闭 Required to Pass。此版没有新增 CloudKit 类型、字段或索引。
