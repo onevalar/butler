@@ -146,3 +146,11 @@ GitHub 仓库授权已完成，以上工作流已在 App Store Connect 保存并
 - 安装包于23:39进入 TestFlight，自动分发 Post-Actions 长时间排队，因此直接在 TestFlight 保存本次中文说明、关联现有内部 test（1人）及外部 test（3人），勾选 Automatically notify testers 并提交 Beta Review。未启动第二次构建，未提交正式 App Store 上架。
 - [1.0（41）](https://appstoreconnect.apple.com/teams/52049831-307a-44f3-95af-623b83d68dc0/apps/6815130996/testflight/ios/84ca76eb-3bd9-41a7-aa18-42d3110d4fae) 已显示 Testing，Groups (2) 已核对；外部组 Builds 中同样为 Testing，且已有外部测试者安装41的回执。该状态确认 TestFlight 已可分发，不表示家庭邀请跨账号验收完成。最终核验时云工作流的自动分发动作仍排队，不将手动发布成功记成它们已成功。
 - 发布截图保存于 `build/testflight-release-41/external-testing.jpg`（本地构建资料，不纳入源码）。本记录仅保存结果，不触发新构建。
+
+### Build 42 / 43（2026-10-15）
+
+- 对话布局、键盘定位、模糊时间修改、家庭确认卡及模型选择修复 `3ab73c3` 与测试说明 `b450b0e` 已推送。用户明确要求新 TestFlight 后启动 Build 42；云端 Xcode 26.3 在 `SubscriptionModel.swift:110` 拒绝带参数的隐式初始化，测试与归档失败，未分发42。
+- 提交 `07cfe86` 为流解析器及模型配置补上显式初始化，保持默认模型和选择语义；本机 SubscriptionModelTests 回归通过。随后手动启动 [Build 43](https://appstoreconnect.apple.com/teams/52049831-307a-44f3-95af-623b83d68dc0/xcode-cloud/products/ECE4419A-60C4-420A-A42F-FEB1AC95BFB8/builds/9fff14da-c8c6-46e7-b1b6-4cc141c39466/summary)，后台核对源码 `07cfe86da67be6a88856bb1dc5bc0dd9405ca8d6`。
+- 云端 Test、Archive、TestFlight Internal Testing、TestFlight External Testing 全部 Succeeded。测试794/795通过，1项既有跳过、无失败。4条警告为 WeatherStoreTests 的3处 loader 尾随闭包标注及 HouseholdInviteHandler 的 Swift 6 Sendable 迁移提示；本版没有更改这些位置。
+- [1.0（43）](https://appstoreconnect.apple.com/teams/52049831-307a-44f3-95af-623b83d68dc0/apps/6815130996/testflight/ios/21fa76a9-299d-403a-8438-11f53f49dd10) 已自动进入内部 test（1人）、外部 test（3人）；外部组显示 Testing，本次中文测试说明已自动带入。发布截图在 `build/testflight-release-43/external-testing.jpg`。测试者仍须在手机 TestFlight 更新；该发布结果不等于真实跨账号家庭同步验收。
+- 本记录仅保存发布结果，不再触发新构建。
