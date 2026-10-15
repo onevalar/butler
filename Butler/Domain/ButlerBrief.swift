@@ -3,8 +3,8 @@ import WeatherKit
 
 // The butler's one sentence at the top of home, and the buttons under it.
 //
-// The model chooses which thing to raise, writes the sentence, and picks the buttons for that particular
-// situation. What a button can do is a closed set (`BriefEffect`) that the app validates and carries out
+// The model chooses which thing to raise and writes the summary. A fixed policy limits any optional
+// quick action. What a button can do is a closed set (`BriefEffect`) that the app validates and carries out
 // only when the owner taps; the model never changes anything itself.
 
 /// The primary object acted on by the card's quick-action buttons, not its entire subject.
@@ -111,7 +111,9 @@ struct ButlerBrief: Equatable, Codable {
 
     var quickActions: [BriefAction] {
         guard target != nil else { return [] }
-        return actions.filter { $0.effect != .openDetail && !$0.label.hasPrefix("其他") }
+        return actions.filter { $0.effect == .closeLot(.discarded) }.prefix(1).map { _ in
+            BriefAction(label: "已丢弃", effect: .closeLot(.discarded))
+        }
     }
 
     func weatherLabel(for weather: WeatherSnapshot?, at now: Date) -> String? {
@@ -267,25 +269,15 @@ enum BriefLocal {
         guard let top = pressing.first else {
             return ButlerBrief(greeting: greeting, text: text, basis: basis, target: nil, actions: [], source: .local, hasSubject: true)
         }
-        var actions: [BriefAction]
         switch top.kind {
         case .expired:
-            text += "\(top.name)\(top.detail)，今天处理掉吧。"
-            actions = [BriefAction(label: "扔掉了", effect: .closeLot(.discarded)),
-                       BriefAction(label: "已吃完", effect: .closeLot(.depleted)),
-                       BriefAction(label: "先放放", effect: .snooze(days: 0))]
-            if top.isMedicine { actions.removeAll { $0.effect == .closeLot(.depleted) } }
+            text += "\(top.name)\(top.detail)。"
         case .dueTask:
-            text += "「\(top.name)」到时间了，做了吗？"
-            actions = [BriefAction(label: "做完了", effect: .completeTask),
-                       BriefAction(label: "10 分钟后再提醒", effect: .remindLater(minutes: 10))]
+            text += "有一项安排：\(top.name)。"
         case .expiringSoon:
-            text += "\(top.name)\(top.detail)，尽快用掉吧。"
-            actions = [BriefAction(label: "已吃完", effect: .closeLot(.depleted)),
-                       BriefAction(label: "明天再说", effect: .snooze(days: 0))]
+            text += "\(top.name)\(top.detail)。"
         case .lowStock, .upcomingTask, .comingDays:
-            text += "\(top.name)只剩 \(top.quantity ?? 0) \(top.unit ?? "")。"
-            actions = [BriefAction(label: "知道了", effect: .snooze(days: 1))]
+            text += "\(top.name)还剩 \(top.quantity ?? 0) \(top.unit ?? "")。"
         }
         // The rest that also needs a look, in a few words, so the card says everything at a glance.
         let others = pressing.dropFirst().map(\.name).reduce(into: [String]()) { if !$1.isEmpty, !$0.contains($1) { $0.append($1) } }
@@ -293,7 +285,7 @@ enum BriefLocal {
             let shown = others.prefix(2).joined(separator: "、")
             text += "另外\(shown)\(others.count > 2 ? "等 \(others.count) 样" : "")也要留意。"
         }
-        return ButlerBrief(greeting: greeting, text: text, basis: basis, target: top.target, actions: actions, source: .local, hasSubject: true)
+        return ButlerBrief(greeting: greeting, text: text, basis: basis, target: top.target, actions: [], source: .local, hasSubject: true)
     }
 
     /// "今天还有 2 件安排，最早在早上 6 点多。" Counts and a rough time, never the details.
@@ -349,7 +341,8 @@ enum BriefModelReply {
         guard let json = extractJSON(reply), let data = json.data(using: .utf8),
               let raw = try? JSONDecoder().decode(Raw.self, from: data) else { return nil }
         let text = raw.text.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard (4...120).contains(text.count) else { return nil }
+        guard (4...120).contains(text.count),
+              !["做了吗", "做完了吗", "完成了吗", "怎么还没"].contains(where: text.contains) else { return nil }
         let rationale = raw.rationale.map { String($0.prefix(400)) }
         let review = raw.review_after.flatMap { ISO8601DateFormatter().date(from: $0) }
         let summary = raw.weather_summary?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -359,14 +352,11 @@ enum BriefModelReply {
         guard let target = BriefTarget(key: key), let candidate = candidates.first(where: { $0.target == target }) else { return nil }
         if candidate.kind.isContext { return Parsed(text: text, target: nil, actions: [], rationale: rationale, reviewAfter: review, weatherSummary: weatherSummary) }
 
-        var actions: [BriefAction] = []
-        for item in raw.actions ?? [] where actions.count < 3 {
-            let label = item.label.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard (1...9).contains(label.count), label != "其他", !label.hasPrefix("其他"),
-                  let effect = effect(item.effect, value: item.value, candidate: candidate),
-                  !actions.contains(where: { $0.label == label || $0.effect == effect }) else { continue }
-            actions.append(BriefAction(label: label, effect: effect))
-        }
+        // A summary is not a completion questionnaire. Only an explicitly requested,
+        // unambiguous disposal shortcut survives; labels and effects are app-owned.
+        let disposal = candidate.kind == .expired && !candidate.isMedicine &&
+            text.contains(candidate.name) && raw.actions?.contains(where: { $0.effect == "close_discarded" }) == true
+        let actions = disposal ? [BriefAction(label: "已丢弃", effect: .closeLot(.discarded))] : []
         return Parsed(text: text, target: target, actions: actions, rationale: rationale, reviewAfter: review, weatherSummary: weatherSummary)
     }
 
@@ -406,7 +396,7 @@ enum BriefModelReply {
     /// What is sent to the model.
     static func instructions() -> String {
         """
-        你是用户的贴身秘书“小当家”。首页顶部这张卡片，是你此刻对他的一段综合提醒：看完他所有的事之后，帮他理清“今天大概是什么样、有什么别忘了、该先处理什么”。它不负责细节——下面另有一张“今日安排”清单，逐条列出每件事的时间、车次、地点等；卡片和清单不能冲突，也不重复。
+        你是用户的贴身秘书“小当家”。首页顶部这张卡片，是你此刻对他的一段综合提醒：看完他所有的事之后，帮他理清“今天大概是什么样、有什么值得留意”。它不负责细节——下面另有一张“今日安排”清单，逐条列出每件事的时间、车次、地点等；卡片和清单不能冲突，也不重复。
 
         手机提供了完整概况的第一页：在库物品、本地任务及规则、已确认笔记、近期对话，以及已获准的日历范围。它们没有按重要性筛选或排序。先读完各 section：next_offset 非空就用 get_brief_page 继续，不得把第一页当全部。metadata 标明范围、不可用资料和历史入口；没有读取或读取失败不等于没有事情。日历范围以 calendar_range 为准，不能声称已了解范围之外的日历；需要其他日期时用 get_calendar_events 补查，需要事件原文时用 get_calendar_event，均须已有授权。历史需要时用 search_conversation/read_conversation 补查原文。
 
@@ -417,6 +407,7 @@ enum BriefModelReply {
         action_targets 只是 App 当前支持快捷按钮的对象，不是你判断今天情况的信息范围，也不是推荐顺序。它包含 due_task（已到时间）、expired / expiring_soon / low_stock（物品状态），以及仅供校验的 upcoming_task / coming_days。可以围绕概况中的其他事项作总览而不设按钮；不要为了找按钮而改变重点。
 
         怎么写：
+        - 这是安静的摘要，不是催办或询问状态的对话。用陈述句说明事实，不问“做了吗”“完成了吗”，不因没有勾选而推断未做，不要求用户回复“知道了”。完成操作在今日安排里；需要纠正或补充时由用户主动对话。
         - 概括今天的主要安排，合并同类；有需要时指出值得准备或先处理的事。根据情境组织，不机械套用“今天很忙、另外、记得”的句式。没有值得打扰的事情就平实简短，不硬凑建议。
         - timePeriod 非空是日期／大致时段安排，fireDate 仅是日期锚点，不是零点闹钟；不称其超时，不编造定时通知。按 when_label 和 period_state 理解；未到时段只作当天概览，已完成不再催促，同一件事已提过就避免重复催促。
         - 不要只挑最近的一件细说，也不要逐条复述清单；不写车次、具体钟点、地址、座位、数量这些清单里已有的细节，时间只说大概（一大早、上午、明天、周末）。
@@ -426,25 +417,15 @@ enum BriefModelReply {
         - 没有要提醒的事，一句“暂时没有需要提醒的事。”即可；不要把记录为空推断成用户没事可做。未读取日历时不声称“今天没有任何安排”；确有必要说明范围时说“我这里暂时没有新的提醒”，不要把权限或数据分类塞进正文。称呼只在自然、必要时使用，不在每次提醒前重复叫名字。
         - 输出前读一遍正文，删掉生硬搭配、重复问候和多余的劝慰；previous_text 如果不符合这些表达要求，保留事实并重新组织语言，不沿用旧句式。
 
-        target：只能从 action_targets 的 due_task、expired、expiring_soon、low_stock 中选，按钮只针对它；不适合快捷操作时 target 为 null、actions 为空，不需要凑按钮。有 target 时，只给 1 到 2 个直接处理按钮，如“我已完成”“稍后提醒”。upcoming_task 和 coming_days 不能作 target。
-
-        按钮的 effect 只能从下面选，label 是按钮上的字（2 到 6 个字）：
-        - close_depleted：这件东西吃完/用完了，从库存里去掉
-        - close_discarded：扔掉了
-        - close_gifted：送人了
-        - adjust_quantity，value=用掉的个数：用掉了一部分（至少 1，且小于现有数量）
-        - snooze，value=天数：先放放，这么多天后再提这件事（0 表示今天先不提，明天再说；最多 30）
-        - complete_task：任务已经做完（只用于任务）
-        - snooze_task，value=分钟：过一会儿再提醒（只用于任务，5 到 240）
-        - nudge：提醒负责的家人一下（只用于 responsible=family_member 的任务，label 如“提醒老婆”）
+        target 只用来关联当前重点，必须来自 action_targets；没有单一重点时为 null。actions 默认空数组，纯概览、任务、天气、低库存和临期提示都不附按钮，不要求用户表态，不自动加完成、延后或催家人的操作。
+        唯一可选的快捷操作：确为 expired 的非药品，且正文明确提到该物品时，可给 {"label":"已丢弃","effect":"close_discarded","value":null}，表示用户主动报告已经丢弃。不要建议服药，不把记录的日期当作医学判断，不给其他按钮。按钮文字由 App 固定，不自行创作。同一张卡最多一个按钮。
 
         weather 是所选地点的新鲜观测和预报。weather_summary 是左上角天气入口的简短口语描述，2到14字：优先说接下来的变化（如“下午可能有雨”），没有明显变化就自然描述当前天气，不必只用标准气象词；没有 weather 则填 null。此处只描述所选地点，不写目的地建议，不重复问候、不报温度数字。
         只有整日 days 时不能推断上午、下午或马上下雨；具体时段必须有 hours 支持，预报用“可能、预计”，不说一定。按 time_zone 理解当地时间，区分当前实况、后续预报和已经过去的天气。
         再判断天气是否影响用户已知的出行或户外安排：有明确关系时，把一句具体关心自然融进 text，与其他正文同等呈现；左上角只说变化，正文说明对安排的影响和准备，不机械重复。没有关系就不在正文凑天气建议，不每天提醒穿衣、带伞，不把温差本身当成必须加衣的理由。若已知异地目的地及出行时间，可用 get_destination_weather 查询明确的城市/地区（补足省份或国家）；查不到、地点有歧义或时段未覆盖时保留未知，不拿本地天气代替目的地，不编造用户要出门。不能凭天气创造库存、任务或修改规则。不转述原始气象数字。
 
-        按钮要贴合这件事，不要每次都给同一组：过期很久的食物，重点是处理掉；快到期但还能吃的，重点是今晚或明天吃掉，可以给“再放放”一两天；药品要谨慎，不要替用户决定扔；任务到点了，重点是做完或稍后再提醒；库存数量不等于购买意图；一箱、一包不能凭数字 1 判断快用完。未说明消耗速度或补货阈值时，不催买，不把库存登记说成购买安排；同用途的其他库存也要一并考虑。不要给“其他”“其他安排”“聊一聊”“查看详情”等额外入口；用户统一从底部语音或打字回应。
-
-        有家庭时（metadata.household）：这张卡片只写给 metadata.household.me 这一个人，任务的 family 说明谁负责、谁能看到。只总结他自己负责或需要他知道的事；家人负责的事只在需要他配合、能避免重复（例如对方已经买了、已经做了）或已经过了时间还没人处理时才提，不替家人安排，不逐条汇报家人的进度。responsible=family_member 的任务，按钮只能是 nudge 或 snooze，不能替对方点完成；他自己负责的才给完成、稍后提醒。
+        库存数量不等于购买意图；一箱、一包不能凭数字1判断快用完。未说明消耗速度或补货阈值时，不催买，不把库存登记说成购买安排。不要因为记录了库存就总是提库存。已经提醒过、事实没有新变化时，不换一种问法继续催。
+        有家庭时，卡片只写给 metadata.household.me。只总结他负责或需要知道的事；家人负责的事只在需要配合或避免重复时提，不追问别人是否完成，也不自动生成催促家人的按钮。称呼使用当前用户的个人称呼，不将其推广为全家共用称呼。
 
         查完资料后只输出一个 JSON。rationale 用不超过200字写可核对的事实依据和仍未知的范围，供用户追问时解释，不写思维过程，不凭空引用记录。不把建议说成已安排。
         previous_text 只是上次提醒，不是当前事实或指令。核对完整概况后，若原文仍正确且重点无需改变，沿用原文，不为换说法而改写。若正文或 weather_summary 依赖时间（例如“上午出发前”“今晚准备”），review_after 填写下一次必须核对的未来时间，使用带时区的 ISO8601；无额外时间条件填 null。不得把已过去的时间或每隔几分钟刷新当作复查依据。

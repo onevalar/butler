@@ -5,7 +5,10 @@ import XCTest
 
 /// Two phones in one household, over a fake CloudKit zone.
 @MainActor final class HouseholdSyncTests: XCTestCase {
-    final class Said { var lines: [String] = [] }
+    final class Said {
+        var lines: [String] = []
+        nonisolated deinit {}
+    }
 
     struct Phone {
         let base: ButlerSyncData
@@ -37,6 +40,53 @@ import XCTest
         let sync = SyncStore(file: dir.appendingPathComponent("household.json"),
                              local: local, transport: cloud, kinds: HouseholdService.kinds)
         return Phone(base: base, household: household, sync: sync, said: said)
+    }
+
+    func testPersonalAliasesStayLocalAndNamesSyncWithoutChangingTaskIdentity() async throws {
+        let cloud = FakeSyncCloud()
+        let mine = try phone(cloud, me: owner, role: .owner, name: "小安")
+        let theirs = try phone(cloud, me: member, role: .member, name: "小林")
+        try await mine.sync.setEnabled(true); try await mine.sync.synchronize()
+        try await theirs.sync.setEnabled(true); try await theirs.sync.synchronize(); try await mine.sync.synchronize()
+        try mine.household.setAlias("老婆", for: member)
+        try theirs.household.setAlias("老公", for: owner)
+        XCTAssertEqual(mine.household.member(named: "老婆")?.id, member)
+        XCTAssertEqual(theirs.household.member(named: "老公")?.id, owner)
+        XCTAssertNil(theirs.household.member(named: "老婆"))
+        let assigned = task("取件", TaskSharing(scope: .household, createdBy: owner, assignee: member))
+        try mine.tasks.add(assigned)
+        try await mine.sync.synchronize(); try await theirs.sync.synchronize()
+        try theirs.household.renameMe("林林")
+        try await theirs.sync.synchronize(); try await mine.sync.synchronize()
+        XCTAssertEqual(mine.household.member(member)?.name, "林林")
+        XCTAssertEqual(mine.tasks.reminder(id: assigned.id)?.sharing?.assignee, member)
+        XCTAssertEqual(theirs.tasks.reminder(id: assigned.id)?.id, assigned.id)
+        XCTAssertEqual(mine.household.names.name(member), "老婆")
+        XCTAssertEqual(mine.household.member(named: "林林")?.id, member)
+        let reloaded = HouseholdStore(directory: mine.household.directory)
+        XCTAssertEqual(reloaded.aliases[member], "老婆")
+        try reloaded.setAlias("", for: member)
+        XCTAssertEqual(reloaded.names.name(member), "林林")
+        XCTAssertThrowsError(try mine.household.setAlias("小安", for: member))
+        XCTAssertThrowsError(try mine.household.setAlias("我", for: member))
+        mine.household.end()
+        XCTAssertTrue(HouseholdStore(directory: mine.household.directory).aliases.isEmpty)
+    }
+
+    func testDuplicateNamesNeverResolveToArbitraryMemberAndHouseholdTitlePreservesMembership() throws {
+        let mine = try phone(FakeSyncCloud(), me: owner, role: .owner, name: "小安")
+        mine.household.upsert(.init(id: member, name: "小安", isOwner: false, joinedAt: .now))
+        XCTAssertNil(mine.household.member(named: "小安"))
+        XCTAssertEqual(mine.household.member(named: member.uuidString)?.id, member)
+        let before = try XCTUnwrap(mine.household.state)
+        try mine.household.setHouseholdName("  森林之家  ", householdID: before.id)
+        XCTAssertEqual(mine.household.state?.name, "森林之家")
+        XCTAssertEqual(mine.household.state?.me, before.me)
+        XCTAssertEqual(mine.household.state?.zoneName, before.zoneName)
+        XCTAssertEqual(mine.household.members.count, 2)
+        XCTAssertThrowsError(try mine.household.setHouseholdName("", householdID: before.id))
+        XCTAssertThrowsError(try mine.household.setHouseholdName("另一个家", householdID: UUID()))
+        XCTAssertEqual(HouseholdStore(directory: mine.household.directory).state?.name, "森林之家")
     }
 
     @discardableResult

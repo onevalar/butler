@@ -11,6 +11,7 @@ final class HouseholdStore {
 
     private(set) var state: HouseholdState?
     private(set) var members: [HouseholdMember] = []
+    private(set) var aliases: [UUID: String] = [:]
     private(set) var sharing: [UUID: ItemSharing] = [:]
     /// Things that were on this phone when it joined, waiting to be merged or sorted after the first sync.
     private(set) var staged: Set<UUID> = []
@@ -22,6 +23,7 @@ final class HouseholdStore {
         self.directory = directory
         state = load("state.json")
         members = load("members.json") ?? []
+        aliases = load("aliases.json") ?? [:]
         sharing = load("sharing.json") ?? [:]
         staged = load("staged.json") ?? []
         joining = state != nil && ((load("joining.json") as Bool?) ?? !staged.isEmpty)
@@ -40,15 +42,65 @@ final class HouseholdStore {
     /// Names as this person sees them, for task labels.
     var names: HouseholdNames {
         guard let state else { return .none }
-        return HouseholdNames(me: state.me, names: Dictionary(members.map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a }))
+        return HouseholdNames(me: state.me, names: Dictionary(members.map { ($0.id, displayName($0)) }, uniquingKeysWith: { a, _ in a }))
     }
 
-    /// "老公", "妈妈": exact name first, then a name containing the other.
+    func displayName(_ member: HouseholdMember) -> String {
+        aliases[member.id] ?? member.name
+    }
+
+    /// Personal relationship names never enter the shared member record.
+    func setAlias(_ raw: String, for id: UUID) throws {
+        guard let state, id != state.me, member(id) != nil else { throw SyncFailure("请重新选择家人。") }
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard value.count <= 20 else { throw SyncFailure("称呼最多 20 个字。") }
+        guard !["我", "自己", "我自己"].contains(value) else { throw SyncFailure("请使用对这位家人的称呼。") }
+        guard value.isEmpty || !members.contains(where: { $0.id != id && (displayName($0) == value || $0.name == value) }) else {
+            throw SyncFailure("这个名字或称呼已经对应另一位家人，请换一个，避免提醒错人。")
+        }
+        var next = aliases
+        next[id] = value.isEmpty ? nil : value
+        try persist(next, "aliases.json")
+        aliases = next
+        NotificationCenter.default.post(name: .init("butlerBriefSourcesChanged"), object: nil)
+    }
+
+    @discardableResult
+    func setHouseholdName(_ raw: String, householdID: UUID) throws -> String {
+        let value = try Self.validName(raw)
+        guard var state, state.id == householdID else { throw SyncFailure("家庭已变化，请重新打开页面。") }
+        state.name = value
+        try persist(state, "state.json")
+        self.state = state
+        return value
+    }
+
+    func renameMe(_ raw: String) throws {
+        guard var me else { throw SyncFailure("请先加入家庭。") }
+        me.name = try Self.validName(raw)
+        var next = members
+        guard let index = next.firstIndex(where: { $0.id == me.id }) else { throw SyncFailure("成员资料已变化。") }
+        next[index] = me
+        try persist(next, "members.json")
+        members = next
+    }
+
+    static func validName(_ raw: String) throws -> String {
+        let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name.count <= 40 else { throw SyncFailure("请填写 1 到 40 个字的名字。") }
+        return name
+    }
+
     func member(named raw: String) -> HouseholdMember? {
         let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return nil }
         if ["我", "自己", "我自己"].contains(name) { return me }
-        return members.first { $0.name == name } ?? members.first { $0.name.contains(name) || name.contains($0.name) }
+        if let id = UUID(uuidString: name) { return member(id) }
+        // Ambiguity must not silently assign a reminder to the first person in the list.
+        let exact = members.filter { displayName($0) == name || $0.name == name }
+        if !exact.isEmpty { return exact.count == 1 ? exact[0] : nil }
+        let partial = members.filter { displayName($0).contains(name) || name.contains(displayName($0)) || $0.name.contains(name) || name.contains($0.name) }
+        return partial.count == 1 ? partial[0] : nil
     }
 
     /// Household tasks this person cannot see: kept aside so they never reach lists, reminders or the model,
@@ -127,6 +179,7 @@ final class HouseholdStore {
     // MARK: Changes
 
     func begin(_ state: HouseholdState, me: HouseholdMember, staging: Set<UUID> = [], joining: Bool = false) {
+        if self.state?.id != state.id { aliases = [:]; save(aliases, "aliases.json") }
         self.state = state
         members = [me]
         staged = staging
@@ -149,6 +202,8 @@ final class HouseholdStore {
     }
 
     func removeMember(_ id: UUID) {
+        aliases[id] = nil
+        save(aliases, "aliases.json")
         members.removeAll { $0.id == id }
         save(members, "members.json")
     }
@@ -167,13 +222,14 @@ final class HouseholdStore {
     func end() {
         state = nil
         members = []
+        aliases = [:]
         staged = []
         joining = false
         sharing = [:]
         hiddenTasks = [:]
         rules = []
         // This person's own rules are theirs, not the household's: they stay.
-        for name in ["state.json", "members.json", "sharing.json", "staged.json", "joining.json", "hidden-tasks.json", "rules.json"] {
+        for name in ["state.json", "aliases.json", "members.json", "sharing.json", "staged.json", "joining.json", "hidden-tasks.json", "rules.json"] {
             try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
         }
     }
@@ -183,6 +239,11 @@ final class HouseholdStore {
     private func load<T: Decodable>(_ name: String) -> T? {
         guard let data = try? Data(contentsOf: directory.appendingPathComponent(name)) else { return nil }
         return try? JSONDecoder().decode(T.self, from: data)
+    }
+
+    private func persist<T: Encodable>(_ value: T, _ name: String) throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try SyncRecord.encode(value).write(to: directory.appendingPathComponent(name), options: .atomic)
     }
 
     private func save<T: Encodable>(_ value: T, _ name: String) {

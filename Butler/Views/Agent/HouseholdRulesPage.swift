@@ -70,7 +70,7 @@ struct HouseholdRulesPage: View {
         VStack(alignment: .leading, spacing: 3) {
             Text(rule.text)
             if let who = store.member(rule.createdBy), who.id != store.state?.me {
-                Text("\(who.name)加的").font(.caption).foregroundStyle(.secondary)
+                Text("\(HouseholdStore.shared.displayName(who))加的").font(.caption).foregroundStyle(.secondary)
             }
         }
         .swipeActions { Button("删除", role: .destructive) { service.removeRule(rule.id) } }

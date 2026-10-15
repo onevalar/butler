@@ -114,15 +114,16 @@ final class ButlerBriefTests: XCTestCase {
         let egg = BriefCandidate(target: .lot(UUID()), kind: .expired, name: "土鸡蛋", detail: "已过期 4 天", quantity: 6, unit: "枚",
                                  daysLeft: -4, location: nil, isMedicine: false)
         let expired = BriefLocal.compose(candidates: [egg], lotCount: 3, basis: "依据", now: now)
-        XCTAssertEqual(expired.text, "土鸡蛋已过期 4 天，今天处理掉吧。")
-        XCTAssertEqual(expired.actions.map(\.label), ["扔掉了", "已吃完", "先放放"])
+        XCTAssertEqual(expired.text, "土鸡蛋已过期 4 天。")
+        XCTAssertTrue(expired.actions.isEmpty)
         XCTAssertEqual(expired.target, egg.target)
         XCTAssertEqual(expired.source, .local)
 
         let task = BriefCandidate(target: .task(UUID()), kind: .dueTask, name: "热剩饭", detail: "已到时间", quantity: nil, unit: nil,
                                   daysLeft: nil, location: nil, isMedicine: false)
         let due = BriefLocal.compose(candidates: [task], lotCount: 0, basis: "", now: now)
-        XCTAssertEqual(due.actions.map(\.effect), [.completeTask, .remindLater(minutes: 10)])
+        XCTAssertTrue(due.actions.isEmpty)
+        XCTAssertFalse(due.text.contains("做了吗"))
 
         let medicine = BriefCandidate(target: .lot(UUID()), kind: .expired, name: "布洛芬", detail: "已过期 1 天", quantity: 1, unit: "盒",
                                       daysLeft: -1, location: nil, isMedicine: true)
@@ -157,8 +158,8 @@ final class ButlerBriefTests: XCTestCase {
         let parsed = try XCTUnwrap(BriefModelReply.parse(reply, candidates: [lot, task]))
         XCTAssertEqual(parsed.target, lot.target)
         XCTAssertEqual(parsed.text, "今晚把红枣酸奶喝了吧，它后天到期。")
-        XCTAssertEqual(parsed.actions.map(\.label), ["喝完了", "喝了一瓶", "再放两天"], "at most three, never a button called 其他")
-        XCTAssertEqual(parsed.actions.map(\.effect), [.closeLot(.depleted), .usedSome(1), .snooze(days: 2)])
+        XCTAssertTrue(parsed.actions.isEmpty, "Ordinary expiry information must not solicit consumption or acknowledgment")
+        XCTAssertTrue(parsed.actions.isEmpty)
     }
 
     func testBadPartsOfAReplyAreDroppedAndBadWholesAreRefused() throws {
@@ -186,7 +187,7 @@ final class ButlerBriefTests: XCTestCase {
           {"label":"格式化","effect":"delete_everything","value":null},
           {"label":"看看","effect":"open_detail","value":null}]}
         """))
-        XCTAssertEqual(mixed.actions.map(\.effect), [.openDetail])
+        XCTAssertTrue(mixed.actions.isEmpty)
         // Tasks take task effects only, and minutes are bounded.
         let taskReply = try XCTUnwrap(parse("""
         {"target":"\(task.target.key)","text":"热剩饭到点了，热了吗？","actions":[
@@ -195,7 +196,7 @@ final class ButlerBriefTests: XCTestCase {
           {"label":"马上","effect":"snooze_task","value":1},
           {"label":"半小时后","effect":"snooze_task","value":30}]}
         """))
-        XCTAssertEqual(taskReply.actions.map(\.effect), [.completeTask, .remindLater(minutes: 30)])
+        XCTAssertTrue(taskReply.actions.isEmpty)
     }
 
     func testTheRequestCarriesTheSituationAndTheInstructionsNameTheClosedSet() throws {
@@ -206,7 +207,7 @@ final class ButlerBriefTests: XCTestCase {
         let items = try XCTUnwrap(json["action_targets"] as? [[String: Any]])
         XCTAssertEqual(items.first?["key"] as? String, lot.target.key)
         XCTAssertEqual(items.first?["kind"] as? String, "expiring_soon")
-        for effect in ["close_depleted", "close_discarded", "close_gifted", "adjust_quantity", "snooze", "complete_task", "snooze_task"] {
+        for effect in ["close_discarded"] {
             XCTAssertTrue(BriefModelReply.instructions().contains(effect), effect)
         }
     }
@@ -311,7 +312,7 @@ final class ButlerBriefTests: XCTestCase {
         let egg = BriefCandidate(target: .lot(UUID()), kind: .expired, name: "土鸡蛋", detail: "已过期 4 天", quantity: 6, unit: "枚",
                                  daysLeft: -4, location: nil, isMedicine: false)
         service.update(candidates: [egg], lotCount: 3, taskCount: 1, usesCalendar: false, now: now)
-        XCTAssertEqual(service.brief.text, "土鸡蛋已过期 4 天，今天处理掉吧。")
+        XCTAssertEqual(service.brief.text, "土鸡蛋已过期 4 天。")
         XCTAssertEqual(service.brief.basis, "依据：家里的 3 样东西 · 1 条提醒")
         XCTAssertFalse(service.isThinking, "no connection: nothing to wait for")
 
@@ -399,7 +400,7 @@ final class ButlerBriefTests: XCTestCase {
         XCTAssertEqual(service.brief.source, .model)
     }
 
-    func testTheModelChoosesTheSentenceAndTheButtonsAndItIsAskedOncePerSituation() async throws {
+    func testTheModelChoosesTheSummaryWithoutInventingButtonsAndIsAskedOncePerSituation() async throws {
         let store = defaults()
         let item = candidate()
         let model = FakeModel { self.reply(for: item) }
@@ -414,8 +415,8 @@ final class ButlerBriefTests: XCTestCase {
         XCTAssertFalse(service.isThinking)
         XCTAssertEqual(service.brief.source, .model)
         XCTAssertEqual(service.brief.text, "今晚把红枣酸奶喝了吧，它后天到期。")
-        XCTAssertEqual(service.brief.actions.map(\.label), ["喝了一瓶", "再放两天"])
-        XCTAssertEqual(service.brief.actions.map(\.effect), [.usedSome(1), .snooze(days: 2)])
+        XCTAssertTrue(service.brief.actions.isEmpty)
+        XCTAssertTrue(service.brief.quickActions.isEmpty)
         XCTAssertEqual(service.brief.target, item.target)
         XCTAssertEqual(model.requests.count, 1)
         XCTAssertTrue(model.requests[0].contains(item.target.key))
@@ -445,7 +446,7 @@ final class ButlerBriefTests: XCTestCase {
         await garbage.settle()
         XCTAssertEqual(garbage.brief.source, .local)
         XCTAssertFalse(garbage.isThinking)
-        XCTAssertFalse(garbage.brief.actions.isEmpty, "the local buttons work once the wait is over")
+        XCTAssertTrue(garbage.brief.actions.isEmpty, "A model failure must not manufacture buttons")
 
         let failing = BriefService(defaults: defaults())
         failing.attach(model: FakeModel { throw URLError(.notConnectedToInternet) })

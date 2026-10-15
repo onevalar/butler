@@ -9,8 +9,6 @@ struct HouseholdSettingsPage: View {
     @State private var copyingLink = false
     @State private var copiedLink = false
     @State private var confirmLeave = false
-    @State private var renaming = false
-    @State private var newName = ""
     @State private var error: String?
     @State private var recovery: HouseholdService.Recovery?
     @State private var recovering = false
@@ -42,21 +40,32 @@ struct HouseholdSettingsPage: View {
                         .listRowInsets(EdgeInsets())
                 }
                 Section {
+                    if store.isOwner {
+                        NavigationLink { HouseholdIdentityEditor(memberID: nil) } label: {
+                            LabeledContent("家庭名称", value: state.name)
+                        }
+                    } else {
+                        LabeledContent("家庭名称", value: state.name)
+                    }
+                } footer: {
+                    Text(store.isOwner ? "全家看到同一个家庭名称，点击即可修改。" : "家庭名称由创建者修改。")
+                }
+                .glassRows()
+                Section {
                     ForEach(store.members) { member in
-                        Button {
-                            guard member.id == state.me else { return }
-                            newName = member.name
-                            renaming = true
-                        } label: {
+                        NavigationLink { HouseholdIdentityEditor(memberID: member.id) } label: {
                             HStack(spacing: 12) {
                                 MemberBadge(member: member)
-                                Text(member.name).foregroundStyle(.primary)
-                                if member.id == state.me { Text("我").font(.footnote).foregroundStyle(.secondary) }
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(store.displayName(member)).foregroundStyle(.primary)
+                                    Text(member.id == state.me ? "我 · 编辑显示名字" :
+                                         store.aliases[member.id] == nil ? "设置我对 TA 的称呼" : "显示名字：" + member.name)
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
                                 Spacer()
                                 if member.isOwner { Text("创建者").font(.footnote).foregroundStyle(.secondary) }
                             }
                         }
-                        .buttonStyle(.plain)
                     }
                     if store.isOwner {
                         Button { invite() } label: {
@@ -77,7 +86,7 @@ struct HouseholdSettingsPage: View {
                         .disabled(preparingInvite || copyingLink)
                     }
                 } header: {
-                    Text(state.name)
+                    Text("家庭成员")
                 } footer: {
                     Text(syncLine)
                     if store.isOwner {
@@ -159,11 +168,6 @@ struct HouseholdSettingsPage: View {
             Button("取消", role: .cancel) { recovery = nil }
         } message: {
             Text("会先备份本机资料，再将当前共享物品和日程合并到家庭。若此前清理过云端，本机仍保留的共享内容可能重新出现。")
-        }
-        .alert("家人怎么称呼你？", isPresented: $renaming) {
-            TextField("例如“妈妈”“老公”", text: $newName)
-            Button("好") { service.rename(me: newName) }
-            Button("取消", role: .cancel) {}
         }
         .confirmationDialog(store.isOwner ? "解散这个家庭？" : "退出这个家庭？", isPresented: $confirmLeave, titleVisibility: .visible) {
             Button(store.isOwner ? "解散" : "退出", role: .destructive) {
@@ -293,12 +297,12 @@ struct CreateHouseholdSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("家的名字") { TextField("我们家", text: $name) }
+                Section("家庭名称") { TextField("我们家", text: $name) }
                     .glassRows()
                 Section {
-                    TextField("例如“老公”“妈妈”", text: $myName)
-                } header: { Text("家人怎么称呼你") } footer: {
-                    Text("管家会用它分清是谁记的、该提醒谁。建好后先帮你备份，再把手机里的东西分成全家的和你自己的。")
+                    TextField("例如“小安”", text: $myName)
+                } header: { Text("我的显示名字") } footer: {
+                    Text("全家都会看到这个名字，之后可以修改。对家人的“妈妈”“老公”等称呼，可加入后分别设置。")
                 }
                 .glassRows()
                 if let error {
@@ -315,11 +319,12 @@ struct CreateHouseholdSheet: View {
                             Task {
                                 do {
                                     _ = try await service.create(name: name.trimmingCharacters(in: .whitespaces).isEmpty ? "我们家" : name,
-                                                                 myName: myName.trimmingCharacters(in: .whitespaces).isEmpty ? "我" : myName)
+                                                                 myName: myName)
                                     dismiss()
                                 } catch { self.error = error.localizedDescription }
                             }
                         }
+                        .disabled(myName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || myName.count > 40 || name.count > 40)
                     }
                 }
             }
@@ -331,6 +336,7 @@ struct CreateHouseholdSheet: View {
 /// Shown once on the phone that joined: the household's name, how to be called, what was merged.
 struct JoinedHouseholdSheet: View {
     @State private var myName: String = HouseholdStore.shared.me?.name ?? ""
+    @State private var nameError: String?
     private var service: HouseholdService { .shared }
 
     var body: some View {
@@ -351,8 +357,9 @@ struct JoinedHouseholdSheet: View {
                     .padding(.vertical, 4)
                 }
                 .listRowBackground(Color.clear)
-                Section("家人怎么称呼你") { TextField("例如“老婆”“小明”", text: $myName) }
+                Section { TextField("例如“小明”", text: $myName) } header: { Text("我的显示名字") } footer: { Text("全家看到的名字，可随时在家庭成员里修改。关系称呼由每位家人自己设置。") }
                     .glassRows()
+                if let nameError { Text(nameError).foregroundStyle(.red) }
                 if let summary = service.summary {
                     Section { HouseholdSummaryCard(summary: summary) { service.summary = nil } }
                         .listRowBackground(Color.clear)
@@ -362,10 +369,72 @@ struct JoinedHouseholdSheet: View {
             .glassList()
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(service.lastSync == nil ? "稍后继续" : "完成") { service.rename(me: myName.isEmpty ? "家人" : myName) }
+                    Button(service.lastSync == nil ? "稍后继续" : "完成") {
+                        do { try service.rename(me: myName) } catch { nameError = error.localizedDescription }
+                    }.disabled(myName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || myName.count > 40)
                 }
             }
         }
         .interactiveDismissDisabled()
+    }
+}
+
+/// Shared identity and personal relationships have different ownership and storage.
+private struct HouseholdIdentityEditor: View {
+    let memberID: UUID?
+    @Environment(\.dismiss) private var dismiss
+    @State private var value = ""
+    @State private var saving = false
+    @State private var error: String?
+    private var store: HouseholdStore { .shared }
+    private var isMe: Bool { memberID != nil && memberID == store.state?.me }
+    private var title: String { memberID == nil ? "家庭名称" : isMe ? "我的显示名字" : "我对 TA 的称呼" }
+
+    var body: some View {
+        Form {
+            if let memberID, let member = store.member(memberID), !isMe {
+                Section {
+                    LabeledContent("显示名字", value: member.name)
+                } footer: { Text("这是 TA 设置的名字，全家可见。") }
+                .glassRows()
+            }
+            Section {
+                TextField(memberID == nil ? "我们家" : isMe ? "例如“小安”" : "例如“妈妈”“老公”", text: $value)
+                    .accessibilityLabel(title)
+            } header: { Text(title) } footer: {
+                Text(memberID == nil ? "修改后，全家同步时会看到新名称。需要连接 iCloud 才能保存。" :
+                     isMe ? "全家都会看到这个名字。改名不会改变已有物品、任务和负责人；联网后自动同步。" :
+                     "仅在这台设备上显示和使用这个称呼，管家会据此理解你说的是谁，不改变其他家人的称呼。留空恢复 TA 的显示名字。")
+            }
+            .glassRows()
+            if let error { Section { Text(error).foregroundStyle(.red) }.listRowBackground(Color.clear) }
+        }
+        .glassList()
+        .navigationTitle(title).navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                if saving { ProgressView() } else {
+                    Button("保存") {
+                        saving = true
+                        Task {
+                            defer { saving = false }
+                            do {
+                                if let memberID {
+                                    if isMe { try HouseholdService.shared.rename(me: value) }
+                                    else { try store.setAlias(value, for: memberID) }
+                                } else { try await HouseholdService.shared.renameHousehold(value) }
+                                dismiss()
+                            } catch { self.error = error.localizedDescription }
+                        }
+                    }
+                    .disabled(value.count > (memberID != nil && !isMe ? 20 : 40) ||
+                              ((memberID == nil || isMe) && value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+                }
+            }
+        }
+        .task {
+            if let memberID { value = isMe ? store.member(memberID)?.name ?? "" : store.aliases[memberID] ?? "" }
+            else { value = store.state?.name ?? "" }
+        }
     }
 }

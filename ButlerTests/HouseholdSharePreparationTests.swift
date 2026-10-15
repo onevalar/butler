@@ -5,6 +5,31 @@ import XCTest
 @MainActor final class HouseholdSharePreparationTests: XCTestCase {
     private let zone = CKRecordZone.ID(zoneName: "test-family", ownerName: CKCurrentUserDefaultName)
 
+    func testRenameRefetchesOnConflictAndPreservesOtherInvitations() async throws {
+        let old = CKShare(recordZoneID: zone), fresh = CKShare(recordZoneID: zone)
+        let guest = CKShare.Participant.oneTimeURLParticipant()
+        guest.permission = .readWrite; fresh.addParticipant(guest)
+        var reads = 0
+        let result = try await HouseholdSharePreparation.rename(title: "森林之家", fetch: {
+            reads += 1; return reads == 1 ? old : fresh
+        }, save: { share in
+            if reads == 1 { throw CKError(.serverRecordChanged) }
+            XCTAssertEqual(share.publicPermission, .none)
+            XCTAssertTrue(share.participants.contains { $0.participantID == guest.participantID })
+            return share
+        })
+        XCTAssertEqual(result[CKShare.SystemFieldKey.title] as? String, "森林之家")
+        XCTAssertEqual(reads, 2)
+    }
+
+    func testRenameFailureDoesNotInventSuccessfulReceipt() async {
+        do {
+            _ = try await HouseholdSharePreparation.rename(title: "新的家", fetch: { CKShare(recordZoneID: self.zone) },
+                save: { _ in throw CKError(.networkFailure) })
+            XCTFail("A failed save must not report success")
+        } catch { XCTAssertEqual((error as? CKError)?.code, .networkFailure) }
+    }
+
     func testInvitationSavesPrivateParticipantBeforeReadingItsOwnURL() async throws {
         let share = CKShare(recordZoneID: zone)
         var saved = false

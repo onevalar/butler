@@ -113,7 +113,7 @@ final class BriefService {
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let calendar: Calendar
 
-    private static let cacheKey = "briefCache"
+    private static let cacheKey = "briefCache.quietSummary.v2"
     private static let contentVersion = "overview-v8|"
     private static let failureKey = "briefFailure"
     private static let retryAfter: TimeInterval = 10 * 60
@@ -296,13 +296,8 @@ final class BriefService {
                 return
             }
             if let parsed = BriefModelReply.parse(answer.text, candidates: candidates) {
-                var actions = parsed.actions
-                if actions.isEmpty, let target = parsed.target, let mine = candidates.first(where: { $0.target == target }) {
-                    // A sentence without usable buttons still gets sensible ones.
-                    actions = BriefLocal.compose(candidates: [mine], lotCount: 1, basis: local.basis, now: now, calendar: calendar).actions
-                }
                 var result = ButlerBrief(greeting: local.greeting, text: parsed.text, basis: local.basis,
-                                         target: parsed.target, actions: actions, source: .model, hasSubject: true,
+                                         target: parsed.target, actions: parsed.actions, source: .model, hasSubject: true,
                                          rationale: parsed.rationale)
                 if let review = parsed.reviewAfter, review <= completedAt { throw BriefReadError.incomplete }
                 let deadline = min(parsed.reviewAfter ?? midnight, midnight)
@@ -325,7 +320,7 @@ final class BriefService {
                     dependencies: answer.dependencies, displaySignature: displaySignature, displayValidUntil: displayDeadline))
                 nextCheckAt = (answer.dependencies.flatMap(\.boundaries) + [nextCheckAt ?? midnight, deadline])
                     .filter { $0 > completedAt }.min()
-                ChatDiagnostics.log("brief model ok \(String(format: "%.1f", Date.now.timeIntervalSince(started)))s chars=\(parsed.text.count) actions=\(actions.count)")
+                ChatDiagnostics.log("brief model ok \(String(format: "%.1f", Date.now.timeIntervalSince(started)))s chars=\(parsed.text.count) actions=\(parsed.actions.count)")
             } else {
                 throw BriefReadError.incomplete
             }

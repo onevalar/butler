@@ -28,7 +28,7 @@ struct TaskFamilyArgs: Decodable, Equatable {
         return String(decoding: data, as: UTF8.self)
     }()
 
-    static let guidance = "family：仅当current_context有household时填写，否则null。visibility：personal只有我、household全家、people只给people里的人；hidden_from全家可见但不让这些人看到；assignee谁负责（家人称呼，null没人负责）；notify到点提醒谁（空数组=负责的人，没人负责就提醒创建的人）；escalate_to和escalate_after_minutes：一次性任务到点后这么久还没人完成，再提醒这个人（用户或家庭规则要求时才填，否则null）。先按用户这句话，其次已记住的家庭规则，再由你按内容判断：家务、采购、缴费、孩子和老人的事通常全家可见；交给别人做的事给对方看并提醒对方；看病、体检、私人约会、礼物惊喜等私事只有我。只有涉及隐私又真拿不准时才问一句是/否，其他情况直接给出判断，用户会在卡片上改。修改已有任务的范围用propose_task_sharing。"
+    static let guidance = "family：仅当current_context有household时填写，否则null。visibility：personal只有我、household全家、people只给people里的人；hidden_from全家可见但不让这些人看到；assignee谁负责（优先使用members里的id，也接受当前用户的家人称呼，null没人负责）；notify到点提醒谁（空数组=负责的人，没人负责就提醒创建的人）；escalate_to和escalate_after_minutes：一次性任务到点后这么久还没人完成，再提醒这个人（用户或家庭规则要求时才填，否则null）。先按用户这句话，其次已记住的家庭规则，再由你按内容判断：家务、采购、缴费、孩子和老人的事通常全家可见；交给别人做的事给对方看并提醒对方；看病、体检、私人约会、礼物惊喜等私事只有我。只有涉及隐私又真拿不准时才问一句是/否，其他情况直接给出判断，用户会在卡片上改。修改已有任务的范围用propose_task_sharing。"
 }
 
 extension ButlerTools {
@@ -45,7 +45,7 @@ extension ButlerTools {
         func members(_ names: [String]) throws -> Set<UUID> {
             Set(try names.map { name in
                 guard let member = household.member(named: name) else {
-                    throw ToolError("家里没有“\(name)”。家人：" + household.members.map(\.name).joined(separator: "、"))
+                    throw ToolError("无法唯一确定“\(name)”，请确认是哪位家人。家人：" + household.members.map { household.displayName($0) }.joined(separator: "、"))
                 }
                 return member.id
             })
@@ -90,7 +90,7 @@ extension ButlerTools {
         }
         return ["name": state.name, "me": household.me?.name ?? "我",
                 "members": household.members.map { member -> [String: Any] in
-                    ["name": member.name, "is_me": member.id == state.me, "quiet_hours": member.quiet?.label ?? NSNull()]
+                    ["id": member.id.uuidString, "name": household.displayName(member), "display_name": member.name, "is_me": member.id == state.me, "quiet_hours": member.quiet?.label ?? NSNull()]
                 },
                 "rules": household.rules.map { rule($0, "household") } + household.myRules.map { rule($0, "me") },
                 "rule_order": "这句话说的 > 只对我的规则 > 家里的规则 > 你按内容判断 > 保守默认（任务只有我，物品全家）"]

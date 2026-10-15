@@ -52,6 +52,24 @@ import Foundation
         }
     }
 
+    /// Change only the title on the latest share; preserve participants and permissions.
+    static func rename(title: String, fetch: () async throws -> CKShare,
+                       save: (CKShare) async throws -> CKRecord) async throws -> CKShare {
+        for attempt in 0..<3 {
+            let share = try await fetch()
+            share[CKShare.SystemFieldKey.title] = title as CKRecordValue
+            do {
+                let saved = try checked(try await save(share))
+                guard saved.recordID == share.recordID,
+                      saved[CKShare.SystemFieldKey.title] as? String == title else {
+                    throw SyncFailure("家庭名称尚未保存，请重试。")
+                }
+                return saved
+            } catch let error as CKError where error.code == .serverRecordChanged && attempt < 2 { continue }
+        }
+        throw SyncFailure("家庭资料正在更新，请稍后再试。")
+    }
+
     static func checked(_ record: CKRecord) throws -> CKShare {
         guard let share = record as? CKShare else { throw SyncFailure("家庭邀请记录异常，请稍后重试。") }
         return share

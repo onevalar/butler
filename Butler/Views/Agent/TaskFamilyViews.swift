@@ -165,7 +165,7 @@ struct TaskFamilyEditor: View {
                     }
                     if draft.scope == .people {
                         ForEach(store.members.filter { $0.id != draft.createdBy }) { member in
-                            Toggle(member.name, isOn: Binding(get: { draft.people.contains(member.id) }, set: { on in
+                            Toggle(store.displayName(member), isOn: Binding(get: { draft.people.contains(member.id) }, set: { on in
                                 if on { draft.people.insert(member.id) }
                                 else {
                                     draft.people.remove(member.id)
@@ -183,7 +183,7 @@ struct TaskFamilyEditor: View {
                         Text("我来处理").tag(store.state?.me)
                         Text("暂不指定").tag(UUID?.none)
                         ForEach(store.members.filter { $0.id != store.state?.me }) { member in
-                            Text(member.name).tag(Optional(member.id))
+                            Text(store.displayName(member)).tag(Optional(member.id))
                         }
                     }
                 } footer: {
@@ -192,7 +192,7 @@ struct TaskFamilyEditor: View {
                 Section {
                     DisclosureGroup("更多提醒设置", isExpanded: $advanced) {
                         ForEach(store.members) { member in
-                            Toggle("提醒\(member.name)", isOn: Binding(get: { draft.reminded.contains(member.id) }, set: { _ in
+                            Toggle("提醒\(store.displayName(member))", isOn: Binding(get: { draft.reminded.contains(member.id) }, set: { _ in
                                 draft = TaskFamilyEdit.toggleNotify(draft, member.id)
                             }))
                         }
@@ -200,7 +200,7 @@ struct TaskFamilyEditor: View {
                             draft = TaskFamilyEdit.escalate(draft, to: $0, after: $0 == nil ? nil : (draft.escalateAfter ?? 30))
                         })) {
                             Text("不用").tag(UUID?.none)
-                            ForEach(store.members) { member in Text(member.name).tag(Optional(member.id)) }
+                            ForEach(store.members) { member in Text(store.displayName(member)).tag(Optional(member.id)) }
                         }
                         if draft.escalateTo != nil {
                             Picker("等待多久", selection: Binding(get: { draft.escalateAfter ?? 30 }, set: { draft.escalateAfter = $0 })) {

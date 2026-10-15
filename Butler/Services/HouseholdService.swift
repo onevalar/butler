@@ -123,6 +123,8 @@ final class HouseholdService {
     func create(name: String, myName: String) async throws -> Summary {
         guard !busy, !syncing else { throw SyncFailure("正在处理家庭资料，请稍后重试。") }
         guard let container, store.state == nil else { throw SyncFailure("已经在一个家庭里了。") }
+        let name = try HouseholdStore.validName(name)
+        let myName = try HouseholdStore.validName(myName)
         busy = true; defer { busy = false }
         let me = try await myMemberID()
         try backUpBeforeSharing(container)
@@ -353,14 +355,44 @@ final class HouseholdService {
 
     // MARK: Day to day
 
-    func rename(me name: String) {
-        guard var me = store.me else { return }
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed.count <= 20 else { return }
-        me.name = trimmed
-        store.upsert(me)
+    func rename(me name: String) throws {
+        try store.renameMe(name)
         needsName = false
+        NotificationCenter.default.post(name: .init("butlerBriefSourcesChanged"), object: nil)
         Task { await sync() }
+    }
+
+    func renameHousehold(_ raw: String) async throws {
+        let name = try HouseholdStore.validName(raw)
+        guard let state = store.state, state.role == .owner, let zoneID else {
+            throw SyncFailure("只有家庭创建者可以修改家庭名称。")
+        }
+        guard !busy, !syncing, inviteTask == nil, linkTask == nil else { throw SyncFailure("正在同步家庭资料，请稍后保存。") }
+        busy = true; defer { busy = false }
+        guard try await myMemberID() == state.me else { throw SyncFailure("请先切回创建家庭时的 iCloud 账号。") }
+        let database = cloud.privateCloudDatabase
+        let id = CKRecord.ID(recordName: CKRecordNameZoneWideShare, zoneID: zoneID)
+        _ = try await HouseholdSharePreparation.rename(title: name,
+            fetch: { try HouseholdSharePreparation.checked(try await database.record(for: id)) },
+            save: { try await database.save($0) })
+        guard try await myMemberID() == state.me else { throw SyncFailure("iCloud 账号已变化，请重新打开家庭页面。") }
+        try store.setHouseholdName(name, householdID: state.id)
+        NotificationCenter.default.post(name: .init("butlerBriefSourcesChanged"), object: nil)
+    }
+
+    private func refreshHouseholdName(_ state: HouseholdState) async {
+        let zone = CKRecordZone.ID(zoneName: state.zoneName, ownerName: state.zoneOwner)
+        let database = state.role == .owner ? cloud.privateCloudDatabase : cloud.sharedCloudDatabase
+        do {
+            let record = try await database.record(for: CKRecord.ID(recordName: CKRecordNameZoneWideShare, zoneID: zone))
+            let share = try HouseholdSharePreparation.checked(record)
+            if let title = share[CKShare.SystemFieldKey.title] as? String {
+                try store.setHouseholdName(title, householdID: state.id)
+            }
+        } catch {
+            // A title read must not undo successful inventory/task synchronization.
+            ChatDiagnostics.log("household title refresh unavailable")
+        }
     }
 
     /// Who can see one thing. Changing it moves the thing between the household and this person's own sync.
@@ -424,6 +456,7 @@ final class HouseholdService {
                 guard let container = self.container else { throw SyncFailure("本机资料尚未准备好。") }
                 self.summary = try Self.finishJoining(container, store: self.store)
             }
+            await refreshHouseholdName(state)
             lastSync = .now
             syncIssue = nil
             ChatDiagnostics.log("household sync completed; pending=\(syncStore.pendingCount); joining=\(store.joining)")

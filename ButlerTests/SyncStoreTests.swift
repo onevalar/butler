@@ -16,6 +16,7 @@ import XCTest
     }
 }
 @MainActor final class FakeSyncCloud: SyncTransport {
+    nonisolated deinit {}
     var records: [SyncRecord] = []
     var user = "account-A", requests = 0
     var loseReply = false, offline = false

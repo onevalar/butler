@@ -22,6 +22,19 @@ final class BriefReasoningTests: XCTestCase {
             daysLeft: 1, location: location, isMedicine: false)
     }
 
+    func testSummaryRejectsNaggingAndNeverAddsDefaultActions() throws {
+        let item = candidate()
+        XCTAssertNil(BriefModelReply.parse("{\"text\":\"取件做了吗？\",\"target\":null}", candidates: []))
+        let noButtons = try XCTUnwrap(BriefModelReply.parse("{\"text\":\"牛奶明天到期。\",\"target\":\"\(item.target.key)\",\"actions\":[]}", candidates: [item]))
+        XCTAssertTrue(noButtons.actions.isEmpty)
+        for medicine in [false, true] {
+            let expired = BriefCandidate(target: .lot(UUID()), kind: .expired, name: "测试物品", detail: "已过期一天", quantity: 1, unit: "份", daysLeft: -1, location: nil, isMedicine: medicine)
+            let raw = "{\"text\":\"测试物品已过期一天。\",\"target\":\"\(expired.target.key)\",\"actions\":[{\"label\":\"随意的标签\",\"effect\":\"close_discarded\"},{\"label\":\"完成\",\"effect\":\"complete_task\"}]}"
+            let parsed = try XCTUnwrap(BriefModelReply.parse(raw, candidates: [expired]))
+            XCTAssertEqual(parsed.actions, medicine ? [] : [.init(label: "已丢弃", effect: .closeLot(.discarded))])
+        }
+    }
+
     private final class Model: BriefModel {
         var isAvailable = true
         var cacheIdentity = "local"
@@ -199,7 +212,7 @@ final class BriefReasoningTests: XCTestCase {
         XCTAssertEqual(model.requests, 1)
         XCTAssertFalse(service.isThinking)
         XCTAssertEqual(service.brief.source, .local)
-        XCTAssertFalse(service.brief.actions.isEmpty)
+        XCTAssertTrue(service.brief.actions.isEmpty)
     }
 
     private final class DeferredModel: BriefModel {
@@ -395,7 +408,7 @@ final class BriefReasoningTests: XCTestCase {
         saved.attach(model: model)
         update(saved, at: now)
         await saved.settle()
-        XCTAssertNil(storage.data(forKey: "briefCache"))
+        XCTAssertNil(storage.data(forKey: "briefCache.quietSummary.v2"))
         XCTAssertEqual(saved.nextCheckAt, now.addingTimeInterval(600))
         update(saved, at: now.addingTimeInterval(1))
         await saved.settle()
@@ -418,7 +431,7 @@ final class BriefReasoningTests: XCTestCase {
         await service.settle()
         XCTAssertTrue(invalidated)
         XCTAssertEqual(service.brief.source, .local)
-        XCTAssertNil(storage.data(forKey: "briefCache"))
+        XCTAssertNil(storage.data(forKey: "briefCache.quietSummary.v2"))
     }
 
     func testUncooperativeRequestTimesOutAndItsLateAnswerIsIgnored() async throws {
@@ -432,7 +445,7 @@ final class BriefReasoningTests: XCTestCase {
         let waiting = try XCTUnwrap(model.waiting)
         waiting.resume(returning: #"{"text":"这是一段已经超时的旧提醒。"}"#)
         for _ in 0..<10 { await Task.yield() }
-        XCTAssertNil(storage.data(forKey: "briefCache"))
+        XCTAssertNil(storage.data(forKey: "briefCache.quietSummary.v2"))
         XCTAssertEqual(service.brief.source, .local)
     }
 
@@ -477,10 +490,10 @@ final class BriefReasoningTests: XCTestCase {
         service.attach(model: model)
         update(service, at: now)
         await service.settle()
-        let data = try XCTUnwrap(storage.data(forKey: "briefCache"))
+        let data = try XCTUnwrap(storage.data(forKey: "briefCache.quietSummary.v2"))
         var cache = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         cache["signature"] = "overview-v7|" + (cache["signature"] as! String).split(separator: "|", maxSplits: 1)[1]
-        storage.set(try JSONSerialization.data(withJSONObject: cache), forKey: "briefCache")
+        storage.set(try JSONSerialization.data(withJSONObject: cache), forKey: "briefCache.quietSummary.v2")
 
         let reopened = BriefService(defaults: storage)
         reopened.attach(model: model)
@@ -533,8 +546,9 @@ final class BriefReasoningTests: XCTestCase {
     }
 
     func testRemovedItemImmediatelyLosesItsTextAndButtonsEvenWhileTouched() async {
-        let model = Model(), service = BriefService(defaults: defaults()), item = candidate()
-        model.reply = "{\"target\":\"\(item.target.key)\",\"text\":\"牛奶快到期，今天喝掉吧。\"}"
+        let model = Model(), service = BriefService(defaults: defaults())
+        let item = BriefCandidate(target: .lot(UUID()), kind: .expired, name: "牛奶", detail: "已过期一天", quantity: 2, unit: "瓶", daysLeft: -1, location: "冷藏", isMedicine: false)
+        model.reply = "{\"target\":\"\(item.target.key)\",\"text\":\"牛奶已过期一天。\",\"actions\":[{\"label\":\"已丢弃\",\"effect\":\"close_discarded\"}]}"
         service.attach(model: model)
         update(service, at: now, candidates: [item])
         await service.settle()
@@ -610,7 +624,7 @@ final class BriefReasoningTests: XCTestCase {
         let later = BriefAction(label: "稍后提醒", effect: .remindLater(minutes: 30))
         var brief = ButlerBrief(greeting: "", text: "该取快递了。", basis: "", target: .task(UUID()),
             actions: [complete, .init(label: "查看详情", effect: .openDetail), later, .init(label: "其他安排", effect: .snooze(days: 1))], source: .model)
-        XCTAssertEqual(brief.quickActions, [complete, later])
+        XCTAssertTrue(brief.quickActions.isEmpty, "Legacy task actions no longer appear in the summary")
         brief.target = nil
         brief.hasSubject = true
         XCTAssertTrue(brief.quickActions.isEmpty, "An overview must not sprout buttons even with legacy actions")
