@@ -161,3 +161,11 @@ GitHub 仓库授权已完成，以上工作流已在 App Store Connect 保存并
 - [Build 44](https://appstoreconnect.apple.com/teams/52049831-307a-44f3-95af-623b83d68dc0/xcode-cloud/products/ECE4419A-60C4-420A-A42F-FEB1AC95BFB8/builds/f0137000-cabf-4595-b8d7-ccb7748cb184/summary) 的 Test、Archive、TestFlight Internal Testing、TestFlight External Testing 全部 Succeeded。云端799/800通过，1项既有跳过、无失败；警告仍为 WeatherStoreTests loader 闭包标注与 HouseholdInviteHandler Sendable 迁移提示。
 - [1.0（44）](https://appstoreconnect.apple.com/teams/52049831-307a-44f3-95af-623b83d68dc0/apps/6815130996/testflight/ios/fe564a54-3d4c-4db6-a15a-7ca2758d7801) 状态 Testing，内部 test（1人）、外部 test（3人）均已关联；外部组 Builds 中同样为 Testing，中文说明已核对。发布凭证：`build/testflight-release-44/external-testing.jpg`。
 - 手机可从 TestFlight 更新。发布成功不代表已完成真实跨账号改名同步验收；此前本地安装尝试因手机连接中断未成功。
+
+### Agent 能力与等待时间优化：Build 45（2026-10-15）
+
+- 发布提交 `7c37c15fb5605411b99b390a689b474cf477d24e` 已推送 `main`，包含产品认知工具、已有任务及待确认卡片局部修改、隔离场景评估、安全读取并行、单轮查询／Jev 复用和任务历史精简。中文测试说明随提交更新；本版没有新增 CloudKit 类型、字段或索引。
+- 手动启动 [Build 45](https://appstoreconnect.apple.com/teams/52049831-307a-44f3-95af-623b83d68dc0/xcode-cloud/products/ECE4419A-60C4-420A-A42F-FEB1AC95BFB8/builds/28179e45-0486-4ebb-9524-349c58a1a7a4/summary)，后台核对提交一致，Xcode 26.3。Test 与 Archive 均 Succeeded；861/862 测试通过，1 项既有跳过、无失败。
+- 云端测试 5 条警告：3 条既有 WeatherStoreTests loader 尾随闭包提示、1 条既有 HouseholdInviteHandler Sendable 迁移提示，以及 Debug 场景报告的常量 schema 不参与解码提示（AgentScenario.swift:108）。归档 1 条警告。未关闭测试或为分发改动校验。
+- [1.0（45）](https://appstoreconnect.apple.com/teams/52049831-307a-44f3-95af-623b83d68dc0/apps/6815130996/testflight/ios/0dbe4fe9-b4e2-419a-9ba5-3fa3b1cf67c1) 于 16:07 上传，中文测试说明自动带入，内部 test（1 人）和外部 test（3 人）自动关联。外部组 Builds 已显示 Testing，确认可测试；未手动补加组或另起构建。发布凭证：`build/testflight-release-45/external-testing.jpg`。
+- 手机可从 TestFlight 更新。发布结果不代表真实模型响应速度或家庭跨账号行为已完成验收；仍需按测试说明体验。本记录仅保存结果，不触发下一次构建。
