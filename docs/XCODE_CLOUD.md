@@ -154,3 +154,10 @@ GitHub 仓库授权已完成，以上工作流已在 App Store Connect 保存并
 - 云端 Test、Archive、TestFlight Internal Testing、TestFlight External Testing 全部 Succeeded。测试794/795通过，1项既有跳过、无失败。4条警告为 WeatherStoreTests 的3处 loader 尾随闭包标注及 HouseholdInviteHandler 的 Swift 6 Sendable 迁移提示；本版没有更改这些位置。
 - [1.0（43）](https://appstoreconnect.apple.com/teams/52049831-307a-44f3-95af-623b83d68dc0/apps/6815130996/testflight/ios/21fa76a9-299d-403a-8438-11f53f49dd10) 已自动进入内部 test（1人）、外部 test（3人）；外部组显示 Testing，本次中文测试说明已自动带入。发布截图在 `build/testflight-release-43/external-testing.jpg`。测试者仍须在手机 TestFlight 更新；该发布结果不等于真实跨账号家庭同步验收。
 - 本记录仅保存发布结果，不再触发新构建。
+
+### 家庭身份编辑与首页摘要：Build 44（2026-10-15）
+
+- 发布提交 `9ef152e` 已推送 `main`，包含家庭名称编辑、个人显示名字与本机称呼分离、同名歧义处理及首页安静摘要；本版不新增 CloudKit 类型、字段或索引，家庭名称使用既有 CKShare title，个人称呼不进入共享数据库。
+- [Build 44](https://appstoreconnect.apple.com/teams/52049831-307a-44f3-95af-623b83d68dc0/xcode-cloud/products/ECE4419A-60C4-420A-A42F-FEB1AC95BFB8/builds/f0137000-cabf-4595-b8d7-ccb7748cb184/summary) 的 Test、Archive、TestFlight Internal Testing、TestFlight External Testing 全部 Succeeded。云端799/800通过，1项既有跳过、无失败；警告仍为 WeatherStoreTests loader 闭包标注与 HouseholdInviteHandler Sendable 迁移提示。
+- [1.0（44）](https://appstoreconnect.apple.com/teams/52049831-307a-44f3-95af-623b83d68dc0/apps/6815130996/testflight/ios/fe564a54-3d4c-4db6-a15a-7ca2758d7801) 状态 Testing，内部 test（1人）、外部 test（3人）均已关联；外部组 Builds 中同样为 Testing，中文说明已核对。发布凭证：`build/testflight-release-44/external-testing.jpg`。
+- 手机可从 TestFlight 更新。发布成功不代表已完成真实跨账号改名同步验收；此前本地安装尝试因手机连接中断未成功。
